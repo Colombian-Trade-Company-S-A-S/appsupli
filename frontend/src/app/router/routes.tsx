@@ -1,0 +1,126 @@
+import { lazy, Suspense, type ReactNode } from 'react';
+import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom';
+import { AppLayout } from '@/app/layouts/AppLayout';
+import { AuthLayout } from '@/app/layouts/AuthLayout';
+import { PublicLayout } from '@/app/layouts/PublicLayout';
+import { FullPageLoader } from '@/shared/components/feedback';
+import { PublicOnly } from './PublicOnly';
+import { RequireAdmin } from './RequireAdmin';
+import { RequireApp } from './RequireApp';
+import { RequireAuth } from './RequireAuth';
+
+const LandingPage = lazy(() => import('@/app/pages/LandingPage'));
+const LoginPage = lazy(() => import('@/app/pages/LoginPage'));
+const HomePage = lazy(() => import('@/app/pages/app/HomePage'));
+const ProfilePage = lazy(() => import('@/app/pages/app/ProfilePage'));
+const AdminPage = lazy(() => import('@/modules/admin/pages/AdminPage'));
+
+// ── BI Trade Marketing ────────────────────────────────────────────────────
+const BiTradeHomePage = lazy(() => import('@/modules/bi-trade/pages/BiTradeHomePage'));
+const ClaroDashboardPage = lazy(() => import('@/modules/bi-trade/pages/ClaroDashboardPage'));
+const VentasPage = lazy(() => import('@/modules/bi-trade/pages/VentasPage'));
+const ProductosPage = lazy(() => import('@/modules/bi-trade/pages/ProductosPage'));
+const PuntosVentaPage = lazy(() => import('@/modules/bi-trade/pages/PuntosVentaPage'));
+
+// ── Valoración de desempeño ───────────────────────────────────────────────
+const ValoracionLayout = lazy(() => import('@/modules/valoracion/pages/ValoracionLayout'));
+const ValoracionHomePage = lazy(() => import('@/modules/valoracion/pages/ValoracionHomePage'));
+const MisEvaluacionesPage = lazy(() => import('@/modules/valoracion/pages/MisEvaluacionesPage'));
+const ResponderPage = lazy(() => import('@/modules/valoracion/pages/ResponderPage'));
+const MisResultadosPage = lazy(() => import('@/modules/valoracion/pages/MisResultadosPage'));
+const ResultadoDetallePage = lazy(
+  () => import('@/modules/valoracion/pages/ResultadoDetallePage'),
+);
+const ResultadosEquipoPage = lazy(
+  () => import('@/modules/valoracion/pages/ResultadosEquipoPage'),
+);
+const DashboardPage = lazy(() => import('@/modules/valoracion/pages/DashboardPage'));
+const PersonaPage = lazy(() => import('@/modules/valoracion/pages/PersonaPage'));
+const ConsolidadoPage = lazy(() => import('@/modules/valoracion/pages/ConsolidadoPage'));
+const PlanesAccionPage = lazy(() => import('@/modules/valoracion/pages/PlanesAccionPage'));
+const CiclosPage = lazy(() => import('@/modules/valoracion/pages/CiclosPage'));
+const CicloDetallePage = lazy(() => import('@/modules/valoracion/pages/CicloDetallePage'));
+const PreguntasPage = lazy(() => import('@/modules/valoracion/pages/PreguntasPage'));
+const CompetenciasPage = lazy(() => import('@/modules/valoracion/pages/CompetenciasPage'));
+const JerarquiaPage = lazy(() => import('@/modules/valoracion/pages/JerarquiaPage'));
+
+const withSuspense = (node: ReactNode) => <Suspense fallback={<FullPageLoader />}>{node}</Suspense>;
+
+const routes: RouteObject[] = [
+  // ── Público: siempre en tema claro ───────────────────────────────────────
+  {
+    element: <PublicLayout />,
+    children: [{ index: true, element: withSuspense(<LandingPage />) }],
+  },
+  {
+    element: <PublicOnly />,
+    children: [
+      {
+        element: <AuthLayout />,
+        children: [{ path: 'login', element: withSuspense(<LoginPage />) }],
+      },
+    ],
+  },
+
+  // ── Plataforma: requiere sesión ─────────────────────────────────────────
+  {
+    element: <RequireAuth />,
+    children: [
+      {
+        path: 'inicio',
+        element: <AppLayout />,
+        children: [
+          { index: true, element: withSuspense(<HomePage />) },
+          { path: 'perfil', element: withSuspense(<ProfilePage />) },
+          {
+            element: <RequireAdmin />,
+            children: [{ path: 'admin', element: withSuspense(<AdminPage />) }],
+          },
+          {
+            element: <RequireApp code="bi-trade" />,
+            children: [
+              { path: 'bi-trade', element: withSuspense(<BiTradeHomePage />) },
+              { path: 'bi-trade/claro', element: withSuspense(<ClaroDashboardPage />) },
+              { path: 'bi-trade/claro/ventas', element: withSuspense(<VentasPage />) },
+              { path: 'bi-trade/claro/productos', element: withSuspense(<ProductosPage />) },
+              {
+                path: 'bi-trade/claro/puntos-venta',
+                element: withSuspense(<PuntosVentaPage />),
+              },
+            ],
+          },
+          {
+            element: <RequireApp code="valoracion" />,
+            children: [
+              {
+                path: 'valoracion',
+                element: withSuspense(<ValoracionLayout />),
+                children: [
+                  { index: true, element: withSuspense(<ValoracionHomePage />) },
+                  { path: 'mis-evaluaciones', element: withSuspense(<MisEvaluacionesPage />) },
+                  { path: 'mis-evaluaciones/:id', element: withSuspense(<ResponderPage />) },
+                  { path: 'mis-resultados', element: withSuspense(<MisResultadosPage />) },
+                  { path: 'resultados/:id', element: withSuspense(<ResultadoDetallePage />) },
+                  { path: 'equipo', element: withSuspense(<ResultadosEquipoPage />) },
+                  { path: 'dashboard', element: withSuspense(<DashboardPage />) },
+                  { path: 'dashboard/persona/:id', element: withSuspense(<PersonaPage />) },
+                  { path: 'consolidado', element: withSuspense(<ConsolidadoPage />) },
+                  { path: 'planes', element: withSuspense(<PlanesAccionPage />) },
+                  { path: 'ciclos', element: withSuspense(<CiclosPage />) },
+                  { path: 'ciclos/:id', element: withSuspense(<CicloDetallePage />) },
+                  { path: 'preguntas', element: withSuspense(<PreguntasPage />) },
+                  { path: 'competencias', element: withSuspense(<CompetenciasPage />) },
+                  { path: 'jerarquia', element: withSuspense(<JerarquiaPage />) },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+
+  { path: '*', element: <Navigate to="/" replace /> },
+];
+
+export const router = createBrowserRouter(routes);
