@@ -12,8 +12,17 @@ from datetime import date, timedelta
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.db.models import Q
 
-from apps.bi_trade.models import Materiales, Producto, PuntoVenta, Regional, Venta
+from apps.bi_trade.models import (
+    Inventario,
+    Materiales,
+    MetaComercial,
+    Producto,
+    PuntoVenta,
+    Regional,
+    Venta,
+)
 
 PUNTOS = [
     ('PDV-001', 'Claro Centro Mayor', Regional.PLAZA_CLARO, Materiales.TODOS),
@@ -53,11 +62,25 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        codigos_pdv = [p[0] for p in PUNTOS]
+        codigos_producto = [p[0] for p in PRODUCTOS]
+
         if options['limpiar']:
-            Venta.objects.all().delete()
-            Producto.objects.filter(id_producto__in=[p[0] for p in PRODUCTOS]).delete()
-            PuntoVenta.objects.filter(id_punto_venta__in=[p[0] for p in PUNTOS]).delete()
-            self.stdout.write(self.style.WARNING('Datos de ejemplo anteriores borrados.'))
+            # Solo lo que sembró este comando. Antes borraba TODAS las ventas,
+            # el inventario y las metas, así que se llevaba por delante los
+            # datos reales que alguien hubiera importado.
+            de_demo = Q(id_producto__in=codigos_producto) | Q(id_punto_venta__in=codigos_pdv)
+            borradas = Venta.objects.filter(de_demo).delete()[0]
+            borrados = Inventario.objects.filter(de_demo).delete()[0]
+            borradas_metas = MetaComercial.objects.filter(de_demo).delete()[0]
+            Producto.objects.filter(id_producto__in=codigos_producto).delete()
+            PuntoVenta.objects.filter(id_punto_venta__in=codigos_pdv).delete()
+            self.stdout.write(
+                self.style.WARNING(
+                    f'Datos de ejemplo borrados: {borradas} venta(s), {borrados} de '
+                    f'inventario y {borradas_metas} meta(s).'
+                )
+            )
 
         for codigo, nombre, regional, materiales in PUNTOS:
             PuntoVenta.objects.update_or_create(
@@ -81,8 +104,8 @@ class Command(BaseCommand):
                 },
             )
 
-        puntos = list(PuntoVenta.objects.all())
-        productos = list(Producto.objects.all())
+        puntos = list(PuntoVenta.objects.filter(id_punto_venta__in=codigos_pdv))
+        productos = list(Producto.objects.filter(id_producto__in=codigos_producto))
 
         creadas = 0
         if not Venta.objects.exists():
@@ -99,9 +122,45 @@ class Command(BaseCommand):
                 )
                 creadas += 1
 
+        # Inventario y metas: una fila por combinación producto × punto de
+        # venta, que es justo lo que exige la restricción de unicidad.
+        azar = random.Random(77)
+        inventarios = metas = 0
+        # Las ventas de ejemplo cubren los últimos seis meses: la meta se carga
+        # al inicio de ese tramo para que el periodo cuadre con lo vendido.
+        inicio_periodo = date.today() - timedelta(days=179)
+        for punto in puntos:
+            for producto in productos:
+                _, nuevo = Inventario.objects.get_or_create(
+                    id_producto=producto,
+                    id_punto_venta=punto,
+                    defaults={'cantidad_inventario': azar.randint(0, 60)},
+                )
+                inventarios += nuevo
+
+                # La meta se arma sobre lo realmente vendido, con un desvío de
+                # ±30%: así el tablero muestra cumplimientos por encima y por
+                # debajo del 100%, no todos iguales.
+                vendidas = sum(
+                    v.cantidad_vendida
+                    for v in Venta.objects.filter(id_producto=producto, id_punto_venta=punto)
+                )
+                objetivo = max(1, round((vendidas or 5) * azar.uniform(0.7, 1.3)))
+                _, nueva = MetaComercial.objects.get_or_create(
+                    id_producto=producto,
+                    id_punto_venta=punto,
+                    fecha_meta=inicio_periodo,
+                    defaults={
+                        'meta_cantidad': objetivo,
+                    },
+                )
+                metas += nueva
+
         self.stdout.write(
             self.style.SUCCESS(
-                f'{len(PUNTOS)} punto(s) de venta, {len(PRODUCTOS)} producto(s) y '
-                f'{creadas or Venta.objects.count()} venta(s) en la base.'
+                f'{len(PUNTOS)} punto(s) de venta, {len(PRODUCTOS)} producto(s), '
+                f'{creadas or Venta.objects.count()} venta(s), '
+                f'{inventarios or Inventario.objects.count()} registro(s) de inventario y '
+                f'{metas or MetaComercial.objects.count()} meta(s) en la base.'
             )
         )

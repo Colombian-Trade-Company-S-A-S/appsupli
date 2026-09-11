@@ -1,0 +1,17 @@
+# Nada de esto va en la imagen: entornos locales, bases locales, secretos y
+# caches.
+env/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.ruff_cache/
+staticfiles/
+media/
+Dockerfile
+.dockerignore

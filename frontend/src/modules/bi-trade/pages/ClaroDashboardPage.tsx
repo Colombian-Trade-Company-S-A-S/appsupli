@@ -1,70 +1,101 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
-import { PackageIcon, ReceiptTextIcon, StoreIcon } from 'lucide-react';
 import {
+  BoxesIcon,
+  CalendarDaysIcon,
+  DownloadIcon,
+  PackageIcon,
+  ReceiptTextIcon,
+  StoreIcon,
+  TargetIcon,
+  XIcon,
+} from 'lucide-react';
+import {
+  Badge,
   Button,
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-  type ChartConfig,
+  Spinner,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from '@/shared/components/ui';
-import { BarraProporcion, Encabezado, Kpi } from '@/shared/components/layout';
-import { formatoMes, formatoMoneda, formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
-import type { Corte } from '../api';
-import { useDashboard, useOpciones } from '../hooks';
+import { Encabezado, Kpi } from '@/shared/components/layout';
+import { formatoMoneda, formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
+import type { HojaAvance } from '../api';
+import { useAvanceMensual, useDescarga, useOpciones, usePuntosVenta } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
+import { BarraCumplimiento } from '../components/Cumplimiento';
+import { BadgeRitmo, GraficoAvance, TablaAvance, calcularRitmo } from '../components/AvanceMensual';
+import { SelectorMes, mesActual, nombreDelMes, type Mes } from '../components/SelectorMes';
+import { ImportarInforme } from '../components/ImportarInforme';
+import { HojasBi } from '../components/HojasBi';
+import { CompartirTablero } from '../components/CompartirTablero';
+import { useFuente } from '../fuente';
 
-const BASE = '/inicio/bi-trade/claro';
+/** Los accesos a cada módulo. Se declaran una vez para no repetir el botón. */
+const MODULOS = [
+  { ruta: 'ventas', etiqueta: 'Ventas', icono: ReceiptTextIcon },
+  { ruta: 'puntos-venta', etiqueta: 'Puntos de venta', icono: StoreIcon },
+  { ruta: 'productos', etiqueta: 'Productos', icono: PackageIcon },
+  { ruta: 'inventario', etiqueta: 'Inventario', icono: BoxesIcon },
+  { ruta: 'metas', etiqueta: 'Metas', icono: TargetIcon },
+];
 
-// Una sola serie: el título la nombra, así que no hace falta leyenda.
-const configuracionGrafico = {
-  ingresos: { label: 'Ingresos', color: 'var(--chart-1)' },
-} satisfies ChartConfig;
-
-/** Tablero de BI Claro punto de venta. */
+/** Tablero de BI Claro punto de venta: el avance del mes contra la meta. */
 export default function ClaroDashboardPage() {
-  const [filtros, setFiltros] = useState<{ regional?: string; marca?: string }>({});
-  const { data, isLoading } = useDashboard(filtros);
+  const fuente = useFuente();
+  const { soloLectura } = fuente;
+  const [mes, setMes] = useState<Mes>(mesActual);
+  const [filtros, setFiltros] = useState<{
+    regional?: string;
+    marca?: string;
+    id_punto_venta?: string;
+  }>({});
+  const consulta = { ...mes, ...filtros };
+  const { data, isFetching, isLoading } = useAvanceMensual(consulta);
   const { data: opciones } = useOpciones();
+  const { data: puntos = [] } = usePuntosVenta();
 
-  const evolucion = (data?.evolucion ?? []).map((punto) => ({
-    mes: formatoMes(punto.mes),
-    ingresos: punto.ingresos,
-    unidades: punto.unidades,
-  }));
+  const exportar = useDescarga(
+    (hoja?: HojaAvance) => fuente.exportarAvance(consulta, hoja),
+    'Tablero descargado en Excel',
+  );
+
+  const totales = data?.totales;
+  const periodo = data?.periodo;
+  const ritmo = calcularRitmo(data);
+  const hayFiltros = !!filtros.regional || !!filtros.marca || !!filtros.id_punto_venta;
+  const nombrePunto =
+    puntos.find((p) => p.idPuntoVenta === filtros.id_punto_venta)?.nombrePdv ??
+    filtros.id_punto_venta;
 
   return (
     <div className="flex flex-col gap-6">
       <Encabezado
-        titulo="BI Claro punto de venta"
-        descripcion="Ventas por punto de venta, marca y regional."
+        titulo={fuente.titulo}
+        descripcion={`Avance de ${nombreDelMes(mes)} contra la meta del mes.`}
       >
-        <Button variant="outline" render={<Link to={`${BASE}/ventas`} />}>
-          <ReceiptTextIcon data-icon="inline-start" />
-          Ventas
-        </Button>
-        <Button variant="outline" render={<Link to={`${BASE}/puntos-venta`} />}>
-          <StoreIcon data-icon="inline-start" />
-          Puntos de venta
-        </Button>
-        <Button variant="outline" render={<Link to={`${BASE}/productos`} />}>
-          <PackageIcon data-icon="inline-start" />
-          Productos
-        </Button>
+        {!soloLectura && (
+          <>
+            <CompartirTablero canal={fuente.canal} />
+            {/* El informe del ERP: Claro y Tmk sí; Homecenter y Falabella no. */}
+            {fuente.importarInforme && <ImportarInforme importar={fuente.importarInforme} />}
+            {MODULOS.map(({ ruta, etiqueta, icono: Icono }) => (
+              <Button key={ruta} variant="outline" render={<Link to={`${fuente.base}/${ruta}`} />}>
+                <Icono data-icon="inline-start" />
+                {etiqueta}
+              </Button>
+            ))}
+          </>
+        )}
       </Encabezado>
+
+      <HojasBi />
 
       <Card className="py-4">
         <CardContent className="flex flex-wrap items-end gap-3">
+          <SelectorMes valor={mes} onChange={setMes} />
           <CampoSelect
             id="filtro-regional"
             label="Regional"
@@ -74,6 +105,14 @@ export default function ClaroDashboardPage() {
             opciones={(opciones?.regionales ?? []).map((r) => ({ value: r.value, label: r.label }))}
           />
           <CampoSelect
+            id="filtro-pdv"
+            label="Punto de venta"
+            placeholder="Todos los puntos"
+            value={filtros.id_punto_venta ?? ''}
+            onChange={(v) => setFiltros({ ...filtros, id_punto_venta: v })}
+            opciones={puntos.map((p) => ({ value: p.idPuntoVenta, label: p.nombrePdv }))}
+          />
+          <CampoSelect
             id="filtro-marca"
             label="Marca"
             placeholder="Todas las marcas"
@@ -81,169 +120,164 @@ export default function ClaroDashboardPage() {
             onChange={(v) => setFiltros({ ...filtros, marca: v })}
             opciones={(opciones?.marcas ?? []).map((m) => ({ value: m, label: m }))}
           />
-          <Button
-            variant="ghost"
-            disabled={!filtros.regional && !filtros.marca}
-            onClick={() => setFiltros({})}
-          >
+          <Button variant="ghost" disabled={!hayFiltros} onClick={() => setFiltros({})}>
+            <XIcon data-icon="inline-start" />
             Limpiar
           </Button>
+
+          {/* Empuja la descarga al extremo: es una acción sobre el filtro
+              completo, no otro campo del formulario. */}
+          <div className="ml-auto flex items-center gap-2">
+            {isFetching && <Spinner className="text-muted-foreground" />}
+            {!soloLectura && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      disabled={exportar.isPending}
+                      onClick={() => exportar.mutate(undefined)}
+                    >
+                      {exportar.isPending ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <DownloadIcon data-icon="inline-start" />
+                      )}
+                      Descargar mes
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  Un Excel con las tres vistas: día por día, regional y punto de venta
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         </CardContent>
       </Card>
+
+      {hayFiltros && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrado por</span>
+          {filtros.regional && (
+            <Badge variant="outline">
+              {filtros.regional}
+              <button
+                type="button"
+                aria-label="Quitar el filtro de regional"
+                className="ml-1 cursor-pointer opacity-60 hover:opacity-100"
+                onClick={() => setFiltros({ ...filtros, regional: '' })}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </Badge>
+          )}
+          {filtros.id_punto_venta && (
+            <Badge variant="outline">
+              {nombrePunto}
+              <button
+                type="button"
+                aria-label="Quitar el filtro de punto de venta"
+                className="ml-1 cursor-pointer opacity-60 hover:opacity-100"
+                onClick={() => setFiltros({ ...filtros, id_punto_venta: '' })}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </Badge>
+          )}
+          {filtros.marca && (
+            <Badge variant="outline">
+              {filtros.marca}
+              <button
+                type="button"
+                aria-label="Quitar el filtro de marca"
+                className="ml-1 cursor-pointer opacity-60 hover:opacity-100"
+                onClick={() => setFiltros({ ...filtros, marca: '' })}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </Badge>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
-          label="Ingresos"
-          value={formatoMonedaCorta(data?.totales.ingresos ?? 0)}
-          hint={formatoMoneda(data?.totales.ingresos ?? 0)}
+          label="Cumplimiento del mes"
+          cargando={isLoading}
+          value={`${totales?.cumplimiento ?? 0}%`}
+          extra={<BadgeRitmo ritmo={ritmo} />}
+          hint={
+            ritmo && ritmo.habilesCorridos > 0
+              ? `Debería ir en ${ritmo.esperado}% a estas alturas del mes`
+              : 'El mes todavía no arranca'
+          }
+        >
+          <BarraCumplimiento porcentaje={totales?.cumplimiento ?? 0} />
+        </Kpi>
+        <Kpi
+          label="Vendido en el mes"
+          cargando={isLoading}
+          value={formatoMonedaCorta(totales?.ventasDinero ?? 0)}
+          hint={`${formatoNumero(totales?.ventasCantidad ?? 0)} unidades de ${formatoNumero(
+            totales?.metaCantidad ?? 0,
+          )} de meta`}
         />
         <Kpi
-          label="Unidades vendidas"
-          value={formatoNumero(data?.totales.unidades ?? 0)}
-          hint={`${formatoNumero(data?.totales.operaciones ?? 0)} operaciones`}
+          label="Meta diaria"
+          cargando={isLoading}
+          value={formatoMonedaCorta(totales?.metaDiaria ?? 0)}
+          hint={
+            periodo
+              ? `${formatoMoneda(totales?.metaDinero ?? 0)} ÷ ${periodo.diasHabiles} días hábiles`
+              : '—'
+          }
         />
         <Kpi
-          label="Ticket promedio"
-          value={formatoMonedaCorta(data?.totales.ticketPromedio ?? 0)}
-          hint="Ingreso medio por venta"
-        />
-        <Kpi
-          label="Cobertura"
-          value={formatoNumero(data?.totales.puntosVenta ?? 0)}
-          hint={`${formatoNumero(data?.totales.productos ?? 0)} productos en catálogo`}
+          label="Días hábiles del mes"
+          cargando={isLoading}
+          value={
+            ritmo && ritmo.habilesCorridos > 0 && ritmo.habilesCorridos < ritmo.habilesTotales
+              ? `${ritmo.habilesCorridos} de ${ritmo.habilesTotales}`
+              : formatoNumero(periodo?.diasHabiles ?? 0)
+          }
+          extra={<CalendarDaysIcon className="size-4 text-muted-foreground" />}
+          hint={
+            periodo
+              ? `${periodo.diasDelMes} días − ${periodo.domingos} domingos − ${
+                  periodo.festivos.length
+                } festivo${periodo.festivos.length === 1 ? '' : 's'}`
+              : '—'
+          }
         />
       </div>
 
-      {evolucion.length > 1 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Ingresos por mes</CardTitle>
-            <CardDescription>Suma de unidades × precio Coltrade en cada mes.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer config={configuracionGrafico} className="h-64 w-full">
-              <LineChart data={evolucion} margin={{ left: 4, right: 24, top: 8, bottom: 4 }}>
-                <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="mes"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  className="text-xs"
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  width={56}
-                  className="text-xs"
-                  tickFormatter={(valor: number) => formatoMonedaCorta(valor)}
-                />
-                <ChartTooltip
-                  cursor
-                  content={
-                    <ChartTooltipContent formatter={(valor) => formatoMoneda(Number(valor))} />
-                  }
-                />
-                <Line
-                  dataKey="ingresos"
-                  type="monotone"
-                  stroke="var(--color-ingresos)"
-                  strokeWidth={2}
-                  dot={{ r: 4 }}
-                  activeDot={{ r: 6 }}
-                />
-              </LineChart>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-      )}
+      <GraficoAvance
+        datos={data}
+        cargando={isLoading}
+        onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
+      />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <TarjetaCorte
-          titulo="Ingresos por regional"
-          descripcion="Cuánto aporta cada zona al total."
-          filas={data?.porRegional ?? []}
-        />
-        <TarjetaCorte
-          titulo="Ingresos por marca"
-          descripcion="Qué marcas mueven el negocio."
-          filas={data?.porMarca ?? []}
-        />
-      </div>
+      <TablaAvance
+        titulo="Avance por regional"
+        descripcion="La meta del mes de cada zona contra lo que lleva vendido."
+        encabezado="Regional"
+        filas={data?.porRegional ?? []}
+        hoja="regional"
+        cargando={isLoading}
+        onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Rankings</CardTitle>
-          <CardDescription>Los ocho primeros por ingresos.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="productos">
-            <TabsList>
-              <TabsTrigger value="productos">Productos</TabsTrigger>
-              <TabsTrigger value="puntos">Puntos de venta</TabsTrigger>
-              <TabsTrigger value="materiales">Materiales</TabsTrigger>
-            </TabsList>
-            <TabsContent value="productos">
-              <ListaCorte filas={data?.topProductos ?? []} />
-            </TabsContent>
-            <TabsContent value="puntos">
-              <ListaCorte filas={data?.topPuntosVenta ?? []} />
-            </TabsContent>
-            <TabsContent value="materiales">
-              <ListaCorte filas={data?.materiales ?? []} />
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
-
-      {isLoading && <p className="text-sm text-muted-foreground">Calculando…</p>}
-    </div>
-  );
-}
-
-function TarjetaCorte({
-  titulo,
-  descripcion,
-  filas,
-}: {
-  titulo: string;
-  descripcion: string;
-  filas: Corte[];
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{titulo}</CardTitle>
-        <CardDescription>{descripcion}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ListaCorte filas={filas} />
-      </CardContent>
-    </Card>
-  );
-}
-
-function ListaCorte({ filas }: { filas: Corte[] }) {
-  if (filas.length === 0) {
-    return <p className="py-6 text-sm text-muted-foreground">Sin ventas para este corte.</p>;
-  }
-  return (
-    <div className="flex flex-col gap-3 pt-4">
-      {filas.map((fila) => (
-        <div key={fila.key} className="flex flex-col gap-1.5">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="truncate text-sm font-medium">{fila.label}</span>
-            <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-              {formatoMonedaCorta(fila.ingresos)} · {fila.participacion}%
-            </span>
-          </div>
-          <BarraProporcion porcentaje={fila.participacion} />
-          <span className="text-xs text-muted-foreground">
-            {formatoNumero(fila.unidades)} unidades en {formatoNumero(fila.operaciones)} ventas
-          </span>
-        </div>
-      ))}
+      <TablaAvance
+        titulo="Avance por punto de venta"
+        descripcion="El mismo corte, punto por punto, con el stock disponible."
+        encabezado="Punto de venta"
+        filas={data?.porPuntoVenta ?? []}
+        hoja="puntos"
+        cargando={isLoading}
+        onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
+        columnaInventario
+      />
     </div>
   );
 }

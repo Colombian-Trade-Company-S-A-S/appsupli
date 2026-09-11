@@ -35,27 +35,38 @@ import { ConfirmarBorrado } from '@/shared/components/feedback';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
 import { formatoMoneda, formatoNumero } from '@/shared/lib/formato';
 import { biTradeApi, type Producto, type ProductoPayload } from '../api';
+import { useFuente } from '../fuente';
+import { BotonesExcel } from '../components/BotonesExcel';
 import { useBiTradeMutation, useProductos } from '../hooks';
 
-const BASE = '/inicio/bi-trade/claro';
 const PRECIO_MAXIMO = 100_000_000;
 
 export default function ProductosPage() {
+  const fuente = useFuente();
+  const recursos = fuente.recursos ?? biTradeApi;
   const [buscar, setBuscar] = useState('');
   const { data: productos = [], isLoading } = useProductos({ search: buscar || undefined });
   const [editando, setEditando] = useState<Producto | null>(null);
   const [abierto, setAbierto] = useState(false);
+  const [vaciarAbierto, setVaciarAbierto] = useState(false);
   const [porBorrar, setPorBorrar] = useState<Producto | null>(null);
 
   const eliminar = useBiTradeMutation(
-    (id: string) => biTradeApi.productos.remove(id),
+    (id: string) => recursos.productos.remove(id),
     'Producto eliminado',
+  );
+  const vaciar = useBiTradeMutation(
+    () => recursos.productos.removeAll(),
+    (datos) => datos.message,
   );
 
   return (
     <div className="flex flex-col gap-6">
-      <Encabezado titulo="Productos" descripcion="Catálogo con su precio en Claro y en Coltrade.">
-        <Button variant="outline" render={<Link to={BASE} />}>
+      <Encabezado
+        titulo="Productos"
+        descripcion={`Catálogo con su precio en ${fuente.nombreCanal} y en Coltrade.`}
+      >
+        <Button variant="outline" render={<Link to={fuente.base} />}>
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
@@ -67,6 +78,15 @@ export default function ProductosPage() {
         >
           <PlusIcon data-icon="inline-start" />
           Nuevo producto
+        </Button>
+        <BotonesExcel recurso="productos" />
+        <Button
+          variant="destructive"
+          disabled={productos.length === 0 || vaciar.isPending}
+          onClick={() => setVaciarAbierto(true)}
+        >
+          <Trash2Icon data-icon="inline-start" />
+          Eliminar todo
         </Button>
       </Encabezado>
 
@@ -94,9 +114,11 @@ export default function ProductosPage() {
                 <TableHead>Código</TableHead>
                 <TableHead>Producto</TableHead>
                 <TableHead>Marca</TableHead>
-                <TableHead className="hidden lg:table-cell">Precio Claro</TableHead>
+                <TableHead className="hidden lg:table-cell">Precio {fuente.nombreCanal}</TableHead>
                 <TableHead>Precio Coltrade</TableHead>
-                <TableHead className="hidden md:table-cell">Puntaje</TableHead>
+                {fuente.conPuntos && (
+                  <TableHead className="hidden md:table-cell">Puntaje</TableHead>
+                )}
                 <TableHead className="hidden md:table-cell">Ventas</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
@@ -115,9 +137,11 @@ export default function ProductosPage() {
                   <TableCell className="tabular-nums">
                     {formatoMoneda(producto.precioVentaColtrade)}
                   </TableCell>
-                  <TableCell className="hidden tabular-nums text-muted-foreground md:table-cell">
-                    {producto.puntaje ?? '—'}
-                  </TableCell>
+                  {fuente.conPuntos && (
+                    <TableCell className="hidden tabular-nums text-muted-foreground md:table-cell">
+                      {producto.puntaje ?? '—'}
+                    </TableCell>
+                  )}
                   <TableCell className="hidden tabular-nums md:table-cell">
                     {formatoNumero(producto.ventasCount)}
                   </TableCell>
@@ -158,6 +182,17 @@ export default function ProductosPage() {
       <ProductoDialog abierto={abierto} onOpenChange={setAbierto} producto={editando} />
 
       <ConfirmarBorrado
+        abierto={vaciarAbierto}
+        onOpenChange={setVaciarAbierto}
+        titulo="¿Eliminar TODOS los registros?"
+        descripcion="Se borrará el catálogo completo. Solo es posible si ningún producto tiene ventas, inventario ni metas asociadas. Esta acción no se puede deshacer."
+        onConfirmar={() => {
+          vaciar.mutate(undefined);
+          setVaciarAbierto(false);
+        }}
+      />
+
+      <ConfirmarBorrado
         abierto={!!porBorrar}
         onOpenChange={(v) => !v && setPorBorrar(null)}
         titulo="¿Eliminar el producto?"
@@ -190,13 +225,15 @@ function ProductoDialog({
   producto: Producto | null;
 }) {
   const editando = !!producto;
+  const fuente = useFuente();
+  const recursos = fuente.recursos ?? biTradeApi;
   const [datos, setDatos] = useState<ProductoPayload>(VACIO);
 
   const guardar = useBiTradeMutation(
     (payload: Partial<ProductoPayload>) =>
       editando
-        ? biTradeApi.productos.update(producto.idProducto, payload)
-        : biTradeApi.productos.create(payload),
+        ? recursos.productos.update(producto.idProducto, payload)
+        : recursos.productos.create(payload),
     editando ? 'Producto actualizado' : 'Producto creado',
   );
 
@@ -218,7 +255,9 @@ function ProductoDialog({
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    const { idProducto, ...resto } = datos;
+    const { idProducto, puntaje, ...sinPuntaje } = datos;
+    // Los canales sin puntos no tienen puntaje: ni se muestra ni se manda.
+    const resto = fuente.conPuntos ? { ...sinPuntaje, puntaje } : sinPuntaje;
     guardar.mutate(editando ? resto : { idProducto, ...resto }, {
       onSuccess: () => onOpenChange(false),
     });
@@ -278,7 +317,7 @@ function ProductoDialog({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
-                <FieldLabel htmlFor="prod-claro">Precio de venta Claro</FieldLabel>
+                <FieldLabel htmlFor="prod-claro">Precio de venta {fuente.nombreCanal}</FieldLabel>
                 <Input
                   id="prod-claro"
                   type="number"
@@ -308,22 +347,24 @@ function ProductoDialog({
               </Field>
             </div>
 
-            <Field>
-              <FieldLabel htmlFor="prod-puntaje">Puntaje</FieldLabel>
-              <Input
-                id="prod-puntaje"
-                type="number"
-                step={1}
-                value={datos.puntaje ?? ''}
-                onChange={(e) =>
-                  setDatos({
-                    ...datos,
-                    puntaje: e.target.value === '' ? null : Number(e.target.value),
-                  })
-                }
-              />
-              <FieldDescription>Opcional.</FieldDescription>
-            </Field>
+            {fuente.conPuntos && (
+              <Field>
+                <FieldLabel htmlFor="prod-puntaje">Puntaje</FieldLabel>
+                <Input
+                  id="prod-puntaje"
+                  type="number"
+                  step={1}
+                  value={datos.puntaje ?? ''}
+                  onChange={(e) =>
+                    setDatos({
+                      ...datos,
+                      puntaje: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                />
+                <FieldDescription>Opcional.</FieldDescription>
+              </Field>
+            )}
           </FieldGroup>
         </form>
 

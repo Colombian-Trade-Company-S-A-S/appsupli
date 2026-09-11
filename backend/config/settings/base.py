@@ -2,6 +2,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+import dj_database_url
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -39,8 +40,12 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
+    # Primero: el health check de Render no pasa por nada más.
+    'apps.core.middleware.SaludMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Sirve los estáticos (admin, docs de la API) sin un servidor aparte.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -70,13 +75,23 @@ TEMPLATES = [
 ]
 
 # ── Base de datos ──────────────────────────────────────────────────────────
-# SQLite por ahora; migrar a Postgres solo cambia este bloque.
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Con DATABASE_URL (el Postgres de Render) se usa esa base; sin ella, el
+# SQLite local. `conn_max_age` reutiliza la conexión entre peticiones y
+# `conn_health_checks` la descarta si Postgres la cerró mientras tanto.
+DATABASE_URL = config('DATABASE_URL', default='')
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.parse(
+            DATABASE_URL, conn_max_age=600, conn_health_checks=True
+        )
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -120,6 +135,12 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 25,
     'EXCEPTION_HANDLER': 'apps.core.exceptions.api_exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Solo se limita lo que se nombra aquí: no hay throttling global. El
+    # enlace público es la única puerta sin cuenta, y su contraseña es lo
+    # que hay que proteger de la fuerza bruta.
+    'DEFAULT_THROTTLE_RATES': {
+        'enlace_publico': '10/min',
+    },
 }
 
 SIMPLE_JWT = {
@@ -151,3 +172,21 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+
+# Orígenes https desde los que se aceptan formularios con CSRF: el admin de
+# Django detrás de Render. La API usa JWT y no depende de esto.
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='', cast=Csv())
+
+# Las cabeceras que se aceptan de otro origen: las de django-cors-headers más
+# la del tablero público, que manda su acceso en `X-Acceso-Publico`. Sin ella,
+# si el frontend llama a la API desde otro dominio, el navegador corta la
+# consulta en el preflight.
+CORS_ALLOW_HEADERS = (
+    'accept',
+    'authorization',
+    'content-type',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-acceso-publico',
+)

@@ -13,31 +13,52 @@ import {
 } from '@/shared/components/ui';
 import { cn } from '@/shared/lib/utils';
 
-/** Cifra grande con su rótulo. La pieza básica de todos los tableros. */
+/**
+ * Cifra grande con su rótulo. La pieza básica de todos los tableros.
+ *
+ * `cargando` pinta un esqueleto en lugar del valor. Importa: mientras llega la
+ * respuesta, un KPI en cero se lee como un dato real —«no vendimos nada»— y no
+ * como «todavía no sé».
+ */
 export function Kpi({
   label,
   value,
   hint,
+  extra,
   children,
+  cargando = false,
   className,
 }: {
   label: string;
   value: ReactNode;
   hint?: ReactNode;
+  /** Insignia o adorno a la derecha del rótulo. */
+  extra?: ReactNode;
   children?: ReactNode;
+  cargando?: boolean;
   className?: string;
 }) {
   return (
     <Card className={cn('gap-2', className)}>
-      <CardHeader className="pb-0">
+      <CardHeader className="flex-row items-center justify-between gap-2 pb-0">
         <CardTitle className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
           {label}
         </CardTitle>
+        {extra}
       </CardHeader>
       <CardContent className="flex flex-col gap-1">
-        <span className="text-2xl font-semibold tabular-nums">{value}</span>
-        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
-        {children}
+        {cargando ? (
+          <>
+            <Skeleton className="h-8 w-28" />
+            <Skeleton className="h-3 w-40" />
+          </>
+        ) : (
+          <>
+            <span className="text-2xl font-semibold tabular-nums">{value}</span>
+            {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+            {children}
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -21,6 +21,17 @@ const ClaroDashboardPage = lazy(() => import('@/modules/bi-trade/pages/ClaroDash
 const VentasPage = lazy(() => import('@/modules/bi-trade/pages/VentasPage'));
 const ProductosPage = lazy(() => import('@/modules/bi-trade/pages/ProductosPage'));
 const PuntosVentaPage = lazy(() => import('@/modules/bi-trade/pages/PuntosVentaPage'));
+const InventarioPage = lazy(() => import('@/modules/bi-trade/pages/InventarioPage'));
+const MetasPage = lazy(() => import('@/modules/bi-trade/pages/MetasPage'));
+const TicketsPage = lazy(() => import('@/modules/bi-trade/pages/TicketsPage'));
+const CanalLayout = lazy(() => import('@/modules/bi-trade/pages/CanalLayout'));
+const PlanEnConstruccionPage = lazy(
+  () => import('@/modules/bi-trade/pages/PlanEnConstruccionPage'),
+);
+const TableroPublicoLayout = lazy(() => import('@/modules/bi-trade/publico/TableroPublico'));
+const CumplimientoDiarioPage = lazy(
+  () => import('@/modules/bi-trade/pages/CumplimientoDiarioPage'),
+);
 
 // ── Valoración de desempeño ───────────────────────────────────────────────
 const ValoracionLayout = lazy(() => import('@/modules/valoracion/pages/ValoracionLayout'));
@@ -28,12 +39,8 @@ const ValoracionHomePage = lazy(() => import('@/modules/valoracion/pages/Valorac
 const MisEvaluacionesPage = lazy(() => import('@/modules/valoracion/pages/MisEvaluacionesPage'));
 const ResponderPage = lazy(() => import('@/modules/valoracion/pages/ResponderPage'));
 const MisResultadosPage = lazy(() => import('@/modules/valoracion/pages/MisResultadosPage'));
-const ResultadoDetallePage = lazy(
-  () => import('@/modules/valoracion/pages/ResultadoDetallePage'),
-);
-const ResultadosEquipoPage = lazy(
-  () => import('@/modules/valoracion/pages/ResultadosEquipoPage'),
-);
+const ResultadoDetallePage = lazy(() => import('@/modules/valoracion/pages/ResultadoDetallePage'));
+const ResultadosEquipoPage = lazy(() => import('@/modules/valoracion/pages/ResultadosEquipoPage'));
 const DashboardPage = lazy(() => import('@/modules/valoracion/pages/DashboardPage'));
 const PersonaPage = lazy(() => import('@/modules/valoracion/pages/PersonaPage'));
 const ConsolidadoPage = lazy(() => import('@/modules/valoracion/pages/ConsolidadoPage'));
@@ -87,6 +94,63 @@ const routes: RouteObject[] = [
                 path: 'bi-trade/claro/puntos-venta',
                 element: withSuspense(<PuntosVentaPage />),
               },
+              { path: 'bi-trade/claro/inventario', element: withSuspense(<InventarioPage />) },
+              { path: 'bi-trade/claro/metas', element: withSuspense(<MetasPage />) },
+              { path: 'bi-trade/claro/tickets', element: withSuspense(<TicketsPage />) },
+              // Homecenter, Falabella y Tmk: las mismas páginas de Claro con la fuente
+              // de cada canal. El layout pone la fuente, el acento y la franja.
+              {
+                path: 'bi-trade/ventas-hc',
+                element: withSuspense(<CanalLayout canal="hc" />),
+                children: [
+                  { index: true, element: withSuspense(<ClaroDashboardPage />) },
+                  { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
+                  { path: 'ventas', element: withSuspense(<VentasPage />) },
+                  { path: 'productos', element: withSuspense(<ProductosPage />) },
+                  { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
+                  { path: 'inventario', element: withSuspense(<InventarioPage />) },
+                  { path: 'metas', element: withSuspense(<MetasPage />) },
+                ],
+              },
+              {
+                path: 'bi-trade/ventas-falabella',
+                element: withSuspense(<CanalLayout canal="falabella" />),
+                children: [
+                  { index: true, element: withSuspense(<ClaroDashboardPage />) },
+                  { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
+                  { path: 'ventas', element: withSuspense(<VentasPage />) },
+                  { path: 'productos', element: withSuspense(<ProductosPage />) },
+                  { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
+                  { path: 'inventario', element: withSuspense(<InventarioPage />) },
+                  { path: 'metas', element: withSuspense(<MetasPage />) },
+                ],
+              },
+              {
+                path: 'bi-trade/ventas-tmk',
+                element: withSuspense(<CanalLayout canal="tmk" />),
+                children: [
+                  { index: true, element: withSuspense(<ClaroDashboardPage />) },
+                  { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
+                  { path: 'ventas', element: withSuspense(<VentasPage />) },
+                  { path: 'productos', element: withSuspense(<ProductosPage />) },
+                  { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
+                  { path: 'inventario', element: withSuspense(<InventarioPage />) },
+                  { path: 'metas', element: withSuspense(<MetasPage />) },
+                ],
+              },
+              {
+                path: 'bi-trade/claro/dia',
+                element: withSuspense(<CumplimientoDiarioPage />),
+              },
+              // Planes sin informe todavía: la página dice «en construcción».
+              {
+                path: 'bi-trade/plan-recomiendame-belkin',
+                element: withSuspense(<PlanEnConstruccionPage plan="belkin" />),
+              },
+              {
+                path: 'bi-trade/plan-partners',
+                element: withSuspense(<PlanEnConstruccionPage plan="partners" />),
+              },
             ],
           },
           {
@@ -117,6 +181,20 @@ const routes: RouteObject[] = [
           },
         ],
       },
+    ],
+  },
+
+  // ── Tablero compartido por enlace ───────────────────────────────────────
+  // Fuera de `RequireAuth` y sin `AppLayout`: no pide sesión ni muestra la
+  // navegación de la app. Las hojas son las mismas páginas del tablero; el
+  // layout les da una fuente de datos pública y de solo lectura.
+  {
+    path: 'tablero/:token',
+    element: withSuspense(<TableroPublicoLayout />),
+    children: [
+      { index: true, element: <ClaroDashboardPage /> },
+      { path: 'dia', element: <CumplimientoDiarioPage /> },
+      { path: 'tickets', element: <TicketsPage /> },
     ],
   },
 

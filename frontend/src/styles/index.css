@@ -1,7 +1,7 @@
 @import 'tailwindcss';
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -163,16 +163,16 @@
       niveles contiguos. El color nunca va solo: cada nivel se muestra con su
       nombre al lado.                                                       */
 :root {
-  --chart-1: oklch(0.30 0 0);
+  --chart-1: oklch(0.3 0 0);
   --chart-2: oklch(0.44 0 0);
   --chart-3: oklch(0.56 0 0);
   --chart-4: oklch(0.68 0 0);
-  --chart-5: oklch(0.80 0 0);
+  --chart-5: oklch(0.8 0 0);
 
   --success: oklch(0.55 0.14 155);
   --warning: oklch(0.62 0.14 70);
 
-  --level-referente: oklch(0.50 0.14 155);
+  --level-referente: oklch(0.5 0.14 155);
   --level-consolidado: oklch(0.66 0.13 150);
   --level-desarrollo: oklch(0.77 0.14 85);
   --level-acompanamiento: oklch(0.62 0.16 35);
@@ -181,7 +181,7 @@
 
 .dark {
   --chart-1: oklch(0.92 0 0);
-  --chart-2: oklch(0.80 0 0);
+  --chart-2: oklch(0.8 0 0);
   --chart-3: oklch(0.68 0 0);
   --chart-4: oklch(0.56 0 0);
   --chart-5: oklch(0.45 0 0);
@@ -192,7 +192,7 @@
   --level-referente: oklch(0.58 0.16 158);
   --level-consolidado: oklch(0.76 0.15 150);
   --level-desarrollo: oklch(0.86 0.16 85);
-  --level-acompanamiento: oklch(0.70 0.18 32);
+  --level-acompanamiento: oklch(0.7 0.18 32);
   --level-intervencion: oklch(0.54 0.19 22);
 }
 
@@ -301,4 +301,58 @@
 }
 :root[data-radius='rounded'] {
   --radius: 1rem;
+}
+
+/* ── Canal Homecenter ─────────────────────────────────────────────────────
+   Todo lo que va dentro de `[data-canal='hc']` toma el acento de Homecenter:
+   botones, pestaña activa, foco y la serie principal de las gráficas. Está en
+   un solo lugar para que cambiar el color de HC sea tocar estas variables.
+   El naranja es oscuro a propósito: con texto blanco encima pasa contraste AA. */
+[data-canal='hc'] {
+  --primary: oklch(0.56 0.19 42);
+  --primary-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.56 0.19 42);
+  --chart-1: oklch(0.56 0.19 42);
+}
+
+.dark [data-canal='hc'] {
+  --primary: oklch(0.72 0.17 50);
+  --primary-foreground: oklch(0.2 0.03 45);
+  --ring: oklch(0.72 0.17 50);
+  --chart-1: oklch(0.74 0.16 52);
+}
+
+/* ── Canal Falabella ──────────────────────────────────────────────────────
+   Igual que Homecenter, en su propio color: el verde de Falabella. Es un verde
+   más oscuro que el de la marca para que el texto blanco encima pase AA. */
+[data-canal='falabella'] {
+  --primary: oklch(0.52 0.14 138);
+  --primary-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.52 0.14 138);
+  --chart-1: oklch(0.52 0.14 138);
+}
+
+.dark [data-canal='falabella'] {
+  --primary: oklch(0.8 0.17 128);
+  --primary-foreground: oklch(0.22 0.05 135);
+  --ring: oklch(0.8 0.17 128);
+  --chart-1: oklch(0.8 0.17 128);
+}
+
+/* ── Canal Tmk Ecommerce Claro ────────────────────────────────────────────
+   Azul petróleo, no el rojo de Claro: en la app el rojo es el de borrar y el
+   de los errores, y un botón principal rojo se leería como «peligro». Oscuro
+   para que el texto blanco encima pase AA. */
+[data-canal='tmk'] {
+  --primary: oklch(0.5 0.1 200);
+  --primary-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.5 0.1 200);
+  --chart-1: oklch(0.5 0.1 200);
+}
+
+.dark [data-canal='tmk'] {
+  --primary: oklch(0.78 0.11 200);
+  --primary-foreground: oklch(0.22 0.04 205);
+  --ring: oklch(0.78 0.11 200);
+  --chart-1: oklch(0.78 0.11 200);
 }

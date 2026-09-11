@@ -1,4 +1,9 @@
-"""Entorno local: SQLite, DEBUG y CORS abierto al dev server de Vite."""
+"""
+Entorno local: DEBUG y CORS abierto al dev server de Vite.
+
+La base es la de DATABASE_URL en `.env` (el Postgres de Render); sin esa
+variable, el SQLite local.
+"""
 from .base import *  # noqa: F403
 
 DEBUG = True

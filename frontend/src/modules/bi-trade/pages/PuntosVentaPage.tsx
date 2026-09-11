@@ -35,21 +35,28 @@ import { ConfirmarBorrado } from '@/shared/components/feedback';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
 import { formatoNumero } from '@/shared/lib/formato';
 import { biTradeApi, type PuntoVenta, type PuntoVentaPayload } from '../api';
+import { useFuente } from '../fuente';
 import { useBiTradeMutation, useOpciones, usePuntosVenta } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
-
-const BASE = '/inicio/bi-trade/claro';
+import { BotonesExcel } from '../components/BotonesExcel';
 
 export default function PuntosVentaPage() {
+  const fuente = useFuente();
+  const recursos = fuente.recursos ?? biTradeApi;
   const [buscar, setBuscar] = useState('');
   const { data: puntos = [], isLoading } = usePuntosVenta({ search: buscar || undefined });
   const [editando, setEditando] = useState<PuntoVenta | null>(null);
   const [abierto, setAbierto] = useState(false);
+  const [vaciarAbierto, setVaciarAbierto] = useState(false);
   const [porBorrar, setPorBorrar] = useState<PuntoVenta | null>(null);
 
   const eliminar = useBiTradeMutation(
-    (id: string) => biTradeApi.puntosVenta.remove(id),
+    (id: string) => recursos.puntosVenta.remove(id),
     'Punto de venta eliminado',
+  );
+  const vaciar = useBiTradeMutation(
+    () => recursos.puntosVenta.removeAll(),
+    (datos) => datos.message,
   );
 
   return (
@@ -58,7 +65,7 @@ export default function PuntosVentaPage() {
         titulo="Puntos de venta"
         descripcion="El código lo define el negocio: es la llave con la que llegan los datos."
       >
-        <Button variant="outline" render={<Link to={BASE} />}>
+        <Button variant="outline" render={<Link to={fuente.base} />}>
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
@@ -70,6 +77,15 @@ export default function PuntosVentaPage() {
         >
           <PlusIcon data-icon="inline-start" />
           Nuevo punto de venta
+        </Button>
+        <BotonesExcel recurso="puntosVenta" />
+        <Button
+          variant="destructive"
+          disabled={puntos.length === 0 || vaciar.isPending}
+          onClick={() => setVaciarAbierto(true)}
+        >
+          <Trash2Icon data-icon="inline-start" />
+          Eliminar todo
         </Button>
       </Encabezado>
 
@@ -155,6 +171,17 @@ export default function PuntosVentaPage() {
       <PuntoVentaDialog abierto={abierto} onOpenChange={setAbierto} punto={editando} />
 
       <ConfirmarBorrado
+        abierto={vaciarAbierto}
+        onOpenChange={setVaciarAbierto}
+        titulo="¿Eliminar TODOS los registros?"
+        descripcion="Se borrarán todos los puntos de venta. Solo es posible si ninguno tiene ventas, inventario ni metas asociadas. Esta acción no se puede deshacer."
+        onConfirmar={() => {
+          vaciar.mutate(undefined);
+          setVaciarAbierto(false);
+        }}
+      />
+
+      <ConfirmarBorrado
         abierto={!!porBorrar}
         onOpenChange={(v) => !v && setPorBorrar(null)}
         titulo="¿Eliminar el punto de venta?"
@@ -185,14 +212,15 @@ function PuntoVentaDialog({
   punto: PuntoVenta | null;
 }) {
   const editando = !!punto;
+  const recursos = useFuente().recursos ?? biTradeApi;
   const { data: opciones } = useOpciones();
   const [datos, setDatos] = useState<PuntoVentaPayload>(VACIO);
 
   const guardar = useBiTradeMutation(
     (payload: Partial<PuntoVentaPayload>) =>
       editando
-        ? biTradeApi.puntosVenta.update(punto.idPuntoVenta, payload)
-        : biTradeApi.puntosVenta.create(payload),
+        ? recursos.puntosVenta.update(punto.idPuntoVenta, payload)
+        : recursos.puntosVenta.create(payload),
     editando ? 'Punto de venta actualizado' : 'Punto de venta creado',
   );
 

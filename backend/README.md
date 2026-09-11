@@ -122,7 +122,16 @@ Producto    → id_producto (PK de texto), nombre_producto, marca,
               precio_venta_claro, precio_venta_coltrade, puntaje
 Venta       → id_venta (autonumérico), id_producto, id_punto_venta,
               fecha_venta, cantidad_vendida
+Inventario  → id_inventario, id_producto, id_punto_venta, cantidad_inventario
+Meta        → id_meta, id_producto, id_punto_venta, meta_cantidad,
+              meta_dinero, meta_puntos
 ```
+
+Inventario y metas llevan **una sola fila por producto y punto de venta**
+(`unique_together`): el inventario es el stock actual, no un histórico, y dos
+metas para el mismo par harían imposible medir cumplimiento. La clase del
+modelo se llama `MetaComercial` porque Django reserva `Meta` para la
+configuración interna de cada modelo; la tabla sí se llama `metas`.
 
 Los nombres de campo son los del negocio, no se traducen: son las mismas
 columnas con las que llegan los archivos del BI. Las dos llaves primarias son
@@ -139,14 +148,50 @@ en el modelo y un mensaje claro en la API).
 | `/api/bi-trade/productos` | CRUD del catálogo |
 | `/api/bi-trade/ventas` | CRUD de ventas |
 | `GET /api/bi-trade/dashboard` | Tablero: totales y cortes por regional, marca, producto y PDV |
+| `/api/bi-trade/inventario` | CRUD de existencias |
+| `/api/bi-trade/metas` | CRUD de metas |
+| `GET /api/bi-trade/cumplimiento` | Real vs. meta en unidades, dinero y puntos |
 | `GET /api/bi-trade/opciones` | Catálogos para formularios y filtros |
+| `GET /api/bi-trade/<recurso>/plantilla` | Descarga el `.xlsx` en blanco |
+| `POST /api/bi-trade/<recurso>/importar` | Carga un `.xlsx` (campo `archivo`) |
+| `DELETE /api/bi-trade/<recurso>/eliminar-todos` | Vacía la tabla, si nada depende de ella |
 
 El tablero calcula el ingreso como `cantidad_vendida × precio_venta_coltrade`,
 todo con agregaciones en la base: la tabla de ventas es la que va a crecer.
 Acepta `?regional=` y `?marca=`.
 
+El cumplimiento compara cada medida contra su propia meta — unidades contra
+`meta_cantidad`, dinero contra `meta_dinero` y puntos (unidades × puntaje del
+producto) contra `meta_puntos` — y reporta el inventario como stock disponible
+más su cobertura sobre lo ya vendido. Una meta sin ventas aparece como 0%, no
+desaparece del listado.
+
+> ⚠️ Al agregar por expresión, la anotación por línea **no puede llamarse igual
+> que el alias del `aggregate`**: Django resuelve el alias contra sí mismo y
+> devuelve `0` en silencio. Por eso las anotaciones llevan el sufijo `_linea`.
+
 Consultar solo exige tener la app; crear, editar o borrar exige
 `bi-trade:data:manage`.
+
+### Excel
+
+`excel.py` define una `Columna` por campo y de ahí salen **las dos cosas**: la
+plantilla que se descarga y el lector que valida lo que se sube. Así la
+plantilla nunca se desincroniza del importador.
+
+La plantilla trae dos hojas: `Datos` (encabezados congelados, una fila de
+ejemplo y desplegables en las columnas con opciones) e `Instrucciones` (tipo de
+cada columna, si es obligatoria y los valores válidos).
+
+La importación es **todo o nada**: si una fila falla no se guarda ninguna y se
+devuelve el detalle en `filas: [{fila, errores}]` para corregir el archivo de
+una sola pasada. Las columnas se localizan por el texto del encabezado, no por
+su posición, así que reordenarlas en Excel no rompe nada.
+
+Donde hay clave natural la carga **actualiza en vez de duplicar**: el código en
+puntos de venta y productos, el par producto + punto de venta en inventario y
+metas. Las ventas no tienen clave natural, así que reimportar el mismo archivo
+sí duplica — la plantilla lo advierte.
 
 ```bash
 python manage.py seed_bi_trade_app             # app + permiso

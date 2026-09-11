@@ -1,5 +1,5 @@
 """Quién puede consultar y quién puede editar los datos de BI Trade."""
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 APP_CODE = 'bi-trade'
 MANAGE = 'bi-trade:data:manage'
@@ -33,3 +33,18 @@ class CanManageData(BasePermission):
         if not (user and user.is_authenticated):
             return False
         return user.is_admin or MANAGE in user.get_effective_permissions()
+
+
+class ReadOnlyOrCanManage(BasePermission):
+    """Consultar solo pide la app; crear, editar o borrar pide el permiso.
+
+    Va como clase de permiso y no como lógica dentro de `get_permissions()`
+    para que una `@action` pueda declarar los suyos y DRF los respete.
+    """
+
+    message = CanManageData.message
+
+    def has_permission(self, request, view) -> bool:
+        if request.method in SAFE_METHODS:
+            return True
+        return CanManageData().has_permission(request, view)

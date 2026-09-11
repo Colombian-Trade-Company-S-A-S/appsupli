@@ -1,7 +1,7 @@
 """Admin de Django para BI Trade Marketing."""
 from django.contrib import admin
 
-from .models import Producto, PuntoVenta, Venta
+from .models import Inventario, MetaComercial, Producto, PuntoVenta, Venta
 
 
 @admin.register(PuntoVenta)
@@ -27,3 +27,19 @@ class VentaAdmin(admin.ModelAdmin):
     list_filter = ('fecha_venta', 'id_punto_venta__regional')
     autocomplete_fields = ('id_producto', 'id_punto_venta')
     date_hierarchy = 'fecha_venta'
+
+
+@admin.register(Inventario)
+class InventarioAdmin(admin.ModelAdmin):
+    list_display = ('id_punto_venta', 'id_producto', 'cantidad_inventario')
+    list_filter = ('id_punto_venta__regional', 'id_producto__marca')
+    autocomplete_fields = ('id_producto', 'id_punto_venta')
+
+
+@admin.register(MetaComercial)
+class MetaAdmin(admin.ModelAdmin):
+    list_display = (
+        'id_punto_venta', 'id_producto', 'meta_cantidad',
+    )
+    list_filter = ('id_punto_venta__regional', 'id_producto__marca')
+    autocomplete_fields = ('id_producto', 'id_punto_venta')

@@ -59,8 +59,20 @@ El botón del topbar muestra el atajo para quien no lo conoce.
 | `/inicio/bi-trade` | Portada con la tarjeta **BI Claro punto de venta** |
 | `…/claro` | Tablero: KPIs, ingresos por mes, cortes y rankings |
 | `…/claro/ventas`, `…/claro/productos`, `…/claro/puntos-venta` | CRUD de cada modelo |
+| `…/claro/inventario`, `…/claro/metas` | CRUD de existencias y objetivos |
 
-Los tres botones para editar la información están en el encabezado del tablero.
+Los cinco botones para editar la información están en el encabezado del tablero.
+
+Cada CRUD trae **Descargar plantilla** e **Importar Excel** (`BotonesExcel`), más
+un **Eliminar todo** en rojo. Si la importación falla, el diálogo lista los
+errores fila por fila; si el borrado masivo se bloquea, el toast dice qué
+depende de esa tabla. Las descargas van por el cliente HTTP y no por un `<a
+href>`, porque necesitan la cabecera `Authorization`.
+
+La sección de **cumplimiento** compara lo vendido contra la meta en unidades,
+dinero y puntos. La barra se corta en 100% —mide avance hacia el objetivo, no
+una magnitud abierta— y el número real va al lado, así un 130% se sigue
+leyendo aunque la barra esté llena.
 Las piezas genéricas (`Kpi`, `Encabezado`, `EstadoTabla`, `BarraProporcion`)
 viven en `src/shared/components/layout/` y los formatos de fecha y moneda en
 `src/shared/lib/formato.ts`: las comparten los dos módulos en vez de
