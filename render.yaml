@@ -11,12 +11,13 @@
 # CSRF_TRUSTED_ORIGINS y VITE_API_URL con los dominios reales.
 services:
   - type: web
-    name: supli-api
+    name: supli-api-backend
     runtime: docker
     plan: free
     # La misma región de la base, para poder usar su URL interna.
     region: oregon
     dockerfilePath: ./backend/Dockerfile
+    # El contexto es backend/: ahí están requirements.txt y manage.py.
     dockerContext: ./backend
     healthCheckPath: /api/health
     envVars:
@@ -25,14 +26,14 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ALLOWED_ORIGINS
-        value: https://supli-web.onrender.com
+        value: https://appsupli.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
-        value: https://supli-web.onrender.com
+        value: https://appsupli.onrender.com
       - key: WEB_CONCURRENCY
         value: "2"
 
   - type: web
-    name: supli-web
+    name: appsupli
     runtime: static
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist
@@ -42,7 +43,7 @@ services:
       # Se lee al construir: si cambia el dominio del backend, hay que volver
       # a desplegar el frontend.
       - key: VITE_API_URL
-        value: https://supli-api.onrender.com/api
+        value: https://supli-api-backend.onrender.com/api
     routes:
       # Es una SPA: cualquier ruta (/inicio/…, /tablero/<token>) la resuelve React.
       - type: rewrite
