@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircleIcon } from 'lucide-react';
+import { AlertCircleIcon, ArrowLeftIcon, MailIcon } from 'lucide-react';
 import { useAuth } from '@/core/auth';
 import {
   Alert,
@@ -10,7 +10,11 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
-  Input,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  PasswordInput,
+  Separator,
   Spinner,
 } from '@/shared/components/ui';
 
@@ -36,32 +40,39 @@ export default function LoginPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Iniciar sesión</h1>
-        <p className="text-sm text-muted-foreground">Accede con tu cuenta corporativa.</p>
+      <div className="flex flex-col gap-2">
+        <h1 className="text-3xl font-semibold tracking-tight">Hola de nuevo</h1>
+        <p className="text-sm text-muted-foreground">
+          Entra con tu correo corporativo y tu contraseña.
+        </p>
       </div>
 
       <form onSubmit={onSubmit} noValidate>
         <FieldGroup>
           <Field data-invalid={!!emailError || undefined}>
             <FieldLabel htmlFor="email">Correo corporativo</FieldLabel>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              placeholder="nombre@supli.tech"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              aria-invalid={!!emailError || undefined}
-            />
+            <InputGroup>
+              <InputGroupAddon>
+                <MailIcon />
+              </InputGroupAddon>
+              <InputGroupInput
+                id="email"
+                type="email"
+                autoComplete="email"
+                autoFocus
+                placeholder="nombre@empresa.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                aria-invalid={!!emailError || undefined}
+              />
+            </InputGroup>
             {emailError && <FieldError>{emailError}</FieldError>}
           </Field>
 
           <Field data-invalid={!!passwordError || undefined}>
             <FieldLabel htmlFor="password">Contraseña</FieldLabel>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="current-password"
               placeholder="••••••••"
               value={password}
@@ -81,17 +92,26 @@ export default function LoginPage() {
           <Field>
             <Button type="submit" size="lg" disabled={isSubmitting}>
               {isSubmitting && <Spinner data-icon="inline-start" />}
-              Entrar
+              {isSubmitting ? 'Entrando…' : 'Entrar'}
             </Button>
           </Field>
         </FieldGroup>
       </form>
 
-      <p className="text-sm text-muted-foreground">
-        <Link to="/" className="underline underline-offset-4 hover:text-foreground">
+      <div className="flex flex-col gap-4">
+        <Separator />
+        <p className="text-sm text-muted-foreground">
+          ¿No puedes entrar? Pídele al administrador de la plataforma que revise tu cuenta o
+          restablezca tu contraseña.
+        </p>
+        <Link
+          to="/"
+          className="flex items-center gap-1.5 self-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeftIcon className="size-4" />
           Volver al inicio
         </Link>
-      </p>
+      </div>
     </div>
   );
 }
