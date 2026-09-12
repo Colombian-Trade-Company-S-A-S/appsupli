@@ -39,7 +39,7 @@ export const COMANDOS_POR_APP: Record<string, ComandoDeApp[]> = {
       keywords: ['mejora', 'compromisos', 'brechas'],
     },
     {
-      label: 'Dashboard de valoración',
+      label: 'Dashboard de Supli performance',
       to: '/inicio/valoracion/dashboard',
       keywords: ['informes', 'métricas', 'organizacional'],
       permiso: 'valoracion:dashboard:view',

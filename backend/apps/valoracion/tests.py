@@ -515,6 +515,32 @@ def test_cada_quien_ve_lo_que_le_corresponde(app_valoracion, banco, ciclo):
     assert respuesta.data['totals']['people'] == 1
 
 
+def test_promedio_de_lideres_cuenta_la_evaluacion_de_liderazgo(app_valoracion, banco, ciclo):
+    """Líder es quien se evaluó con el modelo de liderazgo, no el tipo de su cuenta."""
+    evaluador = crear_usuario('evaluador@supli.tech', app_valoracion)
+    evaluado_lider = crear_usuario('coordinador@supli.tech', app_valoracion)
+    lider_de_cuenta = crear_usuario('lider@supli.tech', app_valoracion, kind=User.Kind.LEADER)
+    for evaluado, tipo, valor in (
+        (evaluado_lider, EvaluationType.LEADER, 5),
+        (lider_de_cuenta, EvaluationType.OPERATIONAL, 3),
+    ):
+        asignacion = Assignment.objects.create(
+            cycle=ciclo,
+            evaluator=evaluador,
+            evaluatee=evaluado,
+            evaluator_role=EvaluatorRole.MANAGER,
+            evaluation_type=tipo,
+        )
+        responder(asignacion, banco, valor)
+        scoring.recompute_result(ciclo, evaluado)
+
+    ceo = crear_usuario('ceo@supli.tech', app_valoracion)
+    dar_rol(ceo, 'ceo', ['valoracion:dashboard:view'])
+    datos = cliente_de(ceo).get('/api/valoracion/dashboard').data
+    assert datos['leaders_count'] == 1
+    assert datos['leaders_average'] == pytest.approx(100.0)
+
+
 def test_ciclo_anonimo_oculta_al_evaluador(app_valoracion, banco):
     ahora = timezone.now()
     ciclo = Cycle.objects.create(

@@ -114,7 +114,9 @@ def dashboard(request):
     resultados, consolidado, filtros = filtered_results(request)
 
     promedio = _average([c['percentage'] for c in consolidado])
-    lideres = [c for c in consolidado if c['kind'] == User.Kind.LEADER]
+    # Líder = quien fue evaluado con el modelo de liderazgo, no el tipo de
+    # usuario de su cuenta: así lo contaba el módulo anterior.
+    lideres = [c for c in consolidado if c['evaluation_type'] == EvaluationType.LEADER]
 
     conteo = Counter(c['level'] for c in consolidado)
     base = len(consolidado)

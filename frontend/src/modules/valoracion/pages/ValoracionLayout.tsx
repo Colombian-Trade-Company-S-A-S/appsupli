@@ -81,7 +81,7 @@ export default function ValoracionLayout() {
   const { data: resumen, isLoading } = useResumen();
   const { pathname } = useLocation();
 
-  if (isLoading || !resumen) return <FullPageLoader label="Abriendo valoración…" />;
+  if (isLoading || !resumen) return <FullPageLoader label="Abriendo Supli performance…" />;
 
   const secciones = SECCIONES.filter((s) => s.visible(resumen.capabilities));
   const activa = (seccion: Seccion) => {

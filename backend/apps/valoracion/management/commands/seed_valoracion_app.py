@@ -1,5 +1,5 @@
 """
-Crea la aplicación de Valoración, sus permisos y los roles del módulo.
+Crea la aplicación de Valoración (Supli performance), sus permisos y los roles del módulo.
 
     python manage.py seed_valoracion_app
     python manage.py seed_valoracion_app --asignar-a correo@supli.tech
@@ -27,13 +27,13 @@ PERMISOS = [
 ROLES = [
     (
         'valoracion-people',
-        'Valoración · Admin People',
+        'Supli performance · Admin People',
         'Acceso total al módulo: configuración, ciclos, resultados y publicación.',
         [code for code, _ in PERMISOS],
     ),
     (
         'valoracion-bi-tech',
-        'Valoración · BI / Tech',
+        'Supli performance · BI / Tech',
         'Configura el modelo de evaluación y ve los informes.',
         [
             'valoracion:config:manage',
@@ -43,7 +43,7 @@ ROLES = [
     ),
     (
         'valoracion-ceo',
-        'Valoración · Dirección',
+        'Supli performance · Dirección',
         'Visibilidad total de resultados, solo lectura.',
         ['valoracion:results:view_all', 'valoracion:dashboard:view'],
     ),
@@ -51,7 +51,7 @@ ROLES = [
 
 
 class Command(BaseCommand):
-    help = 'Crea/actualiza la aplicación de Valoración con sus permisos y roles.'
+    help = 'Crea/actualiza la aplicación Supli performance con sus permisos y roles.'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -72,7 +72,7 @@ class Command(BaseCommand):
         app, creada = Application.objects.update_or_create(
             code='valoracion',
             defaults={
-                'name': 'Valoración',
+                'name': 'Supli performance',
                 'description': (
                     'Evaluación de desempeño 180°: ciclos, resultados y planes de acción.'
                 ),

@@ -39,7 +39,7 @@ export default function ValoracionHomePage() {
   return (
     <div className="flex flex-col gap-6">
       <Encabezado
-        titulo="Valoración de desempeño"
+        titulo="Supli performance"
         descripcion="Ciclos de evaluación 180°, resultados por persona y planes de mejora."
       />
 

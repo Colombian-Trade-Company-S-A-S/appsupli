@@ -49,7 +49,7 @@ export default function HomeWidget() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ClipboardListIcon className="size-4 text-muted-foreground" />
-          Valoración de desempeño
+          Supli performance
         </CardTitle>
         <CardDescription>
           {alDia

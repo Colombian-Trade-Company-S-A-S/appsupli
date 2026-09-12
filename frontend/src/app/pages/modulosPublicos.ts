@@ -25,7 +25,7 @@ export interface ModuloPublico {
 export const MODULOS: ModuloPublico[] = [
   {
     icono: GaugeIcon,
-    titulo: 'Valoración de desempeño',
+    titulo: 'Supli performance',
     corto: 'Evaluaciones, resultados y planes de acción',
     descripcion:
       'Los ciclos de evaluación de principio a fin: cada persona responde, ve sus resultados y los líderes siguen a su equipo.',
