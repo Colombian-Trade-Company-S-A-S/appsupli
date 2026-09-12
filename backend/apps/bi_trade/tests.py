@@ -23,23 +23,29 @@ from apps.bi_trade.models import (
     InventarioFalabella,
     InventarioHc,
     InventarioTmk,
+    MarcaPartner,
     Materiales,
     MetaComercial,
     MetaComercialFalabella,
     MetaComercialHc,
     MetaComercialTmk,
+    MetaPartner,
     Producto,
     ProductoFalabella,
     ProductoHc,
+    ProductoPartner,
     ProductoTmk,
     PuntoVenta,
     PuntoVentaFalabella,
     PuntoVentaHc,
+    PuntoVentaPartner,
     PuntoVentaTmk,
     Regional,
     RegionalFalabella,
     RegionalHc,
+    RegionalPartner,
     RegionalTmk,
+    RegistroPartner,
     Venta,
     VentaFalabella,
     VentaHc,
@@ -3826,3 +3832,469 @@ def test_los_canales_aparte_no_tienen_puntos_en_nada(
     # Claro sí los tiene.
     dia = cliente.get('/api/bi-trade/cumplimiento-diario?fecha=2026-03-04').json()
     assert 'realPuntos' in _de_puntos(dia)
+
+
+# ── Plan Partners ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def catalogo_partners():
+    norte = RegionalPartner.objects.create(nombre='Región Centro (Z. Norte)')
+    sur = RegionalPartner.objects.create(nombre='Región Centro (Z. Sur)')
+    punto_norte = PuntoVentaPartner.objects.create(
+        id_punto_venta='C192',
+        nombre_pdv='Cav Cucuta Centro Av Quinta',
+        id_regional=norte,
+    )
+    punto_sur = PuntoVentaPartner.objects.create(
+        id_punto_venta='C108',
+        nombre_pdv='Cav Bogota Plaza Claro',
+        id_regional=sur,
+    )
+    producto = ProductoPartner.objects.create(id_producto='7015490', nombre_producto='Estandar')
+    return punto_norte, punto_sur, producto
+
+
+def _recomendacion(punto, producto, serial='69410004009849'):
+    return {
+        'idRegional': punto.id_regional_id,
+        'marca': MarcaPartner.MOTOROLA.value,
+        'idPuntoVenta': punto.pk,
+        'idProducto': producto.pk,
+        'fechaRecomendacion': str(timezone.localdate()),
+        'serial': serial,
+        'documentoPromotor': '1092389375',
+        'factura': '10500000653130057938',
+    }
+
+
+def test_el_formulario_guarda_el_codigo_del_punto_y_del_producto(
+    app_bi_trade, catalogo_partners
+):
+    """En el formulario se ven pegados; en la tabla van por separado."""
+    norte, _sur, producto = catalogo_partners
+    promotor = crear_usuario('promotor@supli.tech', app_bi_trade)
+
+    respuesta = cliente_de(promotor).post(
+        '/api/bi-trade/partners/registros', _recomendacion(norte, producto), format='json'
+    )
+
+    assert respuesta.status_code == 201, respuesta.data
+    cuerpo = respuesta.json()
+    assert cuerpo['idPuntoVenta'] == 'C192'
+    assert cuerpo['idProducto'] == '7015490'
+    assert cuerpo['puntoVentaEtiqueta'] == 'Cav Cucuta Centro Av Quinta - C192'
+    assert cuerpo['productoEtiqueta'] == 'Estandar - 7015490'
+
+    registro = RegistroPartner.objects.get()
+    assert (registro.id_punto_venta_id, registro.id_producto_id) == ('C192', '7015490')
+    assert registro.registrado_por == promotor
+
+
+def test_el_punto_de_venta_tiene_que_ser_de_la_regional_elegida(app_bi_trade, catalogo_partners):
+    norte, sur, producto = catalogo_partners
+    promotor = crear_usuario('promotor@supli.tech', app_bi_trade)
+
+    cuerpo = _recomendacion(norte, producto)
+    cuerpo['idRegional'] = sur.id_regional_id
+    respuesta = cliente_de(promotor).post(
+        '/api/bi-trade/partners/registros', cuerpo, format='json'
+    )
+
+    assert respuesta.status_code == 400
+    assert RegistroPartner.objects.count() == 0
+
+
+def test_avisa_si_el_serial_ya_estaba_registrado(app_bi_trade, catalogo_partners):
+    """El repetido no se bloquea —un equipo puede volver— pero sí se avisa."""
+    norte, _sur, producto = catalogo_partners
+    cliente = cliente_de(crear_usuario('promotor@supli.tech', app_bi_trade))
+    ruta = '/api/bi-trade/partners/registros'
+
+    primera = cliente.post(ruta, _recomendacion(norte, producto), format='json')
+    segunda = cliente.post(ruta, _recomendacion(norte, producto), format='json')
+
+    assert 'ya tenía' not in primera.json()['message']
+    assert segunda.status_code == 201
+    assert 'ya tenía 1 registro(s)' in segunda.json()['message']
+    assert RegistroPartner.objects.count() == 2
+
+
+def test_el_documento_del_promotor_va_sin_puntos(app_bi_trade, catalogo_partners):
+    norte, _sur, producto = catalogo_partners
+    cuerpo = _recomendacion(norte, producto)
+    cuerpo['documentoPromotor'] = '1.092.389.375'
+
+    respuesta = cliente_de(crear_usuario('promotor@supli.tech', app_bi_trade)).post(
+        '/api/bi-trade/partners/registros', cuerpo, format='json'
+    )
+
+    assert respuesta.status_code == 400
+    assert 'documentoPromotor' in respuesta.json()['errors']
+
+
+def test_registrar_no_pide_permiso_pero_corregir_si(app_bi_trade, catalogo_partners):
+    norte, _sur, producto = catalogo_partners
+    promotor = crear_usuario('promotor@supli.tech', app_bi_trade)
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    ruta = '/api/bi-trade/partners/registros'
+
+    creada = cliente_de(promotor).post(ruta, _recomendacion(norte, producto), format='json')
+    assert creada.status_code == 201
+
+    detalle = f'{ruta}/{creada.json()["idRegistro"]}'
+    correccion = {'factura': '123456'}
+    assert cliente_de(promotor).patch(detalle, correccion, format='json').status_code == 403
+    assert cliente_de(editor).patch(detalle, correccion, format='json').status_code == 200
+
+
+def test_las_opciones_traen_cada_punto_con_su_regional(app_bi_trade, catalogo_partners):
+    """El formulario filtra los puntos con esto: antes eran tres preguntas."""
+    norte, _sur, _producto = catalogo_partners
+    respuesta = cliente_de(crear_usuario('promotor@supli.tech', app_bi_trade)).get(
+        '/api/bi-trade/partners/opciones'
+    )
+
+    assert respuesta.status_code == 200
+    opciones = respuesta.json()
+    assert len(opciones['regionales']) == 2
+    # Atado al modelo: agregar una marca no debe romper esta prueba.
+    assert len(opciones['marcas']) == len(MarcaPartner.choices)
+    por_codigo = {punto['value']: punto for punto in opciones['puntosVenta']}
+    assert por_codigo['C192']['idRegional'] == norte.id_regional_id
+    assert por_codigo['C192']['label'] == 'Cav Cucuta Centro Av Quinta - C192'
+
+
+def test_las_listas_del_formulario_se_administran_desde_ahi(app_bi_trade, catalogo_partners):
+    """Regionales, puntos y productos se agregan sin pasar por un despliegue."""
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+
+    regional = cliente.post(
+        '/api/bi-trade/partners/regionales', {'nombre': 'Región Eje Cafetero'}, format='json'
+    )
+    assert regional.status_code == 201
+
+    punto = cliente.post(
+        '/api/bi-trade/partners/puntos-venta',
+        {
+            'idPuntoVenta': 'C900',
+            'nombrePdv': 'Cav Pereira Victoria',
+            'idRegional': regional.json()['idRegional'],
+        },
+        format='json',
+    )
+    assert punto.status_code == 201
+    assert punto.json()['etiqueta'] == 'Cav Pereira Victoria - C900'
+
+    producto = cliente.post(
+        '/api/bi-trade/partners/productos',
+        {'idProducto': '7020000', 'nombreProducto': 'Clear'},
+        format='json',
+    )
+    assert producto.status_code == 201
+
+    # Lo que se agregó ya aparece en el formulario.
+    opciones = cliente.get('/api/bi-trade/partners/opciones').json()
+    assert 'C900' in {p['value'] for p in opciones['puntosVenta']}
+    assert '7020000' in {p['value'] for p in opciones['productos']}
+
+    # Y se puede quitar mientras nadie lo haya usado.
+    assert cliente.delete('/api/bi-trade/partners/productos/7020000').status_code == 204
+    assert cliente.delete('/api/bi-trade/partners/puntos-venta/C900').status_code == 204
+
+
+def test_administrar_las_listas_pide_permiso(app_bi_trade, catalogo_partners):
+    promotor = crear_usuario('promotor@supli.tech', app_bi_trade)
+    respuesta = cliente_de(promotor).post(
+        '/api/bi-trade/partners/regionales', {'nombre': 'Región Eje Cafetero'}, format='json'
+    )
+    assert respuesta.status_code == 403
+
+
+def test_no_se_borra_del_catalogo_lo_que_ya_tiene_registros(app_bi_trade, catalogo_partners):
+    """Se desactiva, no se borra: si no, cambiarían registros ya cargados."""
+    norte, _sur, producto = catalogo_partners
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+    cliente.post('/api/bi-trade/partners/registros', _recomendacion(norte, producto), format='json')
+
+    for ruta in (
+        f'/api/bi-trade/partners/puntos-venta/{norte.pk}',
+        f'/api/bi-trade/partners/productos/{producto.pk}',
+        f'/api/bi-trade/partners/regionales/{norte.id_regional_id}',
+    ):
+        respuesta = cliente.delete(ruta)
+        assert respuesta.status_code == 400, ruta
+        assert respuesta.json()['code'] == 'protected'
+
+    # Desactivarlo sí se puede, y deja de aparecer en el formulario.
+    assert (
+        cliente.patch(
+            f'/api/bi-trade/partners/productos/{producto.pk}', {'activo': False}, format='json'
+        ).status_code
+        == 200
+    )
+    opciones = cliente.get('/api/bi-trade/partners/opciones').json()
+    assert producto.pk not in {p['value'] for p in opciones['productos']}
+
+
+# ── Plan Partners: el formulario abierto por enlace ────────────────────────
+#
+# Va por su propio prefijo y sin contraseña: se diligencia a diario y no
+# muestra nada. Lo que hay que cuidar es que por esa puerta no se pueda hacer
+# nada más que enviar.
+
+RUTA_FORMULARIO = '/api/publico/formulario'
+
+
+@pytest.fixture
+def enlace_formulario(app_bi_trade):
+    """Un enlace del formulario del plan: solo el token, no tiene contraseña."""
+    editor = crear_usuario('editor-form@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    datos = (
+        cliente_de(editor)
+        .post(
+            '/api/bi-trade/enlaces',
+            {'nombre': 'Promotores Costa', 'canal': 'partners'},
+            format='json',
+        )
+        .json()
+    )
+    assert datos['clave'] == ''
+    assert EnlacePublico.objects.get(token=datos['token']).clave_hash == ''
+    return datos['token']
+
+
+def test_el_formulario_publico_se_diligencia_sin_cuenta_ni_clave(
+    enlace_formulario, catalogo_partners
+):
+    norte, _sur, producto = catalogo_partners
+    token = enlace_formulario
+    anonimo = APIClient()
+
+    opciones = anonimo.get(f'{RUTA_FORMULARIO}/{token}/opciones')
+    assert opciones.status_code == 200
+    assert len(opciones.json()['puntosVenta']) == 2
+
+    respuesta = anonimo.post(
+        f'{RUTA_FORMULARIO}/{token}/registros',
+        _recomendacion(norte, producto),
+        format='json',
+    )
+
+    assert respuesta.status_code == 201
+    assert respuesta.json()['origen'] == 'Enlace · Promotores Costa'
+    registro = RegistroPartner.objects.get()
+    assert registro.registrado_por is None
+    assert registro.enlace.nombre == 'Promotores Costa'
+    # En un enlace de formulario los «accesos» son los envíos recibidos.
+    assert EnlacePublico.objects.get(pk=registro.enlace_id).accesos == 1
+
+
+def test_por_el_formulario_no_se_puede_hacer_nada_mas(enlace_formulario):
+    """Dos rutas y nada más: ni tableros, ni lo ya cargado, ni catálogos."""
+    token = enlace_formulario
+    anonimo = APIClient()
+
+    for ruta in (
+        f'{RUTA_PUBLICA}/{token}',  # la puerta del tablero
+        f'{RUTA_PUBLICA}/{token}/avance-mensual',
+        f'{RUTA_PUBLICA}/{token}/cumplimiento-diario',
+        f'{RUTA_PUBLICA}/{token}/tickets',
+        f'{RUTA_PUBLICA}/{token}/productos',
+        f'{RUTA_PUBLICA}/{token}/puntos-venta',
+    ):
+        assert anonimo.get(ruta).status_code == 404, ruta
+
+    # Enviar es lo único: los registros cargados no se leen desde aquí.
+    assert anonimo.get(f'{RUTA_FORMULARIO}/{token}/registros').status_code == 405
+    # Y la API de la app le sigue cerrada.
+    assert anonimo.get('/api/bi-trade/partners/registros').status_code in (401, 403)
+
+
+def test_un_enlace_de_tablero_no_sirve_para_el_formulario(enlace, catalogo_partners):
+    norte, _sur, producto = catalogo_partners
+    token, _clave, _id = enlace
+    anonimo = APIClient()
+
+    assert anonimo.get(f'{RUTA_FORMULARIO}/{token}/opciones').status_code == 404
+    respuesta = anonimo.post(
+        f'{RUTA_FORMULARIO}/{token}/registros',
+        _recomendacion(norte, producto),
+        format='json',
+    )
+    assert respuesta.status_code == 404
+    assert RegistroPartner.objects.count() == 0
+
+
+def test_un_formulario_revocado_deja_de_recibir(
+    app_bi_trade, enlace_formulario, catalogo_partners
+):
+    norte, _sur, producto = catalogo_partners
+    token = enlace_formulario
+    editor = crear_usuario('revoca@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    id_enlace = EnlacePublico.objects.get(token=token).pk
+    cliente_de(editor).patch(
+        f'/api/bi-trade/enlaces/{id_enlace}', {'activo': False}, format='json'
+    )
+
+    anonimo = APIClient()
+    assert anonimo.get(f'{RUTA_FORMULARIO}/{token}/opciones').status_code == 404
+    respuesta = anonimo.post(
+        f'{RUTA_FORMULARIO}/{token}/registros',
+        _recomendacion(norte, producto),
+        format='json',
+    )
+    assert respuesta.status_code == 404
+    assert RegistroPartner.objects.count() == 0
+
+
+def test_el_formulario_no_tiene_contrasena_que_regenerar(app_bi_trade, enlace_formulario):
+    editor = crear_usuario('regenera@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    id_enlace = EnlacePublico.objects.get(token=enlace_formulario).pk
+
+    respuesta = cliente_de(editor).post(f'/api/bi-trade/enlaces/{id_enlace}/regenerar-clave')
+
+    assert respuesta.status_code == 400
+    assert respuesta.json()['code'] == 'sin_clave'
+
+
+# ── Plan Partners: metas y tablero ─────────────────────────────────────────
+
+
+def _excel_de_metas(filas: list[tuple]) -> SimpleUploadedFile:
+    """Un archivo con los mismos encabezados del Excel mensual de Trade."""
+    libro = openpyxl.Workbook()
+    hoja = libro.active
+    hoja.title = 'META'
+    hoja.append(['MES', 'AÑO', 'CENTRO DE COSTOS', 'META', 'MARCA', 'PUNTO DE VENTA'])
+    for fila in filas:
+        hoja.append(list(fila))
+    buffer = BytesIO()
+    libro.save(buffer)
+    return SimpleUploadedFile(
+        'metas.xlsx',
+        buffer.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+def test_las_metas_se_suben_con_el_excel_de_trade(app_bi_trade, catalogo_partners):
+    """El archivo mensual entra tal cual; lo que no está en el catálogo se lista."""
+    editor = crear_usuario('metas@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    archivo = _excel_de_metas(
+        [
+            ('JULIO', 2026, 'C192', 180.83, 'SAMSUNG', 'CAV CUCUTA CENTRO AV QUINTA'),
+            ('JULIO', 2026, 'C108', '60,5', 'MOTOROLA', 'CAV BOGOTA PLAZA CLARO'),
+            ('JULIO', 2026, 'C999', 10, 'SAMSUNG', 'CAV QUE NO EXISTE'),
+            ('JULIO', 2026, 'C192', 10, 'XIAOMI', 'CAV CUCUTA CENTRO AV QUINTA'),
+        ]
+    )
+
+    respuesta = cliente_de(editor).post(
+        '/api/bi-trade/partners/metas/importar', {'archivo': archivo}, format='multipart'
+    )
+
+    assert respuesta.status_code == 200, respuesta.data
+    datos = respuesta.json()
+    assert (datos['created'], datos['updated'], datos['skipped']) == (2, 0, 2)
+    assert datos['puntosDesconocidos'] == ['C999']
+    assert datos['marcasDesconocidas'] == ['XIAOMI']
+    # Los decimales del archivo se respetan, con coma o con punto.
+    assert str(MetaPartner.objects.get(id_punto_venta='C192').meta_unidades) == '180.83'
+    assert str(MetaPartner.objects.get(id_punto_venta='C108').meta_unidades) == '60.50'
+
+
+def test_subir_las_metas_pide_permiso(app_bi_trade, catalogo_partners):
+    promotor = crear_usuario('promotor@supli.tech', app_bi_trade)
+    archivo = _excel_de_metas([('JULIO', 2026, 'C192', 10, 'SAMSUNG', 'X')])
+
+    respuesta = cliente_de(promotor).post(
+        '/api/bi-trade/partners/metas/importar', {'archivo': archivo}, format='multipart'
+    )
+
+    assert respuesta.status_code == 403
+    assert MetaPartner.objects.count() == 0
+
+
+def test_el_tablero_mide_lo_registrado_contra_la_meta(app_bi_trade, catalogo_partners):
+    norte, _sur, producto = catalogo_partners
+    MetaPartner.objects.create(
+        anio=2026, mes=7, id_punto_venta=norte, marca=MarcaPartner.MOTOROLA, meta_unidades=10
+    )
+    for dia in (3, 3, 8):
+        RegistroPartner.objects.create(
+            id_regional=norte.id_regional,
+            marca=MarcaPartner.MOTOROLA,
+            id_punto_venta=norte,
+            id_producto=producto,
+            fecha_recomendacion=date(2026, 7, dia),
+            serial=f'S{dia}{RegistroPartner.objects.count()}',
+            documento_promotor='1092389375',
+            factura='F1',
+        )
+    # De otro mes: no debe entrar en el corte de julio.
+    RegistroPartner.objects.create(
+        id_regional=norte.id_regional,
+        marca=MarcaPartner.MOTOROLA,
+        id_punto_venta=norte,
+        id_producto=producto,
+        fecha_recomendacion=date(2026, 8, 1),
+        serial='OTRO-MES',
+        documento_promotor='1092389375',
+        factura='F2',
+    )
+
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    datos = cliente.get('/api/bi-trade/partners/dashboard?anio=2026&mes=7').json()
+
+    assert datos['filtros']['periodo'] == 'Julio 2026'
+    assert datos['totales']['unidades'] == 3
+    assert datos['totales']['meta'] == 10.0
+    assert datos['totales']['cumplimiento'] == 30.0
+    assert datos['totales']['faltante'] == 7.0
+    assert datos['totales']['promotores'] == 1
+    # Dos registros el día 3 y uno el 8.
+    assert [(f['fecha'], f['unidades']) for f in datos['porDia']] == [
+        ('2026-07-03', 2),
+        ('2026-07-08', 1),
+    ]
+    motorola = next(f for f in datos['porMarca'] if f['marca'] == MarcaPartner.MOTOROLA.value)
+    assert (motorola['unidades'], motorola['meta']) == (3, 10.0)
+
+
+def test_el_tablero_filtra_por_marca_y_por_punto(app_bi_trade, catalogo_partners):
+    """Filtrar por promotor no toca la meta: no está repartida por persona."""
+    norte, sur, producto = catalogo_partners
+    MetaPartner.objects.create(
+        anio=2026, mes=7, id_punto_venta=norte, marca=MarcaPartner.MOTOROLA, meta_unidades=10
+    )
+    MetaPartner.objects.create(
+        anio=2026, mes=7, id_punto_venta=sur, marca=MarcaPartner.SAMSUNG, meta_unidades=40
+    )
+    RegistroPartner.objects.create(
+        id_regional=norte.id_regional,
+        marca=MarcaPartner.MOTOROLA,
+        id_punto_venta=norte,
+        id_producto=producto,
+        fecha_recomendacion=date(2026, 7, 5),
+        serial='UNO',
+        documento_promotor='111',
+        factura='F',
+    )
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    solo_norte = cliente.get(
+        f'/api/bi-trade/partners/dashboard?anio=2026&mes=7&punto={norte.pk}'
+    ).json()
+    assert (solo_norte['totales']['unidades'], solo_norte['totales']['meta']) == (1, 10.0)
+
+    por_promotor = cliente.get(
+        '/api/bi-trade/partners/dashboard?anio=2026&mes=7&promotor=111'
+    ).json()
+    assert por_promotor['totales']['unidades'] == 1
+    assert por_promotor['totales']['meta'] == 50.0
+
+    ano_completo = cliente.get('/api/bi-trade/partners/dashboard?anio=2026&mes=0').json()
+    assert ano_completo['filtros']['periodo'] == 'Año 2026'
+    assert ano_completo['totales']['unidades'] == 1

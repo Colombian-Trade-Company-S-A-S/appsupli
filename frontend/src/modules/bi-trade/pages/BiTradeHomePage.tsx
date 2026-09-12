@@ -108,9 +108,9 @@ export default function BiTradeHomePage() {
           </Card>
         </Link>
 
-        {/* Los planes aún no tienen informe: la tarjeta ya lleva a su página. */}
+        {/* Cada plan lleva a su página; el que aún no tiene informe lo avisa. */}
         {CLAVES_PLANES.map((clave) => {
-          const { titulo, ruta, icono: Icono } = PLANES[clave];
+          const { titulo, ruta, icono: Icono, enConstruccion, descripcion } = PLANES[clave];
           return (
             <Link key={clave} to={ruta} className="group rounded-xl">
               <Card className="h-full transition-shadow hover:ring-primary/30">
@@ -120,11 +120,13 @@ export default function BiTradeHomePage() {
                       <Icono className="size-4" />
                     </span>
                     <span className="flex-1">{titulo}</span>
-                    <Badge variant="outline">En construcción</Badge>
+                    {enConstruccion ? (
+                      <Badge variant="outline">En construcción</Badge>
+                    ) : (
+                      <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                    )}
                   </CardTitle>
-                  <CardDescription>
-                    Este informe está en construcción. Muy pronto vas a poder verlo aquí.
-                  </CardDescription>
+                  <CardDescription>{descripcion}</CardDescription>
                 </CardHeader>
               </Card>
             </Link>

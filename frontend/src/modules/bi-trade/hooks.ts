@@ -3,11 +3,14 @@ import { toast } from 'sonner';
 import { ApiError, type Paginated } from '@/shared/api/http-client';
 import {
   biTradeApi,
+  partnersApi,
+  partnersTableroApi,
   type FiltrosAvance,
   type FiltrosConcurso,
   type FiltrosCumplimiento,
   type FiltrosDia,
   type FiltrosDashboard,
+  type FiltrosPartners,
 } from './api';
 import { useFuente, type FuenteDatos } from './fuente';
 
@@ -33,6 +36,13 @@ export const biTradeKeys = {
   tickets: (filtros: FiltrosConcurso) => ['bi-trade', 'tickets', filtros] as const,
   cumplimientoDiario: (filtros: FiltrosDia) =>
     ['bi-trade', 'cumplimiento-diario', filtros] as const,
+  partnersOpciones: () => ['bi-trade', 'partners', 'opciones'] as const,
+  partnersRegistros: (filtros: Record<string, unknown>) =>
+    ['bi-trade', 'partners', 'registros', filtros] as const,
+  partnersCatalogo: (lista: string) => ['bi-trade', 'partners', 'catalogo', lista] as const,
+  partnersTablero: (filtros: FiltrosPartners) =>
+    ['bi-trade', 'partners', 'tablero', filtros] as const,
+  partnersPeriodos: () => ['bi-trade', 'partners', 'periodos'] as const,
 };
 
 /**
@@ -218,3 +228,63 @@ export function useCumplimientoDiario(filtros: FiltrosDia) {
     placeholderData: (anterior) => anterior,
   });
 }
+
+/** Los desplegables del formulario del plan Partners. Cambian poco. */
+export const useOpcionesPartners = () =>
+  useQuery({
+    queryKey: biTradeKeys.partnersOpciones(),
+    queryFn: () => partnersApi.opciones(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+/** Una página de los registros del plan, del más reciente al más viejo. */
+export const useRegistrosPartners = (filtros: Record<string, unknown> = {}) =>
+  useQuery({
+    queryKey: biTradeKeys.partnersRegistros(filtros),
+    queryFn: () => partnersApi.registros.listPagina(filtros),
+    placeholderData: (anterior) => anterior,
+  });
+
+/**
+ * Las listas completas del plan, para administrarlas.
+ *
+ * A diferencia de `useOpcionesPartners`, traen también lo desactivado: es lo
+ * que hay que ver para volver a activarlo o borrarlo.
+ */
+export const useRegionalesPartners = () =>
+  useQuery({
+    queryKey: biTradeKeys.partnersCatalogo('regionales'),
+    queryFn: () => partnersApi.regionales.list(),
+  });
+
+export const usePuntosVentaPartners = () =>
+  useQuery({
+    queryKey: biTradeKeys.partnersCatalogo('puntos-venta'),
+    queryFn: () => partnersApi.puntosVenta.list(),
+  });
+
+export const useProductosPartners = () =>
+  useQuery({
+    queryKey: biTradeKeys.partnersCatalogo('productos'),
+    queryFn: () => partnersApi.productos.list(),
+  });
+
+/**
+ * El tablero del plan Partners.
+ *
+ * `placeholderData` conserva el mes anterior mientras llega el nuevo: sin eso
+ * la pantalla entera parpadea en cada cambio de filtro.
+ */
+export const useTableroPartners = (filtros: FiltrosPartners) =>
+  useQuery({
+    queryKey: biTradeKeys.partnersTablero(filtros),
+    queryFn: () => partnersTableroApi.dashboard(filtros),
+    placeholderData: (anterior) => anterior,
+  });
+
+/** Los meses que ya tienen metas cargadas, para el selector del tablero. */
+export const usePeriodosPartners = () =>
+  useQuery({
+    queryKey: biTradeKeys.partnersPeriodos(),
+    queryFn: () => partnersTableroApi.metas.periodos(),
+  });

@@ -39,7 +39,7 @@ from rest_framework.throttling import SimpleRateThrottle
 
 from .api_permissions import CanManageData, HasBiTradeApp
 from .canales import CANALES, CLARO, Canal
-from .models import Campana, EnlacePublico
+from .models import Campana, CanalEnlace, EnlacePublico
 from .views import _calcular_avance, _calcular_concurso, _calcular_dia, opciones_de
 
 #: Cuánto dura un acceso antes de volver a pedir la contraseña: una jornada.
@@ -81,12 +81,14 @@ def emitir_acceso(enlace: EnlacePublico) -> str:
 
 def enlace_vigente(token: str) -> EnlacePublico:
     """
-    El enlace del token, si existe y sigue vigente.
+    El enlace del token, si existe, sigue vigente y es de un tablero.
 
     Un enlace revocado o vencido responde igual que uno que nunca existió: a
-    quien tiene la URL no le sirve saber cuál de las dos cosas pasó.
+    quien tiene la URL no le sirve saber cuál de las dos cosas pasó. Los del
+    formulario tampoco entran por aquí: tienen su propio módulo y su propia
+    puerta, y este lado nunca los abre.
     """
-    enlace = EnlacePublico.objects.filter(token=token).first()
+    enlace = EnlacePublico.objects.filter(token=token).exclude(canal=CanalEnlace.PARTNERS).first()
     if enlace is None or not enlace.vigente:
         raise exceptions.NotFound('Este enlace no existe o ya no está disponible.')
     return enlace
@@ -308,10 +310,13 @@ class EnlacePublicoViewSet(
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        clave = nueva_clave()
+        # El formulario del plan va abierto: se diligencia a diario y no
+        # muestra nada, así que no tiene contraseña que entregar.
+        abierto = serializer.validated_data.get('canal') == CanalEnlace.PARTNERS
+        clave = '' if abierto else nueva_clave()
         enlace = serializer.save(
             token=nuevo_token(),
-            clave_hash=make_password(normalizar_clave(clave)),
+            clave_hash='' if abierto else make_password(normalizar_clave(clave)),
             creado_por=request.user,
         )
         # La contraseña solo sale en esta respuesta: se guarda como hash y no
@@ -330,6 +335,17 @@ class EnlacePublicoViewSet(
         versión sube y los accesos abiertos con la clave vieja dejan de valer.
         """
         enlace = self.get_object()
+        if enlace.canal == CanalEnlace.PARTNERS:
+            return Response(
+                {
+                    'code': 'sin_clave',
+                    'message': (
+                        'El formulario es abierto: no tiene contraseña que regenerar. '
+                        'Si quieres cortarlo, revoca el enlace y crea otro.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         clave = nueva_clave()
         enlace.clave_hash = make_password(normalizar_clave(clave))
         enlace.version += 1

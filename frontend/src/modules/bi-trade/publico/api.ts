@@ -5,11 +5,15 @@ import type {
   AvanceMensual,
   Campana,
   Canal,
+  CanalEnlace,
   Concurso,
   CumplimientoDiario,
   Opciones,
+  OpcionesPartners,
   Producto,
   PuntoVenta,
+  RegistroPartner,
+  RegistroPartnerPayload,
 } from '../api';
 import { PERFILES, type FuenteDatos } from '../fuente';
 
@@ -53,8 +57,8 @@ const ruta = (token: string) => `/publico/bi-trade/${encodeURIComponent(token)}`
 export interface SesionPublica {
   acceso: string;
   nombre: string;
-  /** Qué tablero abre. Las sesiones guardadas antes de Homecenter no lo traen: son de Claro. */
-  canal?: Canal;
+  /** Qué abre. Las sesiones guardadas antes de Homecenter no lo traen: son de Claro. */
+  canal?: CanalEnlace;
 }
 
 const llave = (token: string) => `tablero-publico:${token}`;
@@ -93,16 +97,34 @@ export const sesionPublica = {
 };
 
 export const tableroPublico = {
-  /** Que el enlace existe, su nombre y de qué canal es, para la pantalla de contraseña. */
+  /** Que el enlace existe, su nombre y qué abre, para la pantalla de contraseña. */
   info: (token: string) =>
-    cliente.get<{ nombre: string; canal: Canal }>(ruta(token)).then((r) => r.data),
+    cliente.get<{ nombre: string; canal: CanalEnlace }>(ruta(token)).then((r) => r.data),
   /** Cambia la contraseña por un acceso firmado que vence. */
   acceso: (token: string, clave: string) =>
     cliente
-      .post<{ acceso: string; nombre: string; duracion: number; canal: Canal }>(
+      .post<{ acceso: string; nombre: string; duracion: number; canal: CanalEnlace }>(
         `${ruta(token)}/acceso`,
         { clave },
       )
+      .then((r) => r.data),
+};
+
+/**
+ * El formulario del plan Partners abierto por enlace.
+ *
+ * Va por su propia ruta —`/publico/formulario/…`, no la del tablero— y no pide
+ * contraseña: se diligencia a diario y no muestra nada de lo ya cargado. Solo
+ * puede hacer dos cosas: pedir las listas y enviar una recomendación.
+ */
+const rutaFormulario = (token: string) => `/publico/formulario/${encodeURIComponent(token)}`;
+
+export const formularioPublico = {
+  opciones: (token: string) =>
+    cliente.get<OpcionesPartners>(`${rutaFormulario(token)}/opciones`).then((r) => r.data),
+  registrar: (token: string, payload: RegistroPartnerPayload) =>
+    cliente
+      .post<RegistroPartner>(`${rutaFormulario(token)}/registros`, payload)
       .then((r) => r.data),
 };
 

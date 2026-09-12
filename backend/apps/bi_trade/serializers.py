@@ -1,4 +1,5 @@
 """Serializers de BI Trade Marketing."""
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
 
@@ -11,23 +12,29 @@ from .models import (
     InventarioFalabella,
     InventarioHc,
     InventarioTmk,
+    MarcaPartner,
     Materiales,
     MetaComercial,
     MetaComercialFalabella,
     MetaComercialHc,
     MetaComercialTmk,
+    MetaPartner,
     Producto,
     ProductoFalabella,
     ProductoHc,
+    ProductoPartner,
     ProductoTmk,
     PuntoVenta,
     PuntoVentaFalabella,
     PuntoVentaHc,
+    PuntoVentaPartner,
     PuntoVentaTmk,
     Regional,
     RegionalFalabella,
     RegionalHc,
+    RegionalPartner,
     RegionalTmk,
+    RegistroPartner,
     Venta,
     VentaFalabella,
     VentaHc,
@@ -501,3 +508,184 @@ class MetaTmkSerializer(MetaSerializer):
                 message=MetaSerializer.Meta.validators[0].message,
             )
         ]
+
+
+# ── Plan Partners ──────────────────────────────────────────────────────────
+# El formulario guarda el código del punto y del producto; `etiqueta` es el
+# texto con los dos pegados, que es como los lee quien llena el formulario.
+
+
+class RegionalPartnerSerializer(serializers.ModelSerializer):
+    puntos_count = serializers.IntegerField(source='puntos_venta.count', read_only=True)
+    registros_count = serializers.IntegerField(source='registros.count', read_only=True)
+
+    class Meta:
+        model = RegionalPartner
+        fields = ('id_regional', 'nombre', 'activa', 'puntos_count', 'registros_count')
+
+    def validate_nombre(self, value: str) -> str:
+        nombre = value.strip()
+        if not nombre:
+            raise serializers.ValidationError('El nombre no puede ir vacío.')
+        repetida = RegionalPartner.objects.filter(nombre__iexact=nombre)
+        if self.instance:
+            repetida = repetida.exclude(pk=self.instance.pk)
+        if repetida.exists():
+            raise serializers.ValidationError(f'Ya existe la regional «{nombre}».')
+        return nombre
+
+
+class PuntoVentaPartnerSerializer(serializers.ModelSerializer):
+    etiqueta = serializers.CharField(read_only=True)
+    regional = serializers.CharField(source='id_regional.nombre', read_only=True)
+    registros_count = serializers.IntegerField(source='registros.count', read_only=True)
+
+    class Meta:
+        model = PuntoVentaPartner
+        fields = (
+            'id_punto_venta',
+            'nombre_pdv',
+            'id_regional',
+            'regional',
+            'activo',
+            'etiqueta',
+            'registros_count',
+        )
+
+    def validate_id_punto_venta(self, value: str) -> str:
+        """La PK la escribe la persona, así que hay que cuidar los duplicados."""
+        codigo = value.strip()
+        if not codigo:
+            raise serializers.ValidationError('El código no puede ir vacío.')
+        if self.instance is None and PuntoVentaPartner.objects.filter(pk=codigo).exists():
+            raise serializers.ValidationError(
+                f'Ya existe un punto de venta con el código {codigo}.'
+            )
+        return codigo
+
+
+class ProductoPartnerSerializer(serializers.ModelSerializer):
+    etiqueta = serializers.CharField(read_only=True)
+    registros_count = serializers.IntegerField(source='registros.count', read_only=True)
+
+    class Meta:
+        model = ProductoPartner
+        fields = (
+            'id_producto',
+            'nombre_producto',
+            'precio',
+            'activo',
+            'etiqueta',
+            'registros_count',
+        )
+
+    def validate_id_producto(self, value: str) -> str:
+        codigo = value.strip()
+        if not codigo:
+            raise serializers.ValidationError('El código no puede ir vacío.')
+        if self.instance is None and ProductoPartner.objects.filter(pk=codigo).exists():
+            raise serializers.ValidationError(f'Ya existe un producto con el código {codigo}.')
+        return codigo
+
+
+class RegistroPartnerSerializer(serializers.ModelSerializer):
+    regional = serializers.CharField(source='id_regional.nombre', read_only=True)
+    nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
+    punto_venta_etiqueta = serializers.CharField(source='id_punto_venta.etiqueta', read_only=True)
+    nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
+    producto_etiqueta = serializers.CharField(source='id_producto.etiqueta', read_only=True)
+    origen = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RegistroPartner
+        fields = (
+            'id_registro',
+            'id_regional',
+            'regional',
+            'marca',
+            'id_punto_venta',
+            'nombre_pdv',
+            'punto_venta_etiqueta',
+            'id_producto',
+            'nombre_producto',
+            'producto_etiqueta',
+            'fecha_recomendacion',
+            'serial',
+            'documento_promotor',
+            'factura',
+            'origen',
+            'created_at',
+        )
+
+    def get_origen(self, obj) -> str:
+        """Quién lo cargó: la persona con cuenta, o el enlace público."""
+        if obj.registrado_por_id:
+            return obj.registrado_por.full_name
+        if obj.enlace_id:
+            return f'Enlace · {obj.enlace.nombre}'
+        return ''
+
+    def validate_serial(self, value: str) -> str:
+        serial = value.strip()
+        if not serial:
+            raise serializers.ValidationError('El serial no puede ir vacío.')
+        return serial
+
+    def validate_documento_promotor(self, value: str) -> str:
+        documento = value.strip()
+        if not documento.isdigit():
+            raise serializers.ValidationError('El documento va sin puntos ni letras.')
+        if not 5 <= len(documento) <= 15:
+            raise serializers.ValidationError('El documento debe tener entre 5 y 15 dígitos.')
+        return documento
+
+    def validate_factura(self, value: str) -> str:
+        factura = value.strip()
+        if not factura:
+            raise serializers.ValidationError('La factura no puede ir vacía.')
+        return factura
+
+    def validate_fecha_recomendacion(self, value):
+        if value > timezone.localdate():
+            raise serializers.ValidationError('La fecha no puede ser futura.')
+        return value
+
+    def validate(self, attrs: dict) -> dict:
+        """El punto de venta tiene que ser de la regional elegida.
+
+        Si no se cruzan, lo más probable es que se haya cambiado la regional
+        después de elegir el punto, y el registro quedaría mal clasificado.
+        """
+        punto = attrs.get('id_punto_venta') or getattr(self.instance, 'id_punto_venta', None)
+        regional = attrs.get('id_regional') or getattr(self.instance, 'id_regional', None)
+        if punto and regional and punto.id_regional_id != regional.pk:
+            raise serializers.ValidationError(
+                {
+                    'id_punto_venta': (
+                        f'«{punto.nombre_pdv}» es de {punto.id_regional.nombre}, '
+                        f'no de {regional.nombre}.'
+                    )
+                }
+            )
+        return attrs
+
+
+class MetaPartnerSerializer(serializers.ModelSerializer):
+    nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
+    regional = serializers.CharField(source='id_punto_venta.id_regional.nombre', read_only=True)
+
+    class Meta:
+        model = MetaPartner
+        fields = (
+            'id_meta',
+            'anio',
+            'mes',
+            'id_punto_venta',
+            'nombre_pdv',
+            'regional',
+            'marca',
+            'meta_unidades',
+        )
+
+
+MARCAS_PARTNERS = [{'value': v, 'label': etiqueta} for v, etiqueta in MarcaPartner.choices]

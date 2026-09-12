@@ -40,7 +40,8 @@ import { formatoFechaHora, formatoNumero } from '@/shared/lib/formato';
 import {
   enlacesApi,
   urlDelEnlace,
-  type Canal,
+  urlDelFormulario,
+  type CanalEnlace,
   type EnlaceConClave,
   type EnlacePublico,
 } from '../api';
@@ -75,7 +76,21 @@ async function copiar(texto: string, aviso: string) {
  * información del negocio, y el backend lo exige igual. Esconder el botón no
  * es la protección —esa está en el servidor—, es no ofrecer lo que va a fallar.
  */
-export function CompartirTablero({ canal }: { canal: Canal }) {
+export function CompartirTablero({
+  canal,
+  titulo = 'Compartir el tablero',
+  descripcion = 'Un enlace de solo lectura con contraseña. Quien lo abra ve las hojas de este tablero sin cuenta, sin exportar y sin editar nada.',
+  urlDe = urlDelEnlace,
+  etiqueta = 'Tablero',
+}: {
+  canal: CanalEnlace;
+  titulo?: string;
+  descripcion?: string;
+  /** Cómo se arma la URL que se comparte: cada tipo de enlace tiene la suya. */
+  urlDe?: (token: string) => string;
+  /** Cómo se nombra al copiar el enlace con su contraseña. */
+  etiqueta?: string;
+}) {
   const { user } = useAuth();
   const [abierto, setAbierto] = useState(false);
 
@@ -91,20 +106,43 @@ export function CompartirTablero({ canal }: { canal: Canal }) {
       <Dialog open={abierto} onOpenChange={setAbierto}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Compartir el tablero</DialogTitle>
-            <DialogDescription>
-              Un enlace de solo lectura con contraseña. Quien lo abra ve las hojas de este tablero
-              sin cuenta, sin exportar y sin editar nada.
-            </DialogDescription>
+            <DialogTitle>{titulo}</DialogTitle>
+            <DialogDescription>{descripcion}</DialogDescription>
           </DialogHeader>
-          {abierto && <ContenidoCompartir canal={canal} />}
+          {abierto && <ContenidoCompartir canal={canal} urlDe={urlDe} etiqueta={etiqueta} />}
         </DialogContent>
       </Dialog>
     </>
   );
 }
 
-function ContenidoCompartir({ canal }: { canal: Canal }) {
+/**
+ * Compartir el formulario del plan Partners con alguien sin cuenta.
+ *
+ * Es el mismo mecanismo del tablero —token en la URL y contraseña aparte— pero
+ * el enlace solo diligencia: no muestra lo cargado ni abre ningún tablero.
+ */
+export function CompartirFormulario() {
+  return (
+    <CompartirTablero
+      canal="partners"
+      titulo="Compartir el formulario"
+      descripcion="Un enlace abierto: quien lo reciba diligencia sin cuenta y sin contraseña, para no tener que escribirla cada vez. Solo puede enviar recomendaciones; no ve lo cargado ni los tableros. Si se filtra, revócalo y comparte otro."
+      urlDe={urlDelFormulario}
+      etiqueta="Formulario"
+    />
+  );
+}
+
+function ContenidoCompartir({
+  canal,
+  urlDe,
+  etiqueta,
+}: {
+  canal: CanalEnlace;
+  urlDe: (token: string) => string;
+  etiqueta: string;
+}) {
   const queryClient = useQueryClient();
   const [recien, setRecien] = useState<EnlaceConClave | null>(null);
 
@@ -117,7 +155,14 @@ function ContenidoCompartir({ canal }: { canal: Canal }) {
 
   return (
     <div className="flex flex-col gap-5">
-      {recien && <ClaveNueva enlace={recien} onListo={() => setRecien(null)} />}
+      {recien && (
+        <ClaveNueva
+          enlace={recien}
+          urlDe={urlDe}
+          etiqueta={etiqueta}
+          onListo={() => setRecien(null)}
+        />
+      )}
 
       <NuevoEnlace
         canal={canal}
@@ -146,6 +191,7 @@ function ContenidoCompartir({ canal }: { canal: Canal }) {
               <FilaEnlace
                 key={enlace.idEnlace}
                 enlace={enlace}
+                urlDe={urlDe}
                 onCambio={() => void refrescar()}
                 onClaveNueva={(conClave) => {
                   setRecien(conClave);
@@ -164,7 +210,7 @@ function NuevoEnlace({
   canal,
   onCreado,
 }: {
-  canal: Canal;
+  canal: CanalEnlace;
   onCreado: (enlace: EnlaceConClave) => void;
 }) {
   const [nombre, setNombre] = useState('');
@@ -246,9 +292,61 @@ function NuevoEnlace({
  * Por eso el aviso va arriba y en rojo, y hay un botón que copia las dos
  * cosas juntas, listas para pegar en un correo o un chat.
  */
-function ClaveNueva({ enlace, onListo }: { enlace: EnlaceConClave; onListo: () => void }) {
-  const url = urlDelEnlace(enlace.token);
+function ClaveNueva({
+  enlace,
+  urlDe,
+  etiqueta,
+  onListo,
+}: {
+  enlace: EnlaceConClave;
+  urlDe: (token: string) => string;
+  etiqueta: string;
+  onListo: () => void;
+}) {
+  const url = urlDe(enlace.token);
   const [copiadoTodo, setCopiadoTodo] = useState(false);
+
+  // El formulario va abierto: no hay contraseña que guardar, solo el enlace.
+  if (!enlace.clave) {
+    return (
+      <Alert>
+        <Link2Icon />
+        <AlertTitle>Enlace listo para compartir</AlertTitle>
+        <AlertDescription>
+          <div className="mt-3 flex w-full flex-col gap-3 text-foreground">
+            <Dato
+              etiqueta={etiqueta}
+              valor={url}
+              onCopiar={() => void copiar(url, 'Enlace copiado')}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  void copiar(url, 'Enlace copiado');
+                  setCopiadoTodo(true);
+                }}
+              >
+                {copiadoTodo ? (
+                  <CheckIcon data-icon="inline-start" />
+                ) : (
+                  <CopyIcon data-icon="inline-start" />
+                )}
+                Copiar enlace
+              </Button>
+              <Button size="sm" variant="outline" onClick={onListo}>
+                Listo
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Cualquiera con este enlace puede diligenciar, sin contraseña. Si se filtra, revócalo
+              con el interruptor y comparte uno nuevo.
+            </p>
+          </div>
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <Alert variant="destructive">
@@ -268,7 +366,7 @@ function ClaveNueva({ enlace, onListo }: { enlace: EnlaceConClave; onListo: () =
               size="sm"
               onClick={() => {
                 void copiar(
-                  `Tablero: ${url}\nContraseña: ${enlace.clave}`,
+                  `${etiqueta}: ${url}\nContraseña: ${enlace.clave}`,
                   'Enlace y contraseña copiados',
                 );
                 setCopiadoTodo(true);
@@ -346,15 +444,19 @@ function EstadoEnlace({ enlace }: { enlace: EnlacePublico }) {
  */
 function FilaEnlace({
   enlace,
+  urlDe,
   onCambio,
   onClaveNueva,
 }: {
   enlace: EnlacePublico;
+  urlDe: (token: string) => string;
   onCambio: () => void;
   onClaveNueva: (enlace: EnlaceConClave) => void;
 }) {
   const [confirmarClave, setConfirmarClave] = useState(false);
   const [borrarAbierto, setBorrarAbierto] = useState(false);
+  // El formulario no tiene contraseña, y sus «accesos» son envíos recibidos.
+  const abierto = enlace.canal === 'partners';
 
   const alternar = useMutation({
     mutationFn: (activo: boolean) => enlacesApi.update(enlace.idEnlace, { activo }),
@@ -391,9 +493,11 @@ function FilaEnlace({
           <span className="flex items-center gap-2">
             <span className="truncate font-medium">{enlace.nombre}</span>
             <EstadoEnlace enlace={enlace} />
+            {abierto && <Badge variant="outline">Sin contraseña</Badge>}
           </span>
           <span className="text-xs text-muted-foreground">
-            {formatoNumero(enlace.accesos)} acceso{enlace.accesos === 1 ? '' : 's'}
+            {formatoNumero(enlace.accesos)} {abierto ? 'envío' : 'acceso'}
+            {enlace.accesos === 1 ? '' : 's'}
             {enlace.ultimoAcceso && ` · último ${formatoFechaHora(enlace.ultimoAcceso)}`}
             {enlace.expira && ` · vence ${formatoFechaHora(enlace.expira)}`}
             {enlace.creadoPor && ` · por ${enlace.creadoPor}`}
@@ -430,15 +534,17 @@ function FilaEnlace({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => void copiar(urlDelEnlace(enlace.token), 'Enlace copiado')}
+            onClick={() => void copiar(urlDe(enlace.token), 'Enlace copiado')}
           >
             <CopyIcon data-icon="inline-start" />
             Copiar enlace
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setConfirmarClave(true)}>
-            <KeyRoundIcon data-icon="inline-start" />
-            Nueva contraseña
-          </Button>
+          {!abierto && (
+            <Button size="sm" variant="outline" onClick={() => setConfirmarClave(true)}>
+              <KeyRoundIcon data-icon="inline-start" />
+              Nueva contraseña
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"

@@ -12,6 +12,9 @@ urlpatterns = [
     path('api/bi-trade/', include('apps.bi_trade.urls')),
     # Sin cuenta: el tablero compartido por enlace y contraseña.
     path('api/publico/bi-trade/', include('apps.bi_trade.urls_publico')),
+    # Sin cuenta y sin contraseña: el formulario del plan Partners. Solo recibe
+    # lo que alguien diligencia; va aparte del tablero para no compartir puerta.
+    path('api/publico/formulario/', include('apps.bi_trade.urls_publico_formulario')),
     # ── Documentación ──────────────────────────────────────────────────────
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='docs'),

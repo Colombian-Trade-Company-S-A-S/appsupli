@@ -52,8 +52,12 @@ export default function TableroPublicoLayout() {
   const [aviso, setAviso] = useState<Aviso>(null);
   const { pathname } = useLocation();
 
+  // Un enlace del formulario no abre tableros: vive en su propia página, con
+  // su propia ruta en el servidor. Si llega uno por aquí, se manda para allá.
+  const esFormulario = sesion?.canal === 'partners';
+
   const fuente = useMemo(() => {
-    if (!sesion) return null;
+    if (!sesion || sesion.canal === 'partners') return null;
     return crearFuentePublica(token, sesion.acceso, sesion.canal ?? 'claro', (estado) => {
       sesionPublica.borrar(token);
       queryClient.removeQueries({ queryKey: ['publico', `publico:${token}`] });
@@ -63,6 +67,8 @@ export default function TableroPublicoLayout() {
   }, [token, sesion, queryClient]);
 
   if (!token) return <Navigate to="/" replace />;
+
+  if (esFormulario) return <Navigate to={`/formulario/${encodeURIComponent(token)}`} replace />;
 
   if (!sesion || !fuente) {
     return (

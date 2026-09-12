@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import publico, views, views_falabella, views_hc, views_tmk
+from . import publico, views, views_falabella, views_hc, views_partners, views_tmk
 
 app_name = 'bi_trade'
 
@@ -46,9 +46,20 @@ router.register(
     'tmk/inventario', _tmk.InventarioTmkViewSet, basename='tmk-inventario'
 )
 router.register('tmk/metas', _tmk.MetaTmkViewSet, basename='tmk-metas')
+# Plan Partners: el formulario de recomendaciones y sus catálogos.
+_par = views_partners
+router.register('partners/regionales', _par.RegionalPartnerViewSet, basename='partners-regionales')
+router.register(
+    'partners/puntos-venta', _par.PuntoVentaPartnerViewSet, basename='partners-puntos-venta'
+)
+router.register('partners/productos', _par.ProductoPartnerViewSet, basename='partners-productos')
+router.register('partners/registros', _par.RegistroPartnerViewSet, basename='partners-registros')
+router.register('partners/metas', _par.MetaPartnerViewSet, basename='partners-metas')
 
 urlpatterns = [
     path('opciones', views.opciones, name='opciones'),
+    path('partners/opciones', _par.opciones_partners, name='partners-opciones'),
+    path('partners/dashboard', _par.dashboard_partners, name='partners-dashboard'),
     path('dashboard', views.dashboard, name='dashboard'),
     path('cumplimiento', views.cumplimiento, name='cumplimiento'),
     path('avance-mensual', views.avance_mensual, name='avance-mensual'),

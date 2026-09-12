@@ -140,6 +140,9 @@ REST_FRAMEWORK = {
     # que hay que proteger de la fuerza bruta.
     'DEFAULT_THROTTLE_RATES': {
         'enlace_publico': '10/min',
+        # Los envíos del formulario público: un promotor carga varios equipos
+        # seguidos, así que el tope corta el abuso, no el trabajo normal.
+        'formulario_publico': '30/min',
     },
 }
 

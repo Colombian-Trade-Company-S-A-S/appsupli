@@ -6,7 +6,7 @@ Los nombres de campo van tal como los definió el negocio (`id_punto_venta`,
 traducen para que un archivo del BI se pueda cargar sin renombrar columnas.
 """
 from django.conf import settings
-from django.core.validators import MaxValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import F, Value
 from django.db.models.functions import Coalesce
@@ -372,12 +372,14 @@ class Acelerador(models.Model):
 
 
 class CanalEnlace(models.TextChoices):
-    """Qué tablero abre un enlace público."""
+    """Qué abre un enlace público: un tablero, o el formulario del plan."""
 
     CLARO = 'claro', 'Claro'
     HC = 'hc', 'Homecenter'
     FALABELLA = 'falabella', 'Falabella'
     TMK = 'tmk', 'Tmk Ecommerce Claro'
+    #: El único que escribe: quien lo abre diligencia el plan Partners.
+    PARTNERS = 'partners', 'Plan Partners (formulario)'
 
 
 class EnlacePublico(TimeStampedModel):
@@ -399,7 +401,9 @@ class EnlacePublico(TimeStampedModel):
         help_text='Para quién es: «Gerencia Claro», «Regional Norte».',
     )
     token = models.CharField('token de la URL', max_length=64, unique=True)
-    clave_hash = models.CharField('hash de la contraseña', max_length=128)
+    #: Vacío en los enlaces del formulario: ese no pide contraseña, porque no
+    #: muestra datos, solo recibe lo que la persona diligencia.
+    clave_hash = models.CharField('hash de la contraseña', max_length=128, blank=True)
     version = models.PositiveIntegerField('versión de la contraseña', default=1)
     activo = models.BooleanField('activo', default=True)
     expira = models.DateTimeField('expira', null=True, blank=True)
@@ -965,3 +969,210 @@ class MetaComercialTmk(TimeStampedModel):
     @property
     def meta_dinero(self) -> int:
         return self.meta_cantidad * self.id_producto.precio_venta_coltrade
+
+
+# ── Plan Partners ──────────────────────────────────────────────────────────
+# El formulario de recomendaciones que antes se llenaba en Microsoft Forms.
+# Allá el punto de venta y el producto llegaban pegados en un solo texto
+# («Cav Cucuta Centro Av Quinta - C192»); aquí el código es la llave y el
+# nombre va aparte, para poder cruzarlos y contarlos sin adivinar.
+
+
+class RegionalPartner(TimeStampedModel):
+    """Regional del plan.
+
+    Es una tabla y no una lista fija en el código porque Trade abre y cierra
+    zonas sin esperar un despliegue. En el formulario anterior eran tres
+    preguntas distintas («zona sur», «zona norte», «zona costa») que solo
+    servían para mostrar los puntos de esa zona.
+    """
+
+    id_regional = models.AutoField('id de la regional', primary_key=True)
+    nombre = models.CharField('nombre', max_length=80, unique=True)
+    activa = models.BooleanField(
+        'activa', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_regionales_partners'
+        verbose_name = 'regional del plan Partners'
+        verbose_name_plural = 'regionales del plan Partners'
+        ordering = ('nombre',)
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
+class MarcaPartner(models.TextChoices):
+    APPLE = 'Apple', 'Apple'
+    HONOR = 'Honor', 'Honor'
+    HUAWEI = 'Huawei', 'Huawei'
+    MOTOROLA = 'Motorola', 'Motorola'
+    OPPO = 'Oppo', 'Oppo'
+    REDMI = 'Redmi', 'Redmi'
+    SAMSUNG = 'Samsung', 'Samsung'
+    TCL = 'TCL', 'TCL'
+    TECNO = 'Tecno', 'Tecno'
+    VIVO = 'Vivo', 'Vivo'
+    ZTE = 'ZTE', 'ZTE'
+
+
+class PuntoVentaPartner(TimeStampedModel):
+    """Punto de venta del plan. Su código viene del negocio («C192»)."""
+
+    id_punto_venta = models.CharField('código del punto de venta', max_length=60, primary_key=True)
+    nombre_pdv = models.CharField('nombre del punto de venta', max_length=100)
+    id_regional = models.ForeignKey(
+        RegionalPartner,
+        on_delete=models.PROTECT,
+        db_column='id_regional',
+        related_name='puntos_venta',
+        verbose_name='regional',
+    )
+    activo = models.BooleanField(
+        'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_puntos_venta_partners'
+        verbose_name = 'punto de venta del plan Partners'
+        verbose_name_plural = 'puntos de venta del plan Partners'
+        ordering = ('nombre_pdv',)
+
+    def __str__(self) -> str:
+        return f'{self.id_punto_venta} · {self.nombre_pdv}'
+
+    @property
+    def etiqueta(self) -> str:
+        """Nombre y código juntos, como se ven pegados en el formulario."""
+        return f'{self.nombre_pdv} - {self.id_punto_venta}'
+
+
+class ProductoPartner(TimeStampedModel):
+    """Producto que se puede recomendar. El código es el del negocio."""
+
+    id_producto = models.CharField('código del producto', max_length=60, primary_key=True)
+    nombre_producto = models.CharField('nombre del producto', max_length=60)
+    precio = models.PositiveIntegerField(
+        'precio',
+        default=0,
+        validators=[MaxValueValidator(PRECIO_MAXIMO)],
+        help_text='Con este precio se valora lo recomendado en el tablero.',
+    )
+    activo = models.BooleanField(
+        'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_productos_partners'
+        verbose_name = 'producto del plan Partners'
+        verbose_name_plural = 'productos del plan Partners'
+        ordering = ('nombre_producto',)
+
+    def __str__(self) -> str:
+        return f'{self.id_producto} · {self.nombre_producto}'
+
+    @property
+    def etiqueta(self) -> str:
+        """Nombre y código juntos, como se ven pegados en el formulario."""
+        return f'{self.nombre_producto} - {self.id_producto}'
+
+
+class RegistroPartner(TimeStampedModel):
+    """Una recomendación registrada por un promotor de marca."""
+
+    id_registro = models.AutoField('id del registro', primary_key=True)
+    id_regional = models.ForeignKey(
+        RegionalPartner,
+        on_delete=models.PROTECT,
+        db_column='id_regional',
+        related_name='registros',
+        verbose_name='regional',
+    )
+    marca = models.CharField('marca', max_length=60, choices=MarcaPartner.choices)
+    # `db_column` mantiene el nombre del negocio en la tabla: sin él Django
+    # crearía la columna como `id_punto_venta_id`.
+    id_punto_venta = models.ForeignKey(
+        PuntoVentaPartner,
+        on_delete=models.PROTECT,
+        db_column='id_punto_venta',
+        related_name='registros',
+        verbose_name='punto de venta',
+    )
+    id_producto = models.ForeignKey(
+        ProductoPartner,
+        on_delete=models.PROTECT,
+        db_column='id_producto',
+        related_name='registros',
+        verbose_name='producto recomendado',
+    )
+    fecha_recomendacion = models.DateField('fecha de la recomendación')
+    serial = models.CharField('número de serial', max_length=40)
+    documento_promotor = models.CharField('documento del promotor de marca', max_length=20)
+    factura = models.CharField('factura', max_length=40)
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='registros_partners',
+        verbose_name='registrado por',
+    )
+    #: Por cuál enlace público entró, si no lo cargó alguien con cuenta. Sin
+    #: esto, todo lo que llega de afuera queda sin rastro de dónde salió.
+    enlace = models.ForeignKey(
+        'EnlacePublico',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_enlace',
+        related_name='registros_partners',
+        verbose_name='enlace público',
+    )
+
+    class Meta:
+        db_table = 'bi_trade_registros_partners'
+        verbose_name = 'registro del plan Partners'
+        verbose_name_plural = 'registros del plan Partners'
+        ordering = ('-fecha_recomendacion', '-id_registro')
+        # El serial no es único —un mismo equipo puede volver a pasar por el
+        # plan— pero se busca por él todo el tiempo para revisar repetidos.
+        indexes = [models.Index(fields=('serial',), name='bi_trade_partners_serial')]
+
+    def __str__(self) -> str:
+        return f'{self.fecha_recomendacion} · {self.serial} · {self.id_producto_id}'
+
+
+class MetaPartner(TimeStampedModel):
+    """
+    Meta de unidades de una marca en un punto de venta, mes a mes.
+
+    Sale del Excel que Trade arma cada mes —una fila por CAV y marca— y es
+    contra lo que el tablero mide lo que entra por el formulario. Se guarda con
+    decimales porque así vienen las metas repartidas del archivo.
+    """
+
+    id_meta = models.AutoField('id de la meta', primary_key=True)
+    anio = models.PositiveSmallIntegerField('año')
+    mes = models.PositiveSmallIntegerField(
+        'mes', validators=[MinValueValidator(1), MaxValueValidator(12)]
+    )
+    id_punto_venta = models.ForeignKey(
+        PuntoVentaPartner,
+        on_delete=models.PROTECT,
+        db_column='id_punto_venta',
+        related_name='metas',
+        verbose_name='punto de venta',
+    )
+    marca = models.CharField('marca', max_length=60, choices=MarcaPartner.choices)
+    meta_unidades = models.DecimalField('meta de unidades', max_digits=10, decimal_places=2)
+
+    class Meta:
+        db_table = 'bi_trade_metas_partners'
+        verbose_name = 'meta del plan Partners'
+        verbose_name_plural = 'metas del plan Partners'
+        unique_together = ('anio', 'mes', 'id_punto_venta', 'marca')
+        ordering = ('-anio', '-mes', 'id_punto_venta__nombre_pdv', 'marca')
+
+    def __str__(self) -> str:
+        return f'{self.anio}-{self.mes:02d} · {self.id_punto_venta_id} · {self.marca}'

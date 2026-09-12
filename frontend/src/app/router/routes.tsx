@@ -25,10 +25,15 @@ const InventarioPage = lazy(() => import('@/modules/bi-trade/pages/InventarioPag
 const MetasPage = lazy(() => import('@/modules/bi-trade/pages/MetasPage'));
 const TicketsPage = lazy(() => import('@/modules/bi-trade/pages/TicketsPage'));
 const CanalLayout = lazy(() => import('@/modules/bi-trade/pages/CanalLayout'));
+const PlanPartnersPage = lazy(() => import('@/modules/bi-trade/pages/PlanPartnersPage'));
+const PlanPartnersFormularioPage = lazy(
+  () => import('@/modules/bi-trade/pages/PlanPartnersFormularioPage'),
+);
 const PlanEnConstruccionPage = lazy(
   () => import('@/modules/bi-trade/pages/PlanEnConstruccionPage'),
 );
 const TableroPublicoLayout = lazy(() => import('@/modules/bi-trade/publico/TableroPublico'));
+const FormularioPublico = lazy(() => import('@/modules/bi-trade/publico/FormularioPublico'));
 const CumplimientoDiarioPage = lazy(
   () => import('@/modules/bi-trade/pages/CumplimientoDiarioPage'),
 );
@@ -149,7 +154,11 @@ const routes: RouteObject[] = [
               },
               {
                 path: 'bi-trade/plan-partners',
-                element: withSuspense(<PlanEnConstruccionPage plan="partners" />),
+                element: withSuspense(<PlanPartnersPage />),
+              },
+              {
+                path: 'bi-trade/plan-partners/formulario',
+                element: withSuspense(<PlanPartnersFormularioPage />),
               },
             ],
           },
@@ -196,6 +205,14 @@ const routes: RouteObject[] = [
       { path: 'dia', element: <CumplimientoDiarioPage /> },
       { path: 'tickets', element: <TicketsPage /> },
     ],
+  },
+
+  // ── Formulario compartido por enlace ────────────────────────────────────
+  // El único enlace público que escribe: quien lo abre diligencia el plan
+  // Partners sin cuenta. No ve los registros cargados ni los tableros.
+  {
+    path: 'formulario/:token',
+    element: withSuspense(<FormularioPublico />),
   },
 
   { path: '*', element: <Navigate to="/" replace /> },

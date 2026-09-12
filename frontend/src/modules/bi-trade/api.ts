@@ -624,8 +624,8 @@ export const biTradeApi = {
 /** Un enlace público del tablero, como lo ve quien lo administra. */
 export interface EnlacePublico {
   idEnlace: number;
-  /** Qué tablero abre: Claro, Homecenter, Falabella o Tmk Ecommerce Claro. */
-  canal: Canal;
+  /** Qué abre: uno de los tableros, o el formulario del plan Partners. */
+  canal: CanalEnlace;
   nombre: string;
   /** Va en la URL. Sin la contraseña no abre nada. */
   token: string;
@@ -648,8 +648,8 @@ export interface EnlaceConClave extends EnlacePublico {
 }
 
 export const enlacesApi = {
-  list: (canal: Canal) => api.getList<EnlacePublico>(`${RUTA}/enlaces`, { canal }),
-  create: (payload: { nombre: string; expira: string | null; canal: Canal }) =>
+  list: (canal: CanalEnlace) => api.getList<EnlacePublico>(`${RUTA}/enlaces`, { canal }),
+  create: (payload: { nombre: string; expira: string | null; canal: CanalEnlace }) =>
     api.post<EnlaceConClave>(`${RUTA}/enlaces`, payload),
   update: (id: number, payload: Partial<Pick<EnlacePublico, 'nombre' | 'activo' | 'expira'>>) =>
     api.patch<EnlacePublico>(`${RUTA}/enlaces/${id}`, payload),
@@ -662,8 +662,18 @@ export const enlacesApi = {
 export const urlDelEnlace = (token: string) =>
   `${window.location.origin}/tablero/${encodeURIComponent(token)}`;
 
+/** La URL del formulario público del plan Partners. */
+export const urlDelFormulario = (token: string) =>
+  `${window.location.origin}/formulario/${encodeURIComponent(token)}`;
+
 /** Los canales del BI. Cada uno tiene sus propias tablas. */
 export type Canal = 'claro' | 'hc' | 'falabella' | 'tmk';
+
+/**
+ * Qué abre un enlace público: un tablero de solo lectura, o el formulario del
+ * plan Partners, que es el único que escribe.
+ */
+export type CanalEnlace = Canal | 'partners';
 
 /**
  * La API de un canal aparte —Homecenter, Falabella o Tmk Ecommerce Claro—: los mismos recursos y
@@ -708,4 +718,199 @@ export const biTradeApiTmk = {
   ...apiDeCanal('tmk'),
   /** Tmk es el único canal aparte con el importador del ERP, igual que Claro. */
   importarInforme: importarInformeEn('/tmk/importar-informe'),
+};
+
+// ── Plan Partners ──────────────────────────────────────────────────────────
+
+/** Una regional del plan. Es catálogo: se agregan y quitan desde el formulario. */
+export interface RegionalPartner {
+  idRegional: number;
+  nombre: string;
+  activa: boolean;
+  puntosCount: number;
+  registrosCount: number;
+}
+
+/** Un punto de venta del plan: el código va aparte del nombre. */
+export interface PuntoVentaPartner {
+  idPuntoVenta: string;
+  nombrePdv: string;
+  idRegional: number;
+  /** Nombre de la regional, para mostrar. */
+  regional: string;
+  activo: boolean;
+  /** Nombre y código juntos, como se leen en el formulario. */
+  etiqueta: string;
+  registrosCount: number;
+}
+
+export interface ProductoPartner {
+  idProducto: string;
+  nombreProducto: string;
+  activo: boolean;
+  etiqueta: string;
+  registrosCount: number;
+}
+
+/** Una recomendación registrada por un promotor de marca. */
+export interface RegistroPartner {
+  idRegistro: number;
+  idRegional: number;
+  regional: string;
+  marca: string;
+  idPuntoVenta: string;
+  nombrePdv: string;
+  puntoVentaEtiqueta: string;
+  idProducto: string;
+  nombreProducto: string;
+  productoEtiqueta: string;
+  fechaRecomendacion: string;
+  serial: string;
+  documentoPromotor: string;
+  factura: string;
+  /** Quién lo cargó: la persona con cuenta, o el enlace público. */
+  origen: string;
+  createdAt: string;
+  /** Solo al guardar: avisa si el serial ya tenía registros. */
+  message?: string;
+}
+
+export type RegistroPartnerPayload = Pick<
+  RegistroPartner,
+  | 'idRegional'
+  | 'marca'
+  | 'idPuntoVenta'
+  | 'idProducto'
+  | 'fechaRecomendacion'
+  | 'serial'
+  | 'documentoPromotor'
+  | 'factura'
+>;
+
+/** Lo que se guarda de cada lista del formulario. */
+export type RegionalPartnerPayload = Pick<RegionalPartner, 'nombre' | 'activa'>;
+export type PuntoVentaPartnerPayload = Pick<
+  PuntoVentaPartner,
+  'idPuntoVenta' | 'nombrePdv' | 'idRegional' | 'activo'
+>;
+export type ProductoPartnerPayload = Pick<
+  ProductoPartner,
+  'idProducto' | 'nombreProducto' | 'activo'
+>;
+
+/** Los desplegables del formulario. Cada punto trae su regional para filtrarlos. */
+export interface OpcionesPartners {
+  regionales: Array<{ value: number; label: string }>;
+  marcas: Array<{ value: string; label: string }>;
+  puntosVenta: Array<{ value: string; label: string; nombre: string; idRegional: number }>;
+  productos: Array<{ value: string; label: string; nombre: string; precio: number }>;
+}
+
+export const partnersApi = {
+  opciones: () => api.get<OpcionesPartners>(`${RUTA}/partners/opciones`),
+  registros: recurso<RegistroPartner, Partial<RegistroPartnerPayload>>('/partners/registros'),
+  regionales: recurso<RegionalPartner, Partial<RegionalPartnerPayload>>('/partners/regionales'),
+  puntosVenta: recurso<PuntoVentaPartner, Partial<PuntoVentaPartnerPayload>>(
+    '/partners/puntos-venta',
+  ),
+  productos: recurso<ProductoPartner, Partial<ProductoPartnerPayload>>('/partners/productos'),
+};
+
+// ── Plan Partners · metas y tablero ────────────────────────────────────────
+
+/** La meta mensual de una marca en un punto de venta. */
+export interface MetaPartner {
+  idMeta: number;
+  anio: number;
+  mes: number;
+  idPuntoVenta: string;
+  nombrePdv: string;
+  regional: string;
+  marca: string;
+  metaUnidades: string;
+}
+
+/** Un mes que ya tiene metas cargadas. */
+export interface PeriodoMetas {
+  anio: number;
+  mes: number;
+  label: string;
+  metas: number;
+  unidades: number;
+}
+
+/** Lo que responde la carga del Excel de metas. */
+export interface ResultadoMetas {
+  created: number;
+  updated: number;
+  skipped: number;
+  periodos: Array<{ anio: number; mes: number; label: string }>;
+  /** Códigos del archivo que no están en el catálogo del formulario. */
+  puntosDesconocidos: string[];
+  marcasDesconocidas: string[];
+  message: string;
+}
+
+/** Lo hecho contra lo prometido: el corte que repite todo el tablero. */
+export interface CortePartner {
+  unidades: number;
+  meta: number;
+  cumplimiento: number;
+  faltante: number;
+  sobrecumplimiento: number;
+}
+
+export interface DashboardPartners {
+  filtros: {
+    anio: number;
+    mes: number;
+    regional: string;
+    punto: string;
+    marca: string;
+    promotor: string;
+    periodo: string;
+  };
+  totales: CortePartner & { valor: number; promotores: number; puntos: number };
+  porMarca: Array<CortePartner & { marca: string }>;
+  porDia: Array<{ fecha: string; unidades: number }>;
+  porRegional: Array<CortePartner & { regional: string }>;
+  porPunto: Array<CortePartner & { codigo: string; punto: string }>;
+  porPromotor: Array<{ documento: string; unidades: number; puntos: number; marcas: number }>;
+  detalle: Array<CortePartner & { codigo: string; punto: string; marca: string }>;
+}
+
+/** Los cortes del tablero. `mes: 0` mira el año entero. */
+export interface FiltrosPartners {
+  anio?: number;
+  mes?: number;
+  regional?: string;
+  punto?: string;
+  marca?: string;
+  promotor?: string;
+}
+
+export const partnersTableroApi = {
+  dashboard: (filtros: FiltrosPartners) =>
+    api.get<DashboardPartners>(
+      `${RUTA}/partners/dashboard`,
+      filtros as unknown as Record<string, unknown>,
+    ),
+  metas: {
+    list: (params?: Record<string, unknown>) =>
+      api.getPage<MetaPartner>(`${RUTA}/partners/metas`, params),
+    periodos: () => api.get<PeriodoMetas[]>(`${RUTA}/partners/metas/periodos`),
+    descargarPlantilla: () =>
+      descargarArchivo(`${RUTA}/partners/metas/plantilla`, 'plantilla-metas-partners.xlsx'),
+    /** Sube el Excel mensual de Trade, con sus mismos encabezados. */
+    importar: (archivo: File) => {
+      const cuerpo = new FormData();
+      cuerpo.append('archivo', archivo);
+      return httpClient
+        .post<ResultadoMetas>(`${RUTA}/partners/metas/importar`, cuerpo, {
+          headers: { 'Content-Type': undefined },
+          timeout: 120_000,
+        })
+        .then((r) => r.data);
+    },
+  },
 };

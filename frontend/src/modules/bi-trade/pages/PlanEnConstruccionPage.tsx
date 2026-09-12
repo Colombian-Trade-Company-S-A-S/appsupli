@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeftIcon, ConstructionIcon } from 'lucide-react';
+import { ArrowLeftIcon, ClipboardListIcon, ConstructionIcon } from 'lucide-react';
 import {
   Button,
   Card,
@@ -15,7 +15,7 @@ import { PLANES, type ClavePlan } from '../planes';
 
 /** La página de un plan que todavía no tiene informe. */
 export default function PlanEnConstruccionPage({ plan }: { plan: ClavePlan }) {
-  const { titulo } = PLANES[plan];
+  const { titulo, formulario } = PLANES[plan];
 
   return (
     <div className="flex flex-col gap-6">
@@ -24,6 +24,13 @@ export default function PlanEnConstruccionPage({ plan }: { plan: ClavePlan }) {
           <ArrowLeftIcon data-icon="inline-start" />
           Volver a BI Trade
         </Button>
+        {/* El informe no está, pero la carga de datos sí puede estar abierta. */}
+        {formulario && (
+          <Button render={<Link to={formulario} />}>
+            <ClipboardListIcon data-icon="inline-start" />
+            Formulario
+          </Button>
+        )}
       </Encabezado>
 
       <Card>
@@ -38,6 +45,12 @@ export default function PlanEnConstruccionPage({ plan }: { plan: ClavePlan }) {
                 Estamos armando el informe del {titulo}. Muy pronto vas a poder verlo aquí.
               </EmptyDescription>
             </EmptyHeader>
+            {formulario && (
+              <Button render={<Link to={formulario} />}>
+                <ClipboardListIcon data-icon="inline-start" />
+                Ir al formulario
+              </Button>
+            )}
           </Empty>
         </CardContent>
       </Card>
