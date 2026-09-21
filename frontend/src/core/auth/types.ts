@@ -8,6 +8,10 @@ export interface Application {
   /** Nombre del ícono en lucide-react. */
   icon: string;
   order: number;
+  /** Si viene, esta app es un sub-módulo y cuelga de esa otra. */
+  parent: number | null;
+  /** Sub-módulos a los que la persona tiene acceso. */
+  children: Application[];
 }
 
 import type { Accent, Radius, Theme } from '@/shared/hooks';
@@ -23,6 +27,11 @@ export interface User {
   position: string;
   kind: 'admin' | 'lider' | 'colaborador';
   phone: string;
+  /** Organigrama extendido: lo diligencia People, puede venir vacío. */
+  direccion: string;
+  organizacion: string;
+  regional: string;
+  puntoVenta: string;
   /** Jefe directo, vacío si no tiene. */
   managerName: string;
   /** Personas activas a su cargo. */

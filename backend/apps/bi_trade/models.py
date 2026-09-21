@@ -24,6 +24,14 @@ class Regional(models.TextChoices):
     NACIONAL = 'Nacional', 'Nacional'
 
 
+class CategoriaHc(models.TextChoices):
+    """La categoría de una tienda Homecenter."""
+
+    A = 'A', 'A'
+    B = 'B', 'B'
+    C = 'C', 'C'
+
+
 class RegionalHc(models.TextChoices):
     """Las regionales de Homecenter. Sin «Plaza Claro», que es un canal de Claro."""
 
@@ -469,6 +477,9 @@ class PuntoVentaHc(TimeStampedModel):
     materiales = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
         'materiales', max_length=100, choices=Materiales.choices, null=True, blank=True
     )
+    categoria = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
+        'categoría', max_length=1, choices=CategoriaHc.choices, null=True, blank=True
+    )
 
     class Meta:
         db_table = 'bi_trade_puntos_venta_hc'
@@ -481,18 +492,37 @@ class PuntoVentaHc(TimeStampedModel):
 
 
 class ProductoHc(TimeStampedModel):
-    """Producto del catálogo Homecenter, con su precio en Homecenter y en Coltrade."""
+    """Producto del catálogo Homecenter, con su precio en Homecenter y en Coltrade.
+
+    Solo el código y el nombre son obligatorios: el catálogo de Homecenter
+    llega incompleto y un producto sin marca o sin precio igual se vende. Sin
+    precio Coltrade, sus ventas cuentan en unidades pero no suman dinero.
+    """
 
     id_producto = models.CharField(
         'código del producto', max_length=60, primary_key=True, db_column='id_producto_hc'
     )
+    ean = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
+        'EAN', max_length=60, null=True, blank=True
+    )
+    sku_coltrade = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
+        'SKU Coltrade', max_length=60, null=True, blank=True
+    )
     nombre_producto = models.CharField('nombre del producto', max_length=60)
-    marca = models.CharField('marca', max_length=60)
-    precio_venta_hc = models.PositiveIntegerField(
-        'precio de venta Homecenter', validators=[MaxValueValidator(PRECIO_MAXIMO)]
+    marca = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
+        'marca', max_length=60, null=True, blank=True
     )
     precio_venta_coltrade = models.PositiveIntegerField(
-        'precio de venta Coltrade', validators=[MaxValueValidator(PRECIO_MAXIMO)]
+        'precio de venta Coltrade',
+        null=True,
+        blank=True,
+        validators=[MaxValueValidator(PRECIO_MAXIMO)],
+    )
+    precio_venta_hc = models.PositiveIntegerField(
+        'precio de venta Homecenter',
+        null=True,
+        blank=True,
+        validators=[MaxValueValidator(PRECIO_MAXIMO)],
     )
 
     class Meta:
@@ -536,9 +566,10 @@ class VentaHc(TimeStampedModel):
         return f'{self.fecha_venta} · {self.id_producto_id} × {self.cantidad_vendida}'
 
     @property
-    def total_coltrade(self) -> int:
-        """Lo que factura la venta al precio Coltrade."""
-        return self.cantidad_vendida * self.id_producto.precio_venta_coltrade
+    def total_coltrade(self) -> int | None:
+        """Lo que factura la venta al precio Coltrade. Sin precio, no hay total."""
+        precio = self.id_producto.precio_venta_coltrade
+        return None if precio is None else self.cantidad_vendida * precio
 
 
 class InventarioHc(TimeStampedModel):
@@ -613,8 +644,9 @@ class MetaComercialHc(TimeStampedModel):
         )
 
     @property
-    def meta_dinero(self) -> int:
-        return self.meta_cantidad * self.id_producto.precio_venta_coltrade
+    def meta_dinero(self) -> int | None:
+        precio = self.id_producto.precio_venta_coltrade
+        return None if precio is None else self.meta_cantidad * precio
 
 
 # ── Falabella ──────────────────────────────────────────────────────────────

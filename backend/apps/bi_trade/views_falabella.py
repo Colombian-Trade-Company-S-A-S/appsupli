@@ -8,6 +8,7 @@ las plantillas—; el tablero llama al mismo cálculo con el canal FALABELLA.
 No existe el «Importar» general del informe del ERP: ese informe es de Claro.
 Cada módulo sí tiene su plantilla y su importación.
 """
+from django.db.models import Count
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
@@ -88,7 +89,9 @@ _PUNTO_FALABELLA = Columna(
 
 
 class PuntoVentaFalabellaViewSet(_PlantillaFalabella, PuntoVentaViewSet):
-    queryset = PuntoVentaFalabella.objects.prefetch_related('ventas').order_by('nombre_pdv')
+    queryset = PuntoVentaFalabella.objects.annotate(conteo_ventas=Count('ventas')).order_by(
+        'nombre_pdv'
+    )
     serializer_class = PuntoVentaFalabellaSerializer
     nombre_plural = 'los puntos de venta Falabella'
     archivo_plantilla = 'plantilla-puntos-venta-falabella'
@@ -103,15 +106,14 @@ class PuntoVentaFalabellaViewSet(_PlantillaFalabella, PuntoVentaViewSet):
                 ejemplo=Materiales.TODOS.value),
     ]
 
-    def buscar_existente(self, fila):
-        return PuntoVentaFalabella.objects.filter(pk=fila.get('id_punto_venta_falabella')).first()
-
     def dependencias(self):
         return _dependencias_falabella()
 
 
 class ProductoFalabellaViewSet(_PlantillaFalabella, ProductoViewSet):
-    queryset = ProductoFalabella.objects.prefetch_related('ventas').order_by('nombre_producto')
+    queryset = ProductoFalabella.objects.annotate(conteo_ventas=Count('ventas')).order_by(
+        'nombre_producto'
+    )
     serializer_class = ProductoFalabellaSerializer
     nombre_plural = 'los productos Falabella'
     archivo_plantilla = 'plantilla-productos-falabella'
@@ -126,9 +128,6 @@ class ProductoFalabellaViewSet(_PlantillaFalabella, ProductoViewSet):
                 ayuda='Hasta 100.000.000. Con este precio se calculan los ingresos.',
                 ejemplo='265000'),
     ]
-
-    def buscar_existente(self, fila):
-        return ProductoFalabella.objects.filter(pk=fila.get('id_producto_falabella')).first()
 
     def dependencias(self):
         return _dependencias_falabella()
@@ -169,12 +168,6 @@ class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
                 ejemplo='24'),
     ]
 
-    def buscar_existente(self, fila):
-        return InventarioFalabella.objects.filter(
-            id_producto=fila.get('id_producto_falabella'),
-            id_punto_venta=fila.get('id_punto_venta_falabella'),
-        ).first()
-
 
 class MetaFalabellaViewSet(_PlantillaFalabella, MetaViewSet):
     queryset = (
@@ -204,13 +197,6 @@ class MetaFalabellaViewSet(_PlantillaFalabella, MetaViewSet):
                 ayuda='Periodo de la meta, formato AAAA-MM-DD.', ejemplo='2026-03-01'),
         Columna('meta_cantidad', tipo='entero', ayuda='Unidades objetivo.', ejemplo='25'),
     ]
-
-    def buscar_existente(self, fila):
-        return MetaComercialFalabella.objects.filter(
-            id_producto=fila.get('id_producto_falabella'),
-            id_punto_venta=fila.get('id_punto_venta_falabella'),
-            fecha_meta=fila.get('fecha_meta'),
-        ).first()
 
 
 # ── El tablero de Falabella: el mismo cálculo, con el canal FALABELLA ──────

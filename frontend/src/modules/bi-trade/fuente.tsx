@@ -4,6 +4,7 @@ import {
   biTradeApiFalabella,
   biTradeApiHc,
   biTradeApiTmk,
+  type ApiDeCanal,
   type AvanceMensual,
   type Campana,
   type Canal,
@@ -17,6 +18,8 @@ import {
   type Opciones,
   type Producto,
   type PuntoVenta,
+  type ResultadoQuery,
+  type RespuestaQueryVentas,
 } from './api';
 
 /** Una hoja del tablero. El orden de la lista es el de las pestañas. */
@@ -34,7 +37,13 @@ export type RecursosCanal = Pick<
  */
 export const PERFILES: Record<
   Canal,
-  { titulo: string; nombreCanal: string; hojas: HojaTablero[]; conPuntos: boolean }
+  {
+    titulo: string;
+    nombreCanal: string;
+    hojas: HojaTablero[];
+    conPuntos: boolean;
+    catalogoHc?: boolean;
+  }
 > = {
   claro: {
     titulo: 'BI Claro punto de venta',
@@ -49,6 +58,7 @@ export const PERFILES: Record<
     nombreCanal: 'Homecenter',
     hojas: ['mes', 'dia'],
     conPuntos: false,
+    catalogoHc: true,
   },
   falabella: {
     titulo: 'Informe de Ventas Falabella',
@@ -87,6 +97,11 @@ export interface FuenteDatos {
   hojas: HojaTablero[];
   /** Si el canal mide en puntos. Solo Claro: los demás van en dinero y unidades. */
   conPuntos: boolean;
+  /**
+   * Los catálogos de Homecenter: sus productos traen EAN y SKU Coltrade y solo
+   * exigen código y nombre; sus puntos de venta tienen categoría (A, B o C).
+   */
+  catalogoHc?: boolean;
   avanceMensual: (filtros: FiltrosAvance) => Promise<AvanceMensual>;
   cumplimientoDiario: (filtros: FiltrosDia) => Promise<CumplimientoDiario>;
   tickets: (filtros: FiltrosConcurso) => Promise<Concurso>;
@@ -100,6 +115,10 @@ export interface FuenteDatos {
   recursos?: RecursosCanal;
   /** El importador del informe del ERP. Solo Claro y Tmk Ecommerce Claro. */
   importarInforme?: typeof biTradeApi.importarInforme;
+  /** El querie de inventario del portal de Homecenter. Solo HC. */
+  importarQuery?: (archivo: File) => Promise<ResultadoQuery>;
+  /** El querie de ventas del portal de Homecenter. Solo HC. */
+  importarQueryVentas?: (archivo: File, sobrescribir: boolean) => Promise<RespuestaQueryVentas>;
 }
 
 /** Claro, con sesión: todo habilitado. */
@@ -129,7 +148,7 @@ export const fuenteApp: FuenteDatos = {
 function fuenteDeCanal(
   canal: Exclude<Canal, 'claro'>,
   base: string,
-  recursos: typeof biTradeApiHc,
+  recursos: ApiDeCanal,
 ): FuenteDatos {
   return {
     clave: `app-${canal}`,
@@ -150,7 +169,11 @@ function fuenteDeCanal(
   };
 }
 
-export const fuenteHc = fuenteDeCanal('hc', '/inicio/bi-trade/ventas-hc', biTradeApiHc);
+export const fuenteHc: FuenteDatos = {
+  ...fuenteDeCanal('hc', '/inicio/bi-trade/ventas-hc', biTradeApiHc),
+  importarQuery: biTradeApiHc.importarQuery,
+  importarQueryVentas: biTradeApiHc.importarQueryVentas,
+};
 
 export const fuenteFalabella = fuenteDeCanal(
   'falabella',

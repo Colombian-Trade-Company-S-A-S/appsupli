@@ -9,6 +9,7 @@ urlpatterns = [
     path('api/auth/', include('apps.accounts.urls')),
     path('api/admin/', include('apps.accounts.urls_admin')),
     path('api/valoracion/', include('apps.valoracion.urls')),
+    path('api/performance/', include('apps.performance.urls')),
     path('api/bi-trade/', include('apps.bi_trade.urls')),
     # Sin cuenta: el tablero compartido por enlace y contraseña.
     path('api/publico/bi-trade/', include('apps.bi_trade.urls_publico')),

@@ -82,9 +82,16 @@ def _leer_celda(valor, columna: Columna):
             f'«{columna.nombre}» no se entiende como fecha. Usa el formato AAAA-MM-DD.'
         )
 
+    # Un código escrito en Excel (un EAN) llega como número: 7701234567890.0.
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
     texto = str(valor).strip()
 
     if columna.tipo == 'opcion' and texto not in columna.opciones:
+        # «a» vale por «A», «zona norte» por «Zona Norte»: se guarda la opción tal cual.
+        iguales = [opcion for opcion in columna.opciones if opcion.casefold() == texto.casefold()]
+        if iguales:
+            return iguales[0]
         raise ErrorDeFila(
             f'«{columna.nombre}»: «{texto}» no es un valor válido. '
             f'Opciones: {", ".join(columna.opciones)}.'
@@ -176,12 +183,20 @@ def leer_archivo(archivo, columnas: list[Columna]) -> tuple[list[dict], list[dic
     reordenar las columnas en Excel no debe romper la importación.
     """
     try:
-        libro = load_workbook(archivo, data_only=True)
+        # `read_only` lee la hoja en streaming, sin armar cada celda con su
+        # estilo: con miles de filas es varias veces más rápido.
+        libro = load_workbook(archivo, data_only=True, read_only=True)
     except Exception as exc:  # noqa: BLE001 — openpyxl lanza de todo con archivos corruptos
         raise ErrorDeFila(
             'No se pudo abrir el archivo. Debe ser un Excel .xlsx generado desde la plantilla.'
         ) from exc
+    try:
+        return _leer_hoja(libro, columnas)
+    finally:
+        libro.close()
 
+
+def _leer_hoja(libro, columnas: list[Columna]) -> tuple[list[dict], list[dict]]:
     hoja = libro['Datos'] if 'Datos' in libro.sheetnames else libro.active
 
     encabezados = {}

@@ -1,5 +1,7 @@
 """Serializers de BI Trade Marketing."""
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
 
@@ -7,6 +9,7 @@ from .models import (
     PRECIO_MAXIMO,
     Acelerador,
     Campana,
+    CategoriaHc,
     EscalaTicket,
     Inventario,
     InventarioFalabella,
@@ -41,9 +44,62 @@ from .models import (
     VentaTmk,
 )
 
+#: Llave del contexto donde la importación deja los catálogos ya cargados.
+RELACIONES_PRECARGADAS = 'relaciones_precargadas'
+#: Llave del contexto con la que la importación avisa que ya resolvió qué
+#: filas existen, así que los serializers no tienen que volver a preguntarlo.
+UNICIDAD_RESUELTA = 'unicidad_resuelta'
 
-class PuntoVentaSerializer(serializers.ModelSerializer):
-    ventas_count = serializers.IntegerField(source='ventas.count', read_only=True)
+
+class RelacionPrecargada(serializers.PrimaryKeyRelatedField):
+    """
+    El código de un producto o punto de venta, resuelto sin ir a la base.
+
+    Un `PrimaryKeyRelatedField` normal hace un `get()` por fila: al importar
+    mil ventas son dos mil consultas solo para validar el producto y el punto.
+    La importación carga esos catálogos una vez y los deja en el contexto;
+    fuera de la importación no hay nada precargado y se comporta como siempre.
+    """
+
+    def to_internal_value(self, data):
+        cache = self.context.get(RELACIONES_PRECARGADAS, {}).get(self.field_name)
+        if cache is None:
+            return super().to_internal_value(data)
+        encontrado = cache.get(str(data))
+        if encontrado is None:
+            self.fail('does_not_exist', pk_value=data)
+        return encontrado
+
+
+class ModeloBiTrade(serializers.ModelSerializer):
+    """Base de los serializers de BI: sus llaves foráneas admiten la precarga."""
+
+    serializer_related_field = RelacionPrecargada
+
+
+@extend_schema_field(OpenApiTypes.INT)
+class Conteo(serializers.Field):
+    """
+    Cuántos registros cuelgan de una relación (`ventas_count`).
+
+    El listado anota el número en la misma consulta (`conteo_<relación>`); así
+    no se traen todas las ventas a memoria solo para contarlas. Un registro
+    recién creado o editado no trae la anotación y se cuenta en la base.
+    """
+
+    def __init__(self, relacion: str, **kwargs):
+        self.relacion = relacion
+        super().__init__(source='*', read_only=True, **kwargs)
+
+    def to_representation(self, instancia) -> int:
+        anotado = getattr(instancia, f'conteo_{self.relacion}', None)
+        if anotado is not None:
+            return anotado
+        return getattr(instancia, self.relacion).count()
+
+
+class PuntoVentaSerializer(ModeloBiTrade):
+    ventas_count = Conteo('ventas')
 
     class Meta:
         model = PuntoVenta
@@ -62,15 +118,19 @@ class PuntoVentaSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('El código no puede ir vacío.')
         # `self.Meta.model` y no `PuntoVenta`: el serializer de Homecenter
         # hereda esta validación y tiene que mirar su propia tabla.
-        if self.instance is None and self.Meta.model.objects.filter(pk=codigo).exists():
+        if (
+            self.instance is None
+            and not self.context.get(UNICIDAD_RESUELTA)
+            and self.Meta.model.objects.filter(pk=codigo).exists()
+        ):
             raise serializers.ValidationError(
                 f'Ya existe un punto de venta con el código {codigo}.'
             )
         return codigo
 
 
-class ProductoSerializer(serializers.ModelSerializer):
-    ventas_count = serializers.IntegerField(source='ventas.count', read_only=True)
+class ProductoSerializer(ModeloBiTrade):
+    ventas_count = Conteo('ventas')
 
     class Meta:
         model = Producto
@@ -88,12 +148,16 @@ class ProductoSerializer(serializers.ModelSerializer):
         codigo = value.strip()
         if not codigo:
             raise serializers.ValidationError('El código no puede ir vacío.')
-        if self.instance is None and self.Meta.model.objects.filter(pk=codigo).exists():
+        if (
+            self.instance is None
+            and not self.context.get(UNICIDAD_RESUELTA)
+            and self.Meta.model.objects.filter(pk=codigo).exists()
+        ):
             raise serializers.ValidationError(f'Ya existe un producto con el código {codigo}.')
         return codigo
 
 
-class VentaSerializer(serializers.ModelSerializer):
+class VentaSerializer(ModeloBiTrade):
     nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
     marca = serializers.CharField(source='id_producto.marca', read_only=True)
     nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
@@ -125,7 +189,7 @@ class VentaSerializer(serializers.ModelSerializer):
         return value
 
 
-class _ParProductoPunto(serializers.ModelSerializer):
+class _ParProductoPunto(ModeloBiTrade):
     """Campos comunes de todo lo que cuelga de un producto y un punto de venta."""
 
     nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
@@ -317,6 +381,7 @@ class CampanaSerializer(serializers.ModelSerializer):
 
 OPCIONES_HC = {
     'regionales': [{'value': v, 'label': etiqueta} for v, etiqueta in RegionalHc.choices],
+    'categorias': [{'value': v, 'label': etiqueta} for v, etiqueta in CategoriaHc.choices],
     'materiales': [{'value': v, 'label': etiqueta} for v, etiqueta in Materiales.choices],
 }
 
@@ -338,18 +403,44 @@ def _sin_puntos(campos: tuple) -> tuple:
 class PuntoVentaHcSerializer(PuntoVentaSerializer):
     class Meta(PuntoVentaSerializer.Meta):
         model = PuntoVentaHc
+        fields = (*PuntoVentaSerializer.Meta.fields[:-1], 'categoria', 'ventas_count')
+
+    def to_internal_value(self, data):
+        # La categoría se escribe «a» o «A»: vale la mayúscula. Vacía es «sin dato».
+        if isinstance(data, dict) and isinstance(data.get('categoria'), str):
+            data = {**data, 'categoria': data['categoria'].strip().upper() or None}
+        return super().to_internal_value(data)
 
 
 class ProductoHcSerializer(ProductoSerializer):
     # En la base es `precio_venta_hc`; en el JSON conserva el nombre de Claro
     # para que la pantalla de productos sea la misma.
     precio_venta_claro = serializers.IntegerField(
-        source='precio_venta_hc', min_value=0, max_value=PRECIO_MAXIMO
+        source='precio_venta_hc',
+        min_value=0,
+        max_value=PRECIO_MAXIMO,
+        allow_null=True,
+        required=False,
     )
+
+    #: Opcionales: un texto vacío se guarda como «sin dato» (NULL), no como "".
+    OPCIONALES_TEXTO = ('ean', 'sku_coltrade', 'marca')
 
     class Meta(ProductoSerializer.Meta):
         model = ProductoHc
-        fields = _sin_puntos(ProductoSerializer.Meta.fields)
+        fields = (
+            'id_producto',
+            'ean',
+            'sku_coltrade',
+            *_sin_puntos(ProductoSerializer.Meta.fields[1:]),
+        )
+
+    def to_internal_value(self, data):
+        datos = super().to_internal_value(data)
+        for campo in self.OPCIONALES_TEXTO:
+            if campo in datos:
+                datos[campo] = (datos[campo] or '').strip() or None
+        return datos
 
 
 class VentaHcSerializer(VentaSerializer):
@@ -516,8 +607,8 @@ class MetaTmkSerializer(MetaSerializer):
 
 
 class RegionalPartnerSerializer(serializers.ModelSerializer):
-    puntos_count = serializers.IntegerField(source='puntos_venta.count', read_only=True)
-    registros_count = serializers.IntegerField(source='registros.count', read_only=True)
+    puntos_count = Conteo('puntos_venta')
+    registros_count = Conteo('registros')
 
     class Meta:
         model = RegionalPartner
@@ -538,7 +629,7 @@ class RegionalPartnerSerializer(serializers.ModelSerializer):
 class PuntoVentaPartnerSerializer(serializers.ModelSerializer):
     etiqueta = serializers.CharField(read_only=True)
     regional = serializers.CharField(source='id_regional.nombre', read_only=True)
-    registros_count = serializers.IntegerField(source='registros.count', read_only=True)
+    registros_count = Conteo('registros')
 
     class Meta:
         model = PuntoVentaPartner
@@ -566,7 +657,7 @@ class PuntoVentaPartnerSerializer(serializers.ModelSerializer):
 
 class ProductoPartnerSerializer(serializers.ModelSerializer):
     etiqueta = serializers.CharField(read_only=True)
-    registros_count = serializers.IntegerField(source='registros.count', read_only=True)
+    registros_count = Conteo('registros')
 
     class Meta:
         model = ProductoPartner

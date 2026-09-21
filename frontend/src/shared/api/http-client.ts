@@ -61,6 +61,18 @@ httpClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError<ApiErrorBody>) => {
     if (!error.response) {
+      // Se agotó la espera: el servidor sí recibió la petición y puede haberla
+      // terminado. Decir «no se pudo conectar» lleva a repetir una carga que
+      // quizá ya entró.
+      if (error.code === AxiosError.ECONNABORTED || error.code === AxiosError.ETIMEDOUT) {
+        return Promise.reject(
+          new ApiError(
+            'El servidor tardó demasiado en responder. Revisa si el cambio quedó guardado antes de repetirlo.',
+            0,
+            'TIMEOUT',
+          ),
+        );
+      }
       return Promise.reject(
         new ApiError('No se pudo conectar con el servidor.', 0, 'NETWORK_ERROR'),
       );

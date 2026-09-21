@@ -415,7 +415,7 @@ function ListaProductos({
   onToggle,
 }: {
   nombre: string;
-  productos: Array<{ idProducto: string; nombreProducto: string; marca: string }>;
+  productos: Array<{ idProducto: string; nombreProducto: string; marca: string | null }>;
   elegidos: string[];
   onToggle: (codigo: string) => void;
 }) {
@@ -425,7 +425,7 @@ function ListaProductos({
     ? productos.filter(
         (p) =>
           p.nombreProducto.toLowerCase().includes(texto) ||
-          p.marca.toLowerCase().includes(texto) ||
+          (p.marca ?? '').toLowerCase().includes(texto) ||
           p.idProducto.includes(texto),
       )
     : productos;

@@ -9,6 +9,7 @@ A diferencia de Homecenter y Falabella, aquí sí está el «Importar» general
 del informe del ERP: el mismo de Claro, sobre las tablas `_tmk`. Cada módulo
 tiene además su plantilla y su importación.
 """
+from django.db.models import Count
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -91,7 +92,7 @@ _PUNTO_TMK = Columna(
 
 
 class PuntoVentaTmkViewSet(_PlantillaTmk, PuntoVentaViewSet):
-    queryset = PuntoVentaTmk.objects.prefetch_related('ventas').order_by('nombre_pdv')
+    queryset = PuntoVentaTmk.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_pdv')
     serializer_class = PuntoVentaTmkSerializer
     nombre_plural = 'los puntos de venta Tmk Ecommerce Claro'
     archivo_plantilla = 'plantilla-puntos-venta-tmk'
@@ -106,15 +107,14 @@ class PuntoVentaTmkViewSet(_PlantillaTmk, PuntoVentaViewSet):
                 ejemplo=Materiales.TODOS.value),
     ]
 
-    def buscar_existente(self, fila):
-        return PuntoVentaTmk.objects.filter(pk=fila.get('id_punto_venta_tmk')).first()
-
     def dependencias(self):
         return _dependencias_tmk()
 
 
 class ProductoTmkViewSet(_PlantillaTmk, ProductoViewSet):
-    queryset = ProductoTmk.objects.prefetch_related('ventas').order_by('nombre_producto')
+    queryset = ProductoTmk.objects.annotate(conteo_ventas=Count('ventas')).order_by(
+        'nombre_producto'
+    )
     serializer_class = ProductoTmkSerializer
     nombre_plural = 'los productos Tmk Ecommerce Claro'
     archivo_plantilla = 'plantilla-productos-tmk'
@@ -129,9 +129,6 @@ class ProductoTmkViewSet(_PlantillaTmk, ProductoViewSet):
                 ayuda='Hasta 100.000.000. Con este precio se calculan los ingresos.',
                 ejemplo='265000'),
     ]
-
-    def buscar_existente(self, fila):
-        return ProductoTmk.objects.filter(pk=fila.get('id_producto_tmk')).first()
 
     def dependencias(self):
         return _dependencias_tmk()
@@ -172,12 +169,6 @@ class InventarioTmkViewSet(_PlantillaTmk, InventarioViewSet):
                 ejemplo='24'),
     ]
 
-    def buscar_existente(self, fila):
-        return InventarioTmk.objects.filter(
-            id_producto=fila.get('id_producto_tmk'),
-            id_punto_venta=fila.get('id_punto_venta_tmk'),
-        ).first()
-
 
 class MetaTmkViewSet(_PlantillaTmk, MetaViewSet):
     queryset = (
@@ -207,13 +198,6 @@ class MetaTmkViewSet(_PlantillaTmk, MetaViewSet):
                 ayuda='Periodo de la meta, formato AAAA-MM-DD.', ejemplo='2026-03-01'),
         Columna('meta_cantidad', tipo='entero', ayuda='Unidades objetivo.', ejemplo='25'),
     ]
-
-    def buscar_existente(self, fila):
-        return MetaComercialTmk.objects.filter(
-            id_producto=fila.get('id_producto_tmk'),
-            id_punto_venta=fila.get('id_punto_venta_tmk'),
-            fecha_meta=fila.get('fecha_meta'),
-        ).first()
 
 
 # ── El tablero de Tmk Ecommerce Claro: el mismo cálculo, con el canal TMK ──────

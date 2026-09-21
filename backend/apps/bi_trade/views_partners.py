@@ -106,9 +106,12 @@ def _en_uso(nombre: str, dependencias: list[tuple[str, int]]) -> Response | None
 
 
 class RegionalPartnerViewSet(viewsets.ModelViewSet):
-    queryset = RegionalPartner.objects.prefetch_related('puntos_venta', 'registros').order_by(
-        'nombre'
-    )
+    # Los conteos van anotados: con `prefetch_related` se traían todos los
+    # registros del plan a memoria solo para contarlos.
+    queryset = RegionalPartner.objects.annotate(
+        conteo_puntos_venta=Count('puntos_venta', distinct=True),
+        conteo_registros=Count('registros', distinct=True),
+    ).order_by('nombre')
     serializer_class = RegionalPartnerSerializer
     permission_classes = [HasBiTradeApp, ReadOnlyOrCanManage]
     search_fields = ('nombre',)
@@ -130,7 +133,7 @@ class RegionalPartnerViewSet(viewsets.ModelViewSet):
 class PuntoVentaPartnerViewSet(viewsets.ModelViewSet):
     queryset = (
         PuntoVentaPartner.objects.select_related('id_regional')
-        .prefetch_related('registros')
+        .annotate(conteo_registros=Count('registros'))
         .order_by('nombre_pdv')
     )
     serializer_class = PuntoVentaPartnerSerializer
@@ -146,7 +149,9 @@ class PuntoVentaPartnerViewSet(viewsets.ModelViewSet):
 
 
 class ProductoPartnerViewSet(viewsets.ModelViewSet):
-    queryset = ProductoPartner.objects.prefetch_related('registros').order_by('nombre_producto')
+    queryset = ProductoPartner.objects.annotate(conteo_registros=Count('registros')).order_by(
+        'nombre_producto'
+    )
     serializer_class = ProductoPartnerSerializer
     permission_classes = [HasBiTradeApp, ReadOnlyOrCanManage]
     search_fields = ('id_producto', 'nombre_producto')
@@ -364,36 +369,82 @@ class MetaPartnerViewSet(viewsets.ModelViewSet):
         puntos = {p.pk.upper(): p for p in PuntoVentaPartner.objects.all()}
         marcas = {valor.upper(): valor for valor in MarcaPartner.values}
 
-        creadas = actualizadas = 0
         sin_punto: set[str] = set()
         sin_marca: set[str] = set()
         periodos: set[tuple[int, int]] = set()
+        # (año, mes, punto, marca) de cada fila válida, en orden, y su meta. Si
+        # el archivo repite una clave, gana la última fila, como antes.
+        claves: list[tuple] = []
+        metas_por_clave: dict[tuple, Decimal] = {}
+
+        for fila in filas:
+            mes = MESES.get(str(fila['MES']).strip().upper())
+            punto = puntos.get(str(fila['CENTRO DE COSTOS']).strip().upper())
+            marca = marcas.get(str(fila['MARCA']).strip().upper())
+            meta = _a_decimal(fila['META'])
+            if punto is None:
+                sin_punto.add(str(fila['CENTRO DE COSTOS']).strip())
+                continue
+            if marca is None:
+                sin_marca.add(str(fila['MARCA']).strip())
+                continue
+            if mes is None or meta is None:
+                continue
+
+            clave = (int(fila['AÑO']), mes, punto.pk, marca)
+            claves.append(clave)
+            metas_por_clave[clave] = meta
+            periodos.add((clave[0], mes))
+
+        # Lo que ya existe se lee de una vez y todo se escribe en bloque. Antes
+        # era un `update_or_create` por fila: dos o tres consultas cada una.
+        existentes = {}
+        if claves:
+            existentes = {
+                (meta.anio, meta.mes, meta.id_punto_venta_id, meta.marca): meta
+                for meta in MetaPartner.objects.filter(
+                    anio__in={clave[0] for clave in claves},
+                    mes__in={clave[1] for clave in claves},
+                    id_punto_venta__in={clave[2] for clave in claves},
+                )
+            }
+
+        creadas = actualizadas = 0
+        vistas: set[tuple] = set()
+        for clave in claves:
+            if clave in existentes or clave in vistas:
+                actualizadas += 1
+            else:
+                creadas += 1
+            vistas.add(clave)
+
+        ahora = timezone.now()
+        nuevas = []
+        modificadas = []
+        for clave, meta in metas_por_clave.items():
+            anio, mes, codigo_punto, marca = clave
+            registro = existentes.get(clave)
+            if registro is None:
+                nuevas.append(
+                    MetaPartner(
+                        anio=anio,
+                        mes=mes,
+                        id_punto_venta_id=codigo_punto,
+                        marca=marca,
+                        meta_unidades=meta,
+                    )
+                )
+            else:
+                registro.meta_unidades = meta
+                # `bulk_update` no dispara `auto_now`: la fecha se pone a mano.
+                registro.updated_at = ahora
+                modificadas.append(registro)
 
         with transaction.atomic():
-            for fila in filas:
-                mes = MESES.get(str(fila['MES']).strip().upper())
-                punto = puntos.get(str(fila['CENTRO DE COSTOS']).strip().upper())
-                marca = marcas.get(str(fila['MARCA']).strip().upper())
-                meta = _a_decimal(fila['META'])
-                if punto is None:
-                    sin_punto.add(str(fila['CENTRO DE COSTOS']).strip())
-                    continue
-                if marca is None:
-                    sin_marca.add(str(fila['MARCA']).strip())
-                    continue
-                if mes is None or meta is None:
-                    continue
-
-                _, creada = MetaPartner.objects.update_or_create(
-                    anio=int(fila['AÑO']),
-                    mes=mes,
-                    id_punto_venta=punto,
-                    marca=marca,
-                    defaults={'meta_unidades': meta},
-                )
-                creadas += creada
-                actualizadas += not creada
-                periodos.add((int(fila['AÑO']), mes))
+            MetaPartner.objects.bulk_create(nuevas, batch_size=500)
+            MetaPartner.objects.bulk_update(
+                modificadas, ['meta_unidades', 'updated_at'], batch_size=500
+            )
 
         omitidas = len(filas) - creadas - actualizadas
         partes = [f'{creadas} meta(s) nuevas', f'{actualizadas} actualizada(s)']

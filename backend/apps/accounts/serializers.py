@@ -8,9 +8,33 @@ from .models import Application, User
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
+    """Una app del menú. `children` trae los sub-módulos que cuelgan de ella."""
+
+    children = serializers.SerializerMethodField()
+
     class Meta:
         model = Application
-        fields = ('id', 'code', 'name', 'description', 'base_path', 'icon', 'order')
+        fields = (
+            'id',
+            'code',
+            'name',
+            'description',
+            'base_path',
+            'icon',
+            'order',
+            'parent',
+            'children',
+        )
+
+    def get_children(self, obj: Application):
+        # Solo los sub-módulos a los que la persona llega: el contenedor se
+        # dibuja igual, pero adentro no aparece lo que no tiene asignado.
+        permitidas = self.context.get('permitidas')
+        hijas = [app for app in obj.children.all() if app.is_active]
+        if permitidas is not None:
+            hijas = [app for app in hijas if app.pk in permitidas]
+        hijas.sort(key=lambda app: (app.order, app.name))
+        return ApplicationSerializer(hijas, many=True, context=self.context).data
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -38,6 +62,10 @@ class UserSerializer(serializers.ModelSerializer):
             'position',
             'kind',
             'phone',
+            'direccion',
+            'organizacion',
+            'regional',
+            'punto_venta',
             'manager_name',
             'team_count',
             'theme',
@@ -56,7 +84,13 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.team.filter(is_active=True).count()
 
     def get_applications(self, obj: User):
-        return ApplicationSerializer(obj.get_accessible_applications(), many=True).data
+        # El menú se arma con los contenedores; los sub-módulos van adentro.
+        accesibles = obj.get_accessible_applications().prefetch_related('children')
+        permitidas = {app.pk for app in accesibles}
+        raiz = [app for app in accesibles if app.parent_id is None]
+        return ApplicationSerializer(
+            raiz, many=True, context={'permitidas': permitidas}
+        ).data
 
     def get_permissions(self, obj: User) -> list[str]:
         return obj.get_effective_permissions()

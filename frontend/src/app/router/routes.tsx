@@ -38,7 +38,16 @@ const CumplimientoDiarioPage = lazy(
   () => import('@/modules/bi-trade/pages/CumplimientoDiarioPage'),
 );
 
-// ── Valoración de desempeño ───────────────────────────────────────────────
+// ── Supli Performance · Objetivos y KPIs ──────────────────────────────────
+const PerformanceInicioPage = lazy(
+  () => import('@/modules/performance/pages/PerformanceInicioPage'),
+);
+const PerformanceLayout = lazy(() => import('@/modules/performance/pages/PerformanceLayout'));
+const PerformanceHomePage = lazy(() => import('@/modules/performance/pages/PerformanceHomePage'));
+const MisObjetivosPage = lazy(() => import('@/modules/performance/pages/MisObjetivosPage'));
+const ObjetivosEquipoPage = lazy(() => import('@/modules/performance/pages/ObjetivosEquipoPage'));
+
+// ── Supli Performance · Valoración ────────────────────────────────────────
 const ValoracionLayout = lazy(() => import('@/modules/valoracion/pages/ValoracionLayout'));
 const ValoracionHomePage = lazy(() => import('@/modules/valoracion/pages/ValoracionHomePage'));
 const MisEvaluacionesPage = lazy(() => import('@/modules/valoracion/pages/MisEvaluacionesPage'));
@@ -159,6 +168,27 @@ const routes: RouteObject[] = [
               {
                 path: 'bi-trade/plan-partners/formulario',
                 element: withSuspense(<PlanPartnersFormularioPage />),
+              },
+            ],
+          },
+          // Supli Performance es el contenedor: su página muestra los
+          // sub-módulos que la persona tenga. Cada sub-módulo pide su propio
+          // acceso, así que quien solo tiene valoración no llega a objetivos.
+          {
+            element: <RequireApp code="supli-performance" />,
+            children: [{ path: 'performance', element: withSuspense(<PerformanceInicioPage />) }],
+          },
+          {
+            element: <RequireApp code="objetivos-kpis" />,
+            children: [
+              {
+                path: 'performance/objetivos',
+                element: withSuspense(<PerformanceLayout />),
+                children: [
+                  { index: true, element: withSuspense(<PerformanceHomePage />) },
+                  { path: 'mis-objetivos', element: withSuspense(<MisObjetivosPage />) },
+                  { path: 'equipo', element: withSuspense(<ObjetivosEquipoPage />) },
+                ],
               },
             ],
           },

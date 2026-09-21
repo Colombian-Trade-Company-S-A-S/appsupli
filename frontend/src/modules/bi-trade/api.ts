@@ -1,22 +1,29 @@
-import { api, httpClient } from '@/shared/api/http-client';
+import { ApiError, api, httpClient } from '@/shared/api/http-client';
 
 export type RegionalPdv = 'Zona Sur' | 'Zona Norte' | 'Plaza Claro' | 'Nacional';
 export type MaterialesPdv = 'Todos los materiales' | 'Sin todos los materiales';
+export type CategoriaHc = 'A' | 'B' | 'C';
 
 export interface PuntoVenta {
   idPuntoVenta: string;
   nombrePdv: string;
   regional: RegionalPdv | null;
   materiales: MaterialesPdv | null;
+  /** Solo Homecenter. */
+  categoria?: CategoriaHc | null;
   ventasCount: number;
 }
 
 export interface Producto {
   idProducto: string;
+  /** Solo Homecenter: su catálogo trae EAN y SKU Coltrade. */
+  ean?: string | null;
+  skuColtrade?: string | null;
   nombreProducto: string;
-  marca: string;
-  precioVentaClaro: number;
-  precioVentaColtrade: number;
+  /** En Homecenter la marca y los precios pueden faltar. */
+  marca: string | null;
+  precioVentaClaro: number | null;
+  precioVentaColtrade: number | null;
   puntaje: number | null;
   ventasCount: number;
 }
@@ -25,21 +32,21 @@ export interface Venta {
   idVenta: number;
   idProducto: string;
   nombreProducto: string;
-  marca: string;
+  marca: string | null;
   idPuntoVenta: string;
   nombrePdv: string;
   regional: string;
   fechaVenta: string;
   cantidadVendida: number;
-  precioVentaColtrade: number;
-  totalColtrade: number;
+  precioVentaColtrade: number | null;
+  totalColtrade: number | null;
 }
 
 export interface Inventario {
   idInventario: number;
   idProducto: string;
   nombreProducto: string;
-  marca: string;
+  marca: string | null;
   idPuntoVenta: string;
   nombrePdv: string;
   regional: string;
@@ -50,17 +57,17 @@ export interface MetaComercial {
   idMeta: number;
   idProducto: string;
   nombreProducto: string;
-  marca: string;
+  marca: string | null;
   idPuntoVenta: string;
   nombrePdv: string;
   regional: string;
   fechaMeta: string;
   metaCantidad: number;
   /** Del producto. Se manda de vuelta para poder mostrar el cálculo. */
-  precioVentaColtrade: number;
+  precioVentaColtrade: number | null;
   puntaje: number;
   /** Calculados en el backend: unidades × precio y unidades × puntaje. */
-  metaDinero: number;
+  metaDinero: number | null;
   metaPuntos: number;
 }
 
@@ -184,6 +191,8 @@ export interface Opciones {
   regionales: Array<{ value: RegionalPdv; label: string }>;
   materiales: Array<{ value: MaterialesPdv; label: string }>;
   marcas: string[];
+  /** Solo Homecenter. */
+  categorias?: Array<{ value: CategoriaHc; label: string }>;
 }
 
 export interface FiltrosDashboard {
@@ -220,6 +229,55 @@ export type HojaAvance = 'serie' | 'regional' | 'puntos';
  * `sobrescribir` borra el mes y deja lo que traiga el archivo.
  */
 export type ModoImportacion = 'completar' | 'sobrescribir';
+
+/** Un día del querie de ventas que ya tenía ventas cargadas. */
+export interface DiaConVentas {
+  fecha: string;
+  registros: number;
+}
+
+/** Lo que devuelve el querie de ventas de Homecenter cuando carga. */
+export interface ResultadoQueryVentas {
+  dias: string[];
+  filasLeidas: number;
+  sinUnidades: number;
+  sinTienda: number;
+  sinProducto: number;
+  sinPuntoVenta: number;
+  productosFaltantes: string[];
+  puntosFaltantes: string[];
+  creadas: number;
+  unidades: number;
+  eliminadas: number;
+  message: string;
+}
+
+/**
+ * El querie de ventas carga, o se detiene porque algún día ya tenía ventas.
+ * Lo segundo no es un error: es la pregunta de si sobrescribir esos días.
+ */
+export type RespuestaQueryVentas =
+  | { conflicto: false; resultado: ResultadoQueryVentas }
+  | { conflicto: true; diasConVentas: DiaConVentas[]; message: string };
+
+/** Lo que devuelve el querie de inventario de Homecenter. */
+export interface ResultadoQuery {
+  /** El día que se cargó: el más reciente del archivo. */
+  fecha: string;
+  fechasEnArchivo: string[];
+  filasDelDia: number;
+  deOtrosDias: number;
+  sinUnidades: number;
+  sinTienda: number;
+  sinProducto: number;
+  sinPuntoVenta: number;
+  productosFaltantes: string[];
+  puntosFaltantes: string[];
+  creados: number;
+  unidades: number;
+  eliminados: number;
+  message: string;
+}
 
 /** Lo que responde la importación del informe del ERP. */
 export interface ResultadoInforme {
@@ -519,6 +577,9 @@ const recurso = <T, P>(ruta: string) => ({
     return httpClient
       .post<ResultadoImportacion>(`${RUTA}${ruta}/importar`, cuerpo, {
         headers: { 'Content-Type': undefined },
+        // El mismo margen que el informe y que gunicorn: un archivo grande
+        // puede pasar de los 30 s normales.
+        timeout: 120_000,
       })
       .then((r) => r.data);
   },
@@ -712,7 +773,54 @@ const apiDeCanal = (tramo: Exclude<Canal, 'claro'>) => ({
   metas: recurso<MetaComercial, Partial<MetaPayload>>(`/${tramo}/metas`),
 });
 
-export const biTradeApiHc = apiDeCanal('hc');
+/** Lo que tiene cualquier canal aparte: sus CRUD y sus tableros. */
+export type ApiDeCanal = ReturnType<typeof apiDeCanal>;
+
+export const biTradeApiHc = {
+  ...apiDeCanal('hc'),
+  /** Reemplaza el inventario con el querie del portal de Homecenter. */
+  importarQuery: (archivo: File) => {
+    const cuerpo = new FormData();
+    cuerpo.append('archivo', archivo);
+    return httpClient
+      .post<ResultadoQuery>(`${RUTA}/hc/inventario/importar-query`, cuerpo, {
+        headers: { 'Content-Type': undefined },
+        timeout: 120_000,
+      })
+      .then((r) => r.data);
+  },
+  /**
+   * Carga las ventas del querie del portal de Homecenter. Sin `sobrescribir`,
+   * si algún día del archivo ya tiene ventas no se guarda nada y vuelve la
+   * lista de esos días.
+   */
+  importarQueryVentas: async (
+    archivo: File,
+    sobrescribir: boolean,
+  ): Promise<RespuestaQueryVentas> => {
+    const cuerpo = new FormData();
+    cuerpo.append('archivo', archivo);
+    if (sobrescribir) cuerpo.append('modo', 'sobrescribir');
+    try {
+      const { data } = await httpClient.post<ResultadoQueryVentas>(
+        `${RUTA}/hc/ventas/importar-query`,
+        cuerpo,
+        { headers: { 'Content-Type': undefined }, timeout: 120_000 },
+      );
+      return { conflicto: false, resultado: data };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && error.code === 'dias_con_ventas') {
+        const cuerpoError = error.body as { diasConVentas: DiaConVentas[] };
+        return {
+          conflicto: true,
+          diasConVentas: cuerpoError.diasConVentas,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  },
+};
 export const biTradeApiFalabella = apiDeCanal('falabella');
 export const biTradeApiTmk = {
   ...apiDeCanal('tmk'),

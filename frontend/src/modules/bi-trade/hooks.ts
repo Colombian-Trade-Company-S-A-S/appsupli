@@ -61,7 +61,7 @@ const llave = (fuente: FuenteDatos, key: readonly unknown[]): readonly unknown[]
   return key;
 };
 
-const mensajeDeError = (error: unknown) => {
+export const mensajeDeError = (error: unknown) => {
   if (error instanceof ApiError) {
     const porCampo = error.errors && Object.values(error.errors)[0]?.[0];
     return porCampo ?? error.message;

@@ -282,7 +282,7 @@ function ResumenImportacion({
   );
 }
 
-function Bloque({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+export function Bloque({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
       <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{titulo}</p>
@@ -291,7 +291,7 @@ function Bloque({ titulo, children }: { titulo: string; children: React.ReactNod
   );
 }
 
-function Renglon({
+export function Renglon({
   etiqueta,
   valor,
   destacado = false,

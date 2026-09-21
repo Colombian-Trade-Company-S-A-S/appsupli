@@ -47,6 +47,15 @@ class Application(TimeStampedModel):
     icon = models.CharField('ícono', max_length=50, blank=True, help_text='Nombre en lucide-react')
     order = models.PositiveIntegerField('orden', default=100)
     is_active = models.BooleanField('activa', default=True)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name='contenedor',
+        help_text='Si se llena, esta app es un sub-módulo y cuelga de la otra en el menú.',
+    )
 
     class Meta:
         verbose_name = 'aplicación'
@@ -152,6 +161,18 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     phone = models.CharField('teléfono', max_length=30, blank=True)
     avatar_url = models.URLField('avatar', blank=True)
 
+    # ── Organigrama extendido ────────────────────────────────────────────
+    # Los pide Supli Performance para filtrar el Performance. Quedan vacíos
+    # a propósito: People los diligencia cuando tenga la estructura lista, y
+    # mientras tanto ningún filtro depende de ellos.
+    direccion = models.CharField('dirección', max_length=120, blank=True)
+    organizacion = models.CharField('organización', max_length=120, blank=True)
+    regional = models.CharField('regional', max_length=120, blank=True)
+    punto_venta = models.CharField(
+        'CAV / punto de venta', max_length=120, blank=True,
+        help_text='Solo aplica para asesores y promotores.',
+    )
+
     # ── Apariencia: viaja con la cuenta, no con el navegador ──────────────
     theme = models.CharField('tema', max_length=10, choices=Theme.choices, default=Theme.SYSTEM)
     accent = models.CharField(
@@ -217,11 +238,16 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         active = Application.objects.filter(is_active=True)
         if self.is_admin:
             return active
-        return active.filter(
+        propias = active.filter(
             models.Q(users=self)
             | models.Q(permissions__roles__users=self)
             | models.Q(permissions__users=self)
         ).distinct()
+        # Un sub-módulo arrastra a su contenedor: sin él, el menú no tendría
+        # de dónde colgarlo aunque la persona sí tenga acceso al sub-módulo.
+        ids = set(propias.values_list('id', flat=True))
+        ids |= set(propias.exclude(parent=None).values_list('parent_id', flat=True))
+        return active.filter(id__in=ids)
 
     def has_app_access(self, code: str) -> bool:
         return self.get_accessible_applications().filter(code=code).exists()

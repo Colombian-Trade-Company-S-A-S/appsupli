@@ -28,12 +28,15 @@ export const formatoMes = (valor?: string | null) => {
 };
 
 /** Pesos colombianos, sin decimales: los precios del negocio son enteros. */
-export const formatoMoneda = (valor: number) =>
-  new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency: 'COP',
-    maximumFractionDigits: 0,
-  }).format(valor);
+/** Pesos sin decimales. Un valor que falta (un precio sin dato) sale como «—». */
+export const formatoMoneda = (valor: number | null | undefined) =>
+  valor == null
+    ? '—'
+    : new Intl.NumberFormat('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+        maximumFractionDigits: 0,
+      }).format(valor);
 
 /** Versión corta para las cifras grandes de un tablero: `$4,2 M`. */
 export const formatoMonedaCorta = (valor: number) => {

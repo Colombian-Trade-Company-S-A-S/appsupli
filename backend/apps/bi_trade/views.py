@@ -5,9 +5,9 @@ tablero que resume todo.
 Leer exige tener la aplicación; escribir exige `bi-trade:data:manage`, que se
 reparte con roles desde Administración.
 """
-from datetime import datetime
+from datetime import date, datetime
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, IntegerField, Q, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
 from django.http import HttpResponse
@@ -16,6 +16,8 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
+from rest_framework.serializers import ModelSerializer
+from rest_framework.validators import UniqueTogetherValidator, UniqueValidator
 
 from apps.core.pagination import StandardPagination
 
@@ -45,11 +47,14 @@ from .models import (
     anotaciones_meta,
 )
 from .serializers import (
+    RELACIONES_PRECARGADAS,
+    UNICIDAD_RESUELTA,
     CampanaSerializer,
     InventarioSerializer,
     MetaSerializer,
     ProductoSerializer,
     PuntoVentaSerializer,
+    RelacionPrecargada,
     VentaSerializer,
 )
 from .tickets import calcular_tickets, participa
@@ -213,12 +218,10 @@ class BiTradeViewSet(viewsets.ModelViewSet):
     #: Aviso extra que se imprime en la hoja de instrucciones.
     nota_plantilla = ''
 
-    def buscar_existente(self, fila: dict):
-        """Registro que ya existe para esa fila, si el modelo tiene clave natural.
-
-        Devolverlo hace que la importación actualice en vez de duplicar.
-        """
-        return None
+    #: Campos que identifican un registro (clave natural), con los nombres del
+    #: serializer. Si una fila trae una clave que ya existe, la importación la
+    #: actualiza en vez de duplicarla. Vacío = cada fila es un registro nuevo.
+    campos_clave: tuple[str, ...] = ()
 
     def fila_a_payload(self, fila: dict) -> dict:
         """Traduce los encabezados de la plantilla a campos del serializer."""
@@ -287,36 +290,22 @@ class BiTradeViewSet(viewsets.ModelViewSet):
             )
 
         creados = actualizados = 0
-        if not errores:
+        if not errores and filas:
             try:
-                with transaction.atomic():
-                    for fila in filas:
-                        instancia = self.buscar_existente(fila)
-                        serializer = self.get_serializer(
-                            instancia, data=self.fila_a_payload(fila), partial=bool(instancia)
-                        )
-                        if not serializer.is_valid():
-                            errores.append(
-                                {
-                                    'fila': fila['_fila'],
-                                    'errores': [
-                                        f'{campo}: {mensajes[0]}'
-                                        if isinstance(mensajes, list)
-                                        else f'{campo}: {mensajes}'
-                                        for campo, mensajes in serializer.errors.items()
-                                    ],
-                                }
-                            )
-                            continue
-                        serializer.save()
-                        if instancia is None:
-                            creados += 1
-                        else:
-                            actualizados += 1
-                    if errores:
-                        raise _AbortarImportacion
-            except _AbortarImportacion:
-                creados = actualizados = 0
+                creados, actualizados = self._importar_filas(filas, errores)
+            except IntegrityError:
+                # Solo pasa si otra persona cargó la misma clave mientras se
+                # importaba: la transacción ya se deshizo entera.
+                return Response(
+                    {
+                        'code': 'conflict',
+                        'message': (
+                            'Otra carga cambió estos datos mientras se importaba el archivo. '
+                            'No se importó nada: vuelve a subirlo.'
+                        ),
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         if errores:
             return Response(
@@ -353,10 +342,249 @@ class BiTradeViewSet(viewsets.ModelViewSet):
             }
         )
 
+    def _importar_filas(self, filas: list[dict], errores: list[dict]) -> tuple[int, int]:
+        """
+        Valida y guarda las filas con un número fijo de consultas.
+
+        Antes cada fila iba sola a la base: buscar si existía, validar el
+        producto, validar el punto, revisar duplicados y guardar. Con la base
+        lejos (el backend local contra Render) eran ~0,6 s por fila, y un
+        archivo de metas tardaba minutos. Ahora se lee de una vez lo que ya
+        existe y los catálogos que se referencian, se valida todo en memoria y
+        se escribe en bloque: da igual si el archivo trae 10 filas o 10.000.
+
+        Devuelve (creados, actualizados). Si alguna fila falla, agrega su error
+        a `errores` y no guarda nada.
+        """
+        modelo = self.get_queryset().model
+        clase = self.get_serializer_class()
+        payloads = [(fila['_fila'], self.fila_a_payload(fila)) for fila in filas]
+        solo_datos = [payload for _numero, payload in payloads]
+
+        contexto = self.get_serializer_context()
+        contexto[RELACIONES_PRECARGADAS] = _relaciones_precargadas(clase, solo_datos, contexto)
+        contexto[UNICIDAD_RESUELTA] = bool(self.campos_clave)
+        existentes = _existentes_por_clave(modelo, self.campos_clave, solo_datos)
+        masivo = _admite_guardado_masivo(clase, modelo)
+
+        # Filas del mismo archivo con la misma clave: la segunda actualiza a la
+        # primera, igual que si se hubieran subido en dos archivos.
+        del_archivo: dict[tuple, object] = {}
+        nuevos: list = []
+        modificados: dict = {}
+        campos_modificados: set[str] = set()
+        creados = actualizados = 0
+
+        # En el guardado masivo un solo serializer valida todas las filas. DRF
+        # arma los campos y los validadores de cero en cada instancia, y eso
+        # era más de la mitad del tiempo de un archivo grande.
+        reutilizable = None
+        if masivo:
+            reutilizable = clase(context=contexto)
+            if self.campos_clave:
+                _sin_validar_unicidad(reutilizable, self.campos_clave)
+
+        try:
+            with transaction.atomic():
+                for numero, payload in payloads:
+                    clave = _clave_de(payload, self.campos_clave)
+                    instancia = None
+                    if clave is not None:
+                        instancia = del_archivo.get(clave) or existentes.get(clave)
+
+                    if reutilizable is not None:
+                        serializer = _preparar(reutilizable, instancia, payload)
+                    else:
+                        serializer = clase(
+                            instancia, data=payload, partial=instancia is not None,
+                            context=contexto,
+                        )
+                        if self.campos_clave:
+                            _sin_validar_unicidad(serializer, self.campos_clave)
+                    if not serializer.is_valid():
+                        errores.append({'fila': numero, 'errores': _mensajes(serializer.errors)})
+                        continue
+
+                    if instancia is None:
+                        creados += 1
+                    else:
+                        actualizados += 1
+
+                    if not masivo:
+                        # Un serializer con lógica propia al guardar (las
+                        # campañas crean sus escalas) se guarda como siempre.
+                        serializer.save()
+                        if clave is not None:
+                            del_archivo[clave] = serializer.instance
+                        continue
+
+                    datos = serializer.validated_data
+                    if instancia is None:
+                        nuevo = modelo(**datos)
+                        nuevos.append(nuevo)
+                        if clave is not None:
+                            del_archivo[clave] = nuevo
+                        continue
+                    for campo, valor in datos.items():
+                        setattr(instancia, campo, valor)
+                    if not instancia._state.adding:
+                        modificados[instancia.pk] = instancia
+                        campos_modificados.update(datos)
+
+                if errores:
+                    raise _AbortarImportacion
+
+                if nuevos:
+                    modelo.objects.bulk_create(nuevos, batch_size=TAMANO_LOTE)
+                if modificados:
+                    _actualizar_en_bloque(modelo, list(modificados.values()), campos_modificados)
+        except _AbortarImportacion:
+            return 0, 0
+
+        return creados, actualizados
+
+
+#: Filas por sentencia en los guardados en bloque.
+TAMANO_LOTE = 500
+
+
+def _normalizar(valor):
+    """Un valor de la clave, comparable venga del Excel o de la base."""
+    if valor is None or isinstance(valor, date):
+        return valor
+    return str(valor).strip()
+
+
+def _clave_de(payload: dict, campos: tuple[str, ...]) -> tuple | None:
+    """La clave natural de una fila, o `None` si no tiene (o le falta un campo)."""
+    if not campos:
+        return None
+    clave = tuple(_normalizar(payload.get(campo)) for campo in campos)
+    if any(valor in (None, '') for valor in clave):
+        return None
+    return clave
+
+
+def _existentes_por_clave(modelo, campos: tuple[str, ...], payloads: list[dict]) -> dict:
+    """Los registros que ya están en la base para las claves del archivo, en una consulta."""
+    if not campos:
+        return {}
+    filtros = {}
+    for campo in campos:
+        valores = {payload.get(campo) for payload in payloads} - {None, ''}
+        if not valores:
+            return {}
+        filtros[f'{campo}__in'] = valores
+    # `attname` lee `id_producto_id` en vez de `id_producto`: el código sin
+    # tener que cargar el producto.
+    columnas = [modelo._meta.get_field(campo).attname for campo in campos]
+    return {
+        tuple(_normalizar(getattr(registro, columna)) for columna in columnas): registro
+        for registro in modelo.objects.filter(**filtros)
+    }
+
+
+def _relaciones_precargadas(clase, payloads: list[dict], contexto: dict) -> dict:
+    """
+    Por cada llave foránea del serializer, los registros que el archivo nombra.
+
+    Una consulta por relación (productos, puntos de venta) en vez de una por
+    fila. Lo que no aparece aquí es un código que no existe, y el campo lo
+    rechaza con el mismo mensaje de siempre.
+    """
+    precargadas = {}
+    for nombre, campo in clase(context=contexto).fields.items():
+        if not isinstance(campo, RelacionPrecargada) or campo.read_only:
+            continue
+        codigos = {str(payload[nombre]) for payload in payloads if payload.get(nombre)}
+        registros = campo.get_queryset().filter(pk__in=codigos) if codigos else []
+        precargadas[nombre] = {str(registro.pk): registro for registro in registros}
+    return precargadas
+
+
+def _preparar(serializer, instancia, payload: dict):
+    """
+    Deja el serializer listo para validar otra fila, como si fuera nuevo.
+
+    Los campos y los validadores ya construidos se conservan; lo que es de la
+    fila (instancia, datos, resultado de la validación anterior) se reemplaza.
+    """
+    serializer.instance = instancia
+    serializer.partial = instancia is not None
+    serializer.initial_data = payload
+    for atributo in ('_validated_data', '_errors', '_data'):
+        serializer.__dict__.pop(atributo, None)
+    return serializer
+
+
+def _sin_validar_unicidad(serializer, campos: tuple[str, ...]) -> None:
+    """
+    Quita al serializer las validaciones de duplicado sobre la clave natural.
+
+    Cada una es una consulta por fila, y la importación ya sabe la respuesta:
+    si la clave existe, la fila actualiza ese registro; si no, es nuevo.
+    """
+    clave = set(campos)
+    serializer.validators = [
+        validador
+        for validador in serializer.validators
+        if not (isinstance(validador, UniqueTogetherValidator) and set(validador.fields) == clave)
+    ]
+    if len(campos) == 1:
+        campo = serializer.fields.get(campos[0])
+        if campo is not None:
+            campo.validators = [
+                validador
+                for validador in campo.validators
+                if not isinstance(validador, UniqueValidator)
+            ]
+
+
+def _admite_guardado_masivo(clase, modelo) -> bool:
+    """Si el serializer guarda como un ModelSerializer cualquiera, sin lógica propia."""
+    return (
+        clase.create is ModelSerializer.create
+        and clase.update is ModelSerializer.update
+        and not modelo._meta.many_to_many
+    )
+
+
+def _actualizar_en_bloque(modelo, registros: list, campos: set[str]) -> None:
+    """
+    Guarda lo que cambió con un upsert por la PK. No toca la PK, y sí la fecha de edición.
+
+    `bulk_update` arma un `CASE WHEN pk=… THEN …` por cada fila y cada columna:
+    con miles de filas armar esa sentencia tardaba más que ejecutarla. El
+    `INSERT … ON CONFLICT (pk) DO UPDATE` manda las filas tal cual y la base
+    las cruza sola. Todas existen, así que ninguna se inserta.
+    """
+    nombre_pk = modelo._meta.pk.name
+    columnas = sorted(campos - {nombre_pk})
+    if any(field.name == 'updated_at' for field in modelo._meta.concrete_fields):
+        ahora = timezone.now()
+        for registro in registros:
+            registro.updated_at = ahora
+        columnas.append('updated_at')
+    if columnas:
+        modelo.objects.bulk_create(
+            registros,
+            batch_size=TAMANO_LOTE,
+            update_conflicts=True,
+            unique_fields=[nombre_pk],
+            update_fields=columnas,
+        )
+
+
+def _mensajes(errores: dict) -> list[str]:
+    """Los errores de un serializer como `campo: mensaje`, uno por campo."""
+    return [
+        f'{campo}: {mensajes[0]}' if isinstance(mensajes, list) else f'{campo}: {mensajes}'
+        for campo, mensajes in errores.items()
+    ]
 
 
 class PuntoVentaViewSet(BiTradeViewSet):
-    queryset = PuntoVenta.objects.prefetch_related('ventas').order_by('nombre_pdv')
+    queryset = PuntoVenta.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_pdv')
     serializer_class = PuntoVentaSerializer
     search_fields = ('id_punto_venta', 'nombre_pdv')
     filterset_fields = ('regional', 'materiales')
@@ -375,8 +603,7 @@ class PuntoVentaViewSet(BiTradeViewSet):
                 ejemplo=Materiales.TODOS.value),
     ]
 
-    def buscar_existente(self, fila):
-        return PuntoVenta.objects.filter(pk=fila.get('id_punto_venta')).first()
+    campos_clave = ('id_punto_venta',)
 
     def dependencias(self):
         return [
@@ -402,7 +629,7 @@ class PuntoVentaViewSet(BiTradeViewSet):
 
 
 class ProductoViewSet(BiTradeViewSet):
-    queryset = Producto.objects.prefetch_related('ventas').order_by('nombre_producto')
+    queryset = Producto.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_producto')
     serializer_class = ProductoSerializer
     search_fields = ('id_producto', 'nombre_producto', 'marca')
     filterset_fields = ('marca',)
@@ -426,8 +653,7 @@ class ProductoViewSet(BiTradeViewSet):
                 ayuda='Opcional. Se usa para la meta de puntos.', ejemplo='90'),
     ]
 
-    def buscar_existente(self, fila):
-        return Producto.objects.filter(pk=fila.get('id_producto')).first()
+    campos_clave = ('id_producto',)
 
     def dependencias(self):
         return [
@@ -582,10 +808,7 @@ class InventarioViewSet(BiTradeViewSet):
                 ejemplo='24'),
     ]
 
-    def buscar_existente(self, fila):
-        return Inventario.objects.filter(
-            id_producto=fila.get('id_producto'), id_punto_venta=fila.get('id_punto_venta')
-        ).first()
+    campos_clave = ('id_producto', 'id_punto_venta')
 
 
 class MetaViewSet(BiTradeViewSet):
@@ -652,18 +875,13 @@ class MetaViewSet(BiTradeViewSet):
 
     ]
 
-    def buscar_existente(self, fila):
-        return MetaComercial.objects.filter(
-            id_producto=fila.get('id_producto'),
-            id_punto_venta=fila.get('id_punto_venta'),
-            fecha_meta=fila.get('fecha_meta'),
-        ).first()
+    campos_clave = ('id_producto', 'id_punto_venta', 'fecha_meta')
 
 
 def opciones_de(canal: Canal) -> dict:
     """Catálogos para los formularios y los filtros de un canal."""
     marcas = list(
-        canal.producto.objects.exclude(marca='')
+        canal.producto.objects.exclude(marca__isnull=True).exclude(marca='')
         .values_list('marca', flat=True)
         .distinct()
         .order_by('marca')

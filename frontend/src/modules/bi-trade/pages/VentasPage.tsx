@@ -45,6 +45,7 @@ import {
 } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BotonesExcel } from '../components/BotonesExcel';
+import { ImportarQueryVentas } from '../components/ImportarQueryVentas';
 import { BarraFiltros, CampoBusqueda, CampoFiltro, soloConValor } from '../components/Filtros';
 import { Paginacion } from '../components/Paginacion';
 
@@ -124,6 +125,9 @@ export default function VentasPage() {
           Nueva venta
         </Button>
         <BotonesExcel recurso="ventas" filtrosExport={consulta} />
+        {fuente.importarQueryVentas && (
+          <ImportarQueryVentas importar={fuente.importarQueryVentas} />
+        )}
         <Button
           variant="destructive"
           disabled={total === 0 || vaciar.isPending}
@@ -398,9 +402,10 @@ function VentaDialog({
   }, [abierto, venta]);
 
   const productoElegido = productos.find((p) => p.idProducto === datos.idProducto);
-  const total = productoElegido
-    ? productoElegido.precioVentaColtrade * (datos.cantidadVendida || 0)
-    : 0;
+  const total =
+    productoElegido?.precioVentaColtrade == null
+      ? null
+      : productoElegido.precioVentaColtrade * (datos.cantidadVendida || 0);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();

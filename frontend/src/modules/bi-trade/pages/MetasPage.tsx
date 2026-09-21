@@ -417,7 +417,8 @@ function MetaDialog({
   const producto = productos.find((p) => p.idProducto === datos.idProducto);
 
   // Lo mismo que calcula el backend, para mostrarlo antes de guardar.
-  const enDinero = producto ? datos.metaCantidad * producto.precioVentaColtrade : 0;
+  const enDinero =
+    producto?.precioVentaColtrade == null ? null : datos.metaCantidad * producto.precioVentaColtrade;
   const enPuntos = producto ? datos.metaCantidad * (producto.puntaje ?? 0) : 0;
 
   const onSubmit = (event: FormEvent) => {

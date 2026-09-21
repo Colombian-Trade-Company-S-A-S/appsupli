@@ -78,7 +78,11 @@ export default function PuntosVentaPage() {
           <PlusIcon data-icon="inline-start" />
           Nuevo punto de venta
         </Button>
-        <BotonesExcel recurso="puntosVenta" />
+        <BotonesExcel
+          recurso="puntosVenta"
+          // Solo HC exporta su catálogo; con la misma búsqueda que la tabla.
+          filtrosExport={fuente.catalogoHc ? { search: buscar || undefined } : undefined}
+        />
         <Button
           variant="destructive"
           disabled={puntos.length === 0 || vaciar.isPending}
@@ -114,6 +118,7 @@ export default function PuntosVentaPage() {
                 <TableHead>Nombre</TableHead>
                 <TableHead>Regional</TableHead>
                 <TableHead className="hidden md:table-cell">Materiales</TableHead>
+                {fuente.catalogoHc && <TableHead>Categoría</TableHead>}
                 <TableHead>Ventas</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
@@ -133,6 +138,15 @@ export default function PuntosVentaPage() {
                   <TableCell className="hidden text-muted-foreground md:table-cell">
                     {punto.materiales ?? 'Sin dato'}
                   </TableCell>
+                  {fuente.catalogoHc && (
+                    <TableCell>
+                      {punto.categoria ? (
+                        <Badge variant="outline">{punto.categoria}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">Sin dato</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="tabular-nums">{formatoNumero(punto.ventasCount)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
@@ -212,7 +226,9 @@ function PuntoVentaDialog({
   punto: PuntoVenta | null;
 }) {
   const editando = !!punto;
-  const recursos = useFuente().recursos ?? biTradeApi;
+  const fuente = useFuente();
+  const recursos = fuente.recursos ?? biTradeApi;
+  const catalogoHc = !!fuente.catalogoHc;
   const { data: opciones } = useOpciones();
   const [datos, setDatos] = useState<PuntoVentaPayload>(VACIO);
 
@@ -233,10 +249,13 @@ function PuntoVentaDialog({
             nombrePdv: punto.nombrePdv,
             regional: punto.regional,
             materiales: punto.materiales,
+            ...(catalogoHc && { categoria: punto.categoria ?? null }),
           }
-        : VACIO,
+        : catalogoHc
+          ? { ...VACIO, categoria: null }
+          : VACIO,
     );
-  }, [abierto, punto]);
+  }, [abierto, punto, catalogoHc]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -253,7 +272,8 @@ function PuntoVentaDialog({
         <DialogHeader>
           <DialogTitle>{editando ? 'Editar punto de venta' : 'Nuevo punto de venta'}</DialogTitle>
           <DialogDescription>
-            Regional y materiales pueden quedar vacíos si todavía no se conocen.
+            {catalogoHc ? 'Regional, materiales y categoría' : 'Regional y materiales'} pueden
+            quedar vacíos si todavía no se conocen.
           </DialogDescription>
         </DialogHeader>
 
@@ -317,6 +337,20 @@ function PuntoVentaDialog({
                 label: m.label,
               }))}
             />
+
+            {catalogoHc && (
+              <CampoSelect
+                id="pdv-categoria"
+                label="Categoría"
+                placeholder="Sin dato"
+                className="w-full"
+                value={datos.categoria ?? ''}
+                onChange={(v) =>
+                  setDatos({ ...datos, categoria: (v || null) as PuntoVentaPayload['categoria'] })
+                }
+                opciones={opciones?.categorias ?? []}
+              />
+            )}
           </FieldGroup>
         </form>
 

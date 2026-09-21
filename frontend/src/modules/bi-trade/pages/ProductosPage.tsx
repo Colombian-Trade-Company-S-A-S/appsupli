@@ -79,7 +79,11 @@ export default function ProductosPage() {
           <PlusIcon data-icon="inline-start" />
           Nuevo producto
         </Button>
-        <BotonesExcel recurso="productos" />
+        <BotonesExcel
+          recurso="productos"
+          // Solo HC exporta su catálogo; con la misma búsqueda que la tabla.
+          filtrosExport={fuente.catalogoHc ? { search: buscar || undefined } : undefined}
+        />
         <Button
           variant="destructive"
           disabled={productos.length === 0 || vaciar.isPending}
@@ -94,7 +98,11 @@ export default function ProductosPage() {
         <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           className="pl-9"
-          placeholder="Buscar por código, nombre o marca…"
+          placeholder={
+            fuente.catalogoHc
+              ? 'Buscar por código, EAN, SKU, nombre o marca…'
+              : 'Buscar por código, nombre o marca…'
+          }
           value={buscar}
           onChange={(e) => setBuscar(e.target.value)}
         />
@@ -112,10 +120,16 @@ export default function ProductosPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
+                {fuente.catalogoHc && (
+                  <>
+                    <TableHead className="hidden xl:table-cell">EAN</TableHead>
+                    <TableHead className="hidden lg:table-cell">SKU Coltrade</TableHead>
+                  </>
+                )}
                 <TableHead>Producto</TableHead>
                 <TableHead>Marca</TableHead>
-                <TableHead className="hidden lg:table-cell">Precio {fuente.nombreCanal}</TableHead>
                 <TableHead>Precio Coltrade</TableHead>
+                <TableHead className="hidden lg:table-cell">Precio {fuente.nombreCanal}</TableHead>
                 {fuente.conPuntos && (
                   <TableHead className="hidden md:table-cell">Puntaje</TableHead>
                 )}
@@ -127,15 +141,29 @@ export default function ProductosPage() {
               {productos.map((producto) => (
                 <TableRow key={producto.idProducto}>
                   <TableCell className="font-medium">{producto.idProducto}</TableCell>
+                  {fuente.catalogoHc && (
+                    <>
+                      <TableCell className="hidden tabular-nums text-muted-foreground xl:table-cell">
+                        {producto.ean ?? '—'}
+                      </TableCell>
+                      <TableCell className="hidden text-muted-foreground lg:table-cell">
+                        {producto.skuColtrade ?? '—'}
+                      </TableCell>
+                    </>
+                  )}
                   <TableCell>{producto.nombreProducto}</TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{producto.marca}</Badge>
-                  </TableCell>
-                  <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
-                    {formatoMoneda(producto.precioVentaClaro)}
+                    {producto.marca ? (
+                      <Badge variant="secondary">{producto.marca}</Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {formatoMoneda(producto.precioVentaColtrade)}
+                  </TableCell>
+                  <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
+                    {formatoMoneda(producto.precioVentaClaro)}
                   </TableCell>
                   {fuente.conPuntos && (
                     <TableCell className="hidden tabular-nums text-muted-foreground md:table-cell">
@@ -215,6 +243,18 @@ const VACIO: ProductoPayload = {
   puntaje: null,
 };
 
+/** Homecenter arranca sin precios: pueden quedar sin dato. */
+const VACIO_HC: ProductoPayload = {
+  ...VACIO,
+  ean: '',
+  skuColtrade: '',
+  precioVentaClaro: null,
+  precioVentaColtrade: null,
+};
+
+/** Un campo numérico vacío es «sin dato», no cero. */
+const numeroONulo = (texto: string) => (texto === '' ? null : Number(texto));
+
 function ProductoDialog({
   abierto,
   onOpenChange,
@@ -228,6 +268,7 @@ function ProductoDialog({
   const fuente = useFuente();
   const recursos = fuente.recursos ?? biTradeApi;
   const [datos, setDatos] = useState<ProductoPayload>(VACIO);
+  const catalogoHc = !!fuente.catalogoHc;
 
   const guardar = useBiTradeMutation(
     (payload: Partial<ProductoPayload>) =>
@@ -243,20 +284,27 @@ function ProductoDialog({
       producto
         ? {
             idProducto: producto.idProducto,
+            ...(catalogoHc && {
+              ean: producto.ean ?? '',
+              skuColtrade: producto.skuColtrade ?? '',
+            }),
             nombreProducto: producto.nombreProducto,
-            marca: producto.marca,
+            marca: producto.marca ?? '',
             precioVentaClaro: producto.precioVentaClaro,
             precioVentaColtrade: producto.precioVentaColtrade,
             puntaje: producto.puntaje,
           }
-        : VACIO,
+        : catalogoHc
+          ? VACIO_HC
+          : VACIO,
     );
-  }, [abierto, producto]);
+  }, [abierto, producto, catalogoHc]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     const { idProducto, puntaje, ...sinPuntaje } = datos;
-    // Los canales sin puntos no tienen puntaje: ni se muestra ni se manda.
+    // Los canales sin puntos no tienen puntaje: ni se muestra ni se manda. El
+    // EAN y el SKU solo están en `datos` en Homecenter, así que solo allí viajan.
     const resto = fuente.conPuntos ? { ...sinPuntaje, puntaje } : sinPuntaje;
     guardar.mutate(editando ? resto : { idProducto, ...resto }, {
       onSuccess: () => onOpenChange(false),
@@ -269,6 +317,7 @@ function ProductoDialog({
         <DialogHeader>
           <DialogTitle>{editando ? 'Editar producto' : 'Nuevo producto'}</DialogTitle>
           <DialogDescription>
+            {catalogoHc && 'Solo el código y el nombre son obligatorios. '}
             Los precios van en pesos, sin decimales y hasta {formatoMoneda(PRECIO_MAXIMO)}.
           </DialogDescription>
         </DialogHeader>
@@ -293,6 +342,33 @@ function ProductoDialog({
               </FieldDescription>
             </Field>
 
+            {catalogoHc && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="prod-ean">EAN</FieldLabel>
+                  <Input
+                    id="prod-ean"
+                    maxLength={60}
+                    inputMode="numeric"
+                    placeholder="7701234567890"
+                    value={datos.ean ?? ''}
+                    onChange={(e) => setDatos({ ...datos, ean: e.target.value })}
+                  />
+                  <FieldDescription>Opcional.</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="prod-sku">SKU Coltrade</FieldLabel>
+                  <Input
+                    id="prod-sku"
+                    maxLength={60}
+                    value={datos.skuColtrade ?? ''}
+                    onChange={(e) => setDatos({ ...datos, skuColtrade: e.target.value })}
+                  />
+                  <FieldDescription>Opcional.</FieldDescription>
+                </Field>
+              </div>
+            )}
+
             <Field>
               <FieldLabel htmlFor="prod-nombre">Nombre</FieldLabel>
               <Input
@@ -309,26 +385,14 @@ function ProductoDialog({
               <Input
                 id="prod-marca"
                 maxLength={60}
-                value={datos.marca}
+                value={datos.marca ?? ''}
                 onChange={(e) => setDatos({ ...datos, marca: e.target.value })}
-                required
+                required={!catalogoHc}
               />
+              {catalogoHc && <FieldDescription>Opcional.</FieldDescription>}
             </Field>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor="prod-claro">Precio de venta {fuente.nombreCanal}</FieldLabel>
-                <Input
-                  id="prod-claro"
-                  type="number"
-                  min={0}
-                  max={PRECIO_MAXIMO}
-                  step={1}
-                  value={datos.precioVentaClaro}
-                  onChange={(e) => setDatos({ ...datos, precioVentaClaro: Number(e.target.value) })}
-                  required
-                />
-              </Field>
               <Field>
                 <FieldLabel htmlFor="prod-coltrade">Precio de venta Coltrade</FieldLabel>
                 <Input
@@ -337,13 +401,33 @@ function ProductoDialog({
                   min={0}
                   max={PRECIO_MAXIMO}
                   step={1}
-                  value={datos.precioVentaColtrade}
+                  value={datos.precioVentaColtrade ?? ''}
                   onChange={(e) =>
-                    setDatos({ ...datos, precioVentaColtrade: Number(e.target.value) })
+                    setDatos({ ...datos, precioVentaColtrade: numeroONulo(e.target.value) })
                   }
-                  required
+                  required={!catalogoHc}
                 />
-                <FieldDescription>Con este precio se calculan los ingresos.</FieldDescription>
+                <FieldDescription>
+                  {catalogoHc
+                    ? 'Opcional. Sin este precio, sus ventas no suman dinero.'
+                    : 'Con este precio se calculan los ingresos.'}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="prod-claro">Precio de venta {fuente.nombreCanal}</FieldLabel>
+                <Input
+                  id="prod-claro"
+                  type="number"
+                  min={0}
+                  max={PRECIO_MAXIMO}
+                  step={1}
+                  value={datos.precioVentaClaro ?? ''}
+                  onChange={(e) =>
+                    setDatos({ ...datos, precioVentaClaro: numeroONulo(e.target.value) })
+                  }
+                  required={!catalogoHc}
+                />
+                {catalogoHc && <FieldDescription>Opcional.</FieldDescription>}
               </Field>
             </div>
 

@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { HomeIcon, UserIcon } from 'lucide-react';
+import { ChevronDownIcon, HomeIcon, UserIcon } from 'lucide-react';
 import { useAuth } from '@/core/auth';
 import { env } from '@/shared/config/env';
 import { iconoDeApp } from '@/shared/lib/appIcons';
@@ -14,6 +14,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from '@/shared/components/ui';
@@ -80,17 +83,40 @@ export function AppSidebar() {
               <SidebarMenu>
                 {applications.map((app) => {
                   const Icon = iconoDeApp(app.icon);
+                  const hijos = app.children ?? [];
                   return (
                     <SidebarMenuItem key={app.code}>
                       <SidebarMenuButton
-                        isActive={pathname.startsWith(app.basePath)}
+                        isActive={pathname === app.basePath}
                         tooltip={app.name}
                         onClick={close}
                         render={<Link to={app.basePath} />}
                       >
                         <Icon />
                         <span>{app.name}</span>
+                        {hijos.length > 0 && (
+                          <ChevronDownIcon className="ml-auto size-4 text-muted-foreground" />
+                        )}
                       </SidebarMenuButton>
+
+                      {/* Un contenedor —Supli Performance— muestra adentro sus
+                          sub-módulos. Van siempre desplegados: son dos o tres y
+                          esconderlos solo agrega un clic. */}
+                      {hijos.length > 0 && (
+                        <SidebarMenuSub>
+                          {hijos.map((hijo) => (
+                            <SidebarMenuSubItem key={hijo.code}>
+                              <SidebarMenuSubButton
+                                isActive={pathname.startsWith(hijo.basePath)}
+                                onClick={close}
+                                render={<Link to={hijo.basePath} />}
+                              >
+                                <span>{hijo.name}</span>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      )}
                     </SidebarMenuItem>
                   );
                 })}

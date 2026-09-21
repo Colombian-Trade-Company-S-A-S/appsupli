@@ -44,6 +44,7 @@ import {
 } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BotonesExcel } from '../components/BotonesExcel';
+import { ImportarQuery } from '../components/ImportarQuery';
 import { BarraFiltros, CampoBusqueda, CampoFiltro, soloConValor } from '../components/Filtros';
 import { Paginacion } from '../components/Paginacion';
 
@@ -123,6 +124,7 @@ export default function InventarioPage() {
           Nuevo registro
         </Button>
         <BotonesExcel recurso="inventario" filtrosExport={consulta} />
+        {fuente.importarQuery && <ImportarQuery importar={fuente.importarQuery} />}
         <Button
           variant="destructive"
           disabled={total === 0 || vaciar.isPending}

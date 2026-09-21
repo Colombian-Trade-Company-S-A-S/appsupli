@@ -38,6 +38,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
             'icon',
             'order',
             'is_active',
+            'parent',
             'permissions',
             'user_count',
         )
@@ -95,6 +96,10 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'position',
             'kind',
             'phone',
+            'direccion',
+            'organizacion',
+            'regional',
+            'punto_venta',
             'manager',
             'manager_name',
             'is_active',

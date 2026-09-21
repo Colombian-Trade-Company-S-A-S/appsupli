@@ -8,6 +8,8 @@ from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -3060,13 +3062,21 @@ def test_no_se_borra_un_producto_hc_con_ventas(app_bi_trade, catalogo_hc):
 def test_las_plantillas_de_hc_usan_encabezados_hc(app_bi_trade):
     editor = _editor(app_bi_trade)
     esperados = {
-        'puntos-venta': ['id_punto_venta_hc', 'nombre_pdv', 'regional', 'materiales'],
+        'puntos-venta': [
+            'id_punto_venta_hc',
+            'nombre_pdv',
+            'regional',
+            'materiales',
+            'categoria',
+        ],
         'productos': [
             'id_producto_hc',
+            'ean',
+            'sku_coltrade',
             'nombre_producto',
             'marca',
-            'precio_venta_hc',
             'precio_venta_coltrade',
+            'precio_venta_hc',
         ],
         'ventas': ['id_producto_hc', 'id_punto_venta_hc', 'fecha_venta', 'cantidad_vendida'],
         'inventario': ['id_producto_hc', 'id_punto_venta_hc', 'cantidad_inventario'],
@@ -3078,6 +3088,268 @@ def test_las_plantillas_de_hc_usan_encabezados_hc(app_bi_trade):
         assert '-hc-' in respuesta['Content-Disposition'], recurso
         hoja = _hoja_de(respuesta)['Datos']
         assert [celda.value for celda in hoja[1]] == encabezados, recurso
+
+
+def test_un_producto_hc_solo_exige_codigo_y_nombre(app_bi_trade):
+    editor = _editor(app_bi_trade)
+    respuesta = editor.post(
+        '/api/bi-trade/hc/productos',
+        {'idProducto': 'HCP-910', 'nombreProducto': 'Cable HDMI', 'marca': '  '},
+        format='json',
+    )
+    assert respuesta.status_code == 201, respuesta.json()
+    producto = ProductoHc.objects.get(pk='HCP-910')
+    # Vacío es «sin dato»: NULL, no un texto en blanco.
+    assert producto.marca is None
+    assert producto.ean is None
+    assert producto.precio_venta_hc is None
+    assert producto.precio_venta_coltrade is None
+
+    sin_nombre = editor.post(
+        '/api/bi-trade/hc/productos', {'idProducto': 'HCP-911'}, format='json'
+    )
+    assert sin_nombre.status_code == 400
+
+
+def test_la_categoria_de_un_punto_de_venta_hc(app_bi_trade):
+    editor = _editor(app_bi_trade)
+    ruta = '/api/bi-trade/hc/puntos-venta'
+    sin_categoria = editor.post(
+        ruta, {'idPuntoVenta': 'HC-950', 'nombrePdv': 'Homecenter Norte'}, format='json'
+    )
+    assert sin_categoria.status_code == 201, sin_categoria.json()
+    assert PuntoVentaHc.objects.get(pk='HC-950').categoria is None
+
+    minuscula = editor.patch(f'{ruta}/HC-950', {'categoria': 'a'}, format='json')
+    assert minuscula.status_code == 200, minuscula.json()
+    assert PuntoVentaHc.objects.get(pk='HC-950').categoria == 'A'
+    assert editor.patch(f'{ruta}/HC-950', {'categoria': 'D'}, format='json').status_code == 400
+
+    encabezados = ['id_punto_venta_hc', 'nombre_pdv', 'regional', 'materiales', 'categoria']
+    filas = [
+        ['HC-951', 'Homecenter Sur', None, None, 'c'],
+        ['HC-952', 'Homecenter 80', None, None, None],
+    ]
+    importar = editor.post(
+        f'{ruta}/importar', {'archivo': _xlsx(encabezados, filas)}, format='multipart'
+    )
+    assert importar.status_code == 200, importar.json()
+    assert PuntoVentaHc.objects.get(pk='HC-951').categoria == 'C'
+    assert PuntoVentaHc.objects.get(pk='HC-952').categoria is None
+    assert 'categoria' not in [f.name for f in ProductoHc._meta.get_fields()]
+
+
+def _query_hc(filas):
+    """Un querie como el del portal de Homecenter: encabezado, fila de tipos y datos."""
+    encabezados = [
+        'Fecha', 'Código Proveedor', 'Código SKU', 'Desc. SKU', 'Ubicación', 'EAN Tienda',
+        'Unidades',
+    ]
+    tipos = ['Fecha', 'Texto', 'Texto', 'Texto', 'Texto', 'Texto', 'Número']
+    return _xlsx(encabezados, [tipos, *filas])
+
+
+def test_el_querie_reemplaza_el_inventario_hc(app_bi_trade, catalogo_hc):
+    tienda, centro, torre, bombillo = catalogo_hc
+    proveedor = PuntoVentaHc.objects.create(
+        id_punto_venta='7703670900993', nombre_pdv='Proveedor'
+    )
+    InventarioHc.objects.create(id_producto=torre, id_punto_venta=centro, cantidad_inventario=99)
+
+    archivo = _query_hc(
+        [
+            # Día viejo: no entra.
+            ['2026-09-18', '5112', 'HCP-001', 'Torre', 'Calle 80', 'HC-101', 50],
+            # Día más reciente.
+            ['2026-09-20', '5112', 'HCP-001', 'Torre', 'Calle 80', 'HC-101', 3],
+            ['2026-09-20', '5112', 'HCP-002', 'Bombillo', 'Proveedor', None, 4],
+            ['2026-09-20', '5112', 'HCP-002', 'Bombillo', 'Avenida 68', 'HC-102', 0],
+            ['2026-09-20', '5112', 'HCP-001', 'Torre', 'Avenida 68', 'HC-102', -2],
+            ['2026-09-20', '5112', 'NO-EXISTE', 'Otro', 'Calle 80', 'HC-101', 7],
+            ['2026-09-20', '5112', 'HCP-002', 'Bombillo', 'Tienda nueva', '7700000000000', 2],
+        ]
+    )
+    respuesta = _editor(app_bi_trade).post(
+        '/api/bi-trade/hc/inventario/importar-query', {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['fecha'] == '2026-09-20'
+    assert datos['creados'] == 2
+    assert datos['eliminados'] == 1
+    assert datos['sinUnidades'] == 2
+    assert datos['sinTienda'] == 1
+    assert datos['productosFaltantes'] == ['NO-EXISTE']
+    assert datos['puntosFaltantes'] == ['7700000000000']
+
+    # Lo de antes se borró; queda solo el día más reciente, con 1 o más unidades.
+    stock = {
+        (i.id_producto_id, i.id_punto_venta_id): i.cantidad_inventario
+        for i in InventarioHc.objects.all()
+    }
+    assert stock == {('HCP-001', 'HC-101'): 3, ('HCP-002', proveedor.pk): 4}
+
+
+def test_un_querie_que_no_cruza_no_borra_el_inventario(app_bi_trade, catalogo_hc):
+    tienda, _centro, torre, _bombillo = catalogo_hc
+    InventarioHc.objects.create(id_producto=torre, id_punto_venta=tienda, cantidad_inventario=5)
+    archivo = _query_hc([['2026-09-20', '5112', 'NO-EXISTE', 'Otro', 'X', 'HC-101', 7]])
+    respuesta = _editor(app_bi_trade).post(
+        '/api/bi-trade/hc/inventario/importar-query', {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 400
+    assert InventarioHc.objects.get().cantidad_inventario == 5
+
+
+def test_un_querie_sin_sus_columnas_se_rechaza(app_bi_trade, catalogo_hc):
+    archivo = _xlsx(['id_producto_hc', 'cantidad_inventario'], [['HCP-001', 3]])
+    respuesta = _editor(app_bi_trade).post(
+        '/api/bi-trade/hc/inventario/importar-query', {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 400
+    assert 'Código SKU' in respuesta.json()['message']
+
+
+RUTA_QUERY_VENTAS = '/api/bi-trade/hc/ventas/importar-query'
+
+
+def _query_ventas_hc(filas):
+    """Un querie de ventas como el del portal: encabezado, fila de tipos y datos."""
+    encabezados = [
+        'Fecha', 'Tipo Registro', 'Código SKU', 'Nombre Tienda', 'EAN Tienda',
+        'Unidades Vendidas', 'Ventas Pesos',
+    ]
+    tipos = ['Fecha', 'Texto', 'Texto', 'Texto', 'Texto', 'Número', 'Número - Moneda']
+    return _xlsx(encabezados, [tipos, *filas])
+
+
+def _archivo_ventas():
+    return _query_ventas_hc(
+        [
+            ['2026-09-01', 'Venta', 'HCP-001', 'Calle 80', 'HC-101', 2, 100],
+            ['2026-09-01', 'Venta', 'HCP-002', 'Venta Distancia Bogota', None, 1, 100],
+            # Dos filas iguales el mismo día (otro canal): son dos ventas.
+            ['2026-09-02', 'Venta', 'HCP-001', 'Calle 80', 'HC-101', 1, 100],
+            ['2026-09-02', 'Venta', 'HCP-001', 'Calle 80', 'HC-101', 1, 100],
+            ['2026-09-02', 'Devoluciones', 'HCP-001', 'Calle 80', 'HC-101', -1, -100],
+            ['2026-09-02', 'Ajustes', 'HCP-002', 'Calle 80', 'HC-101', 0, 0],
+            ['2026-09-02', 'Venta', 'NO-EXISTE', 'Calle 80', 'HC-101', 3, 100],
+        ]
+    )
+
+
+@pytest.fixture
+def tienda_sin_ean():
+    return PuntoVentaHc.objects.create(id_punto_venta='7703670900993', nombre_pdv='Distancia')
+
+
+def test_el_querie_de_ventas_carga_los_dias_del_archivo(
+    app_bi_trade, catalogo_hc, tienda_sin_ean
+):
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_QUERY_VENTAS, {'archivo': _archivo_ventas()}, format='multipart'
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['creadas'] == 4
+    assert datos['unidades'] == 5
+    assert datos['dias'] == ['2026-09-01', '2026-09-02']
+    assert datos['sinUnidades'] == 2
+    assert datos['sinTienda'] == 1
+    assert datos['productosFaltantes'] == ['NO-EXISTE']
+    assert VentaHc.objects.filter(id_punto_venta=tienda_sin_ean).count() == 1
+    assert VentaHc.objects.filter(fecha_venta=date(2026, 9, 2)).count() == 2
+
+
+def test_el_querie_de_ventas_no_duplica_un_dia_ya_cargado(
+    app_bi_trade, catalogo_hc, tienda_sin_ean
+):
+    tienda, _centro, torre, _bombillo = catalogo_hc
+    editor = _editor(app_bi_trade)
+    # Una venta de otro día no se toca nunca.
+    _venta_hc(tienda, torre, 9, fecha=date(2026, 9, 3))
+    assert editor.post(
+        RUTA_QUERY_VENTAS, {'archivo': _archivo_ventas()}, format='multipart'
+    ).status_code == 200
+
+    # Subir el mismo archivo otra vez no guarda nada: avisa qué días ya tienen ventas.
+    repetido = editor.post(RUTA_QUERY_VENTAS, {'archivo': _archivo_ventas()}, format='multipart')
+    assert repetido.status_code == 409
+    assert repetido.json()['code'] == 'dias_con_ventas'
+    assert repetido.json()['diasConVentas'] == [
+        {'fecha': '2026-09-01', 'registros': 2},
+        {'fecha': '2026-09-02', 'registros': 2},
+    ]
+    assert VentaHc.objects.count() == 5
+
+    # Sobrescribir borra esos días y los vuelve a cargar: el total no cambia.
+    sobrescrito = editor.post(
+        RUTA_QUERY_VENTAS,
+        {'archivo': _archivo_ventas(), 'modo': 'sobrescribir'},
+        format='multipart',
+    )
+    assert sobrescrito.status_code == 200, sobrescrito.json()
+    assert sobrescrito.json()['eliminadas'] == 4
+    assert VentaHc.objects.count() == 5
+    assert VentaHc.objects.get(fecha_venta=date(2026, 9, 3)).cantidad_vendida == 9
+
+
+def test_un_querie_de_ventas_que_no_cruza_no_guarda_nada(app_bi_trade, catalogo_hc):
+    archivo = _query_ventas_hc(
+        [['2026-09-01', 'Venta', 'NO-EXISTE', 'Calle 80', 'HC-101', 2, 100]]
+    )
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_QUERY_VENTAS, {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 400
+    assert not VentaHc.objects.exists()
+
+
+def test_importar_productos_hc_con_ean_y_campos_vacios(app_bi_trade):
+    encabezados = [
+        'id_producto_hc',
+        'ean',
+        'sku_coltrade',
+        'nombre_producto',
+        'marca',
+        'precio_venta_coltrade',
+        'precio_venta_hc',
+    ]
+    filas = [
+        ['HCP-920', 7701234567890, 'CT-920', 'Parlante', 'Aiwa', 90_000, 120_000],
+        ['HCP-921', None, None, 'Linterna', None, None, None],
+    ]
+    respuesta = _editor(app_bi_trade).post(
+        '/api/bi-trade/hc/productos/importar',
+        {'archivo': _xlsx(encabezados, filas)},
+        format='multipart',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['created'] == 2
+    parlante = ProductoHc.objects.get(pk='HCP-920')
+    assert parlante.ean == '7701234567890'
+    assert parlante.sku_coltrade == 'CT-920'
+    linterna = ProductoHc.objects.get(pk='HCP-921')
+    assert linterna.marca is None
+    assert linterna.precio_venta_coltrade is None
+
+
+def test_una_venta_hc_sin_precio_cuenta_unidades_pero_no_dinero(app_bi_trade, catalogo_hc):
+    tienda, _centro, torre, _bombillo = catalogo_hc
+    linterna = ProductoHc.objects.create(id_producto='HCP-930', nombre_producto='Linterna')
+    _venta_hc(tienda, torre, 1)
+    _venta_hc(tienda, linterna, 5)
+
+    editor = _editor(app_bi_trade)
+    ventas = editor.get('/api/bi-trade/hc/ventas')
+    assert ventas.status_code == 200
+    sin_precio = next(v for v in ventas.json()['items'] if v['idProducto'] == 'HCP-930')
+    assert sin_precio['totalColtrade'] is None
+
+    avance = editor.get('/api/bi-trade/hc/avance-mensual', {'anio': 2026, 'mes': 3})
+    assert avance.status_code == 200, avance.json()
+    opciones = editor.get('/api/bi-trade/hc/opciones').json()
+    assert None not in opciones['marcas']
 
 
 def test_importar_en_hc_con_encabezados_hc(app_bi_trade, catalogo_hc):
@@ -3115,6 +3387,51 @@ def test_las_descargas_de_hc_llevan_su_prefijo(app_bi_trade, catalogo_hc):
     assert dia['Content-Disposition'] == (
         'attachment; filename="hc-cumplimiento-2026-03-04.xlsx"'
     )
+
+
+def test_cada_modulo_de_hc_se_exporta_con_todos_sus_campos(app_bi_trade, catalogo_hc):
+    tienda, _centro, torre, _bombillo = catalogo_hc
+    tienda.categoria = 'A'
+    tienda.save()
+    torre.ean = '7701234567890'
+    torre.save()
+    _venta_hc(tienda, torre, 2)
+    _meta_hc(tienda, torre, 5)
+    InventarioHc.objects.create(id_producto=torre, id_punto_venta=tienda, cantidad_inventario=4)
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    def exportar(recurso, **filtros):
+        respuesta = cliente.get(f'/api/bi-trade/hc/{recurso}/exportar', filtros)
+        assert respuesta.status_code == 200, recurso
+        assert f'filename="{recurso}-hc-' in respuesta['Content-Disposition'], recurso
+        hoja = _hoja_de(respuesta).active
+        filas = [[celda.value for celda in fila] for fila in hoja.iter_rows()]
+        return [dict(zip(filas[0], fila, strict=True)) for fila in filas[1:]]
+
+    productos = exportar('productos')
+    assert len(productos) == 2
+    torre_export = next(f for f in productos if f['Código producto (SKU)'] == 'HCP-001')
+    assert torre_export['EAN'] == '7701234567890'
+    assert torre_export['Precio Homecenter'] == 1_200_000
+    assert torre_export['Ventas registradas'] == 1
+    # El filtro de la pantalla también filtra el archivo.
+    assert len(exportar('productos', search='Bombillo')) == 1
+
+    puntos = exportar('puntos-venta')
+    assert {p['Código punto de venta']: p['Categoría'] for p in puntos}['HC-101'] == 'A'
+
+    [venta] = exportar('ventas')
+    assert venta['Categoría'] == 'A'
+    assert venta['EAN'] == '7701234567890'
+    assert venta['Total'] == 2_000_000
+    assert 'Meta puntos' not in venta
+
+    [inventario] = exportar('inventario')
+    assert inventario['Valorizado'] == 4_000_000
+
+    [meta] = exportar('metas')
+    assert meta['Meta dinero'] == 5_000_000
+    assert 'Meta puntos' not in meta
 
 
 def test_las_opciones_de_hc_traen_sus_regionales_y_marcas(app_bi_trade, catalogo_hc):
@@ -4298,3 +4615,216 @@ def test_el_tablero_filtra_por_marca_y_por_punto(app_bi_trade, catalogo_partners
     ano_completo = cliente.get('/api/bi-trade/partners/dashboard?anio=2026&mes=0').json()
     assert ano_completo['filtros']['periodo'] == 'Año 2026'
     assert ano_completo['totales']['unidades'] == 1
+
+
+# ── Importaciones en bloque: el número de consultas no crece con las filas ──
+#
+# Antes cada fila iba sola a la base (buscar si existía, validar el producto y
+# el punto, revisar duplicados y guardar). Con el backend local contra Render
+# eran ~0,6 s por fila y el navegador cortaba a los 30 s aunque el servidor
+# siguiera guardando. Estas pruebas fijan que el costo sea el mismo con 3 filas
+# que con 60.
+
+
+def _consultas_de(cliente, ruta, archivo):
+    # La primera petición de un usuario llena la caché de sus permisos: se
+    # hace antes para medir solo la importación.
+    cliente.get('/api/bi-trade/opciones')
+    with CaptureQueriesContext(connection) as consultas:
+        respuesta = cliente.post(ruta, {'archivo': archivo}, format='multipart')
+    assert respuesta.status_code == 200, respuesta.data
+    return len(consultas), respuesta
+
+
+def _catalogo_grande(puntos=6, productos=10):
+    PuntoVenta.objects.bulk_create(
+        PuntoVenta(id_punto_venta=f'PDV-{n}', nombre_pdv=f'Punto {n}') for n in range(puntos)
+    )
+    Producto.objects.bulk_create(
+        Producto(
+            id_producto=f'SKU-{n}',
+            nombre_producto=f'Producto {n}',
+            marca='Samsung',
+            precio_venta_claro=1000,
+            precio_venta_coltrade=900,
+            puntaje=10,
+        )
+        for n in range(productos)
+    )
+
+
+def _filas_de_metas(cantidad, unidades=5):
+    return [(f'SKU-{n % 10}', f'PDV-{n // 10}', '2026-10-01', unidades) for n in range(cantidad)]
+
+
+def test_importar_metas_no_hace_una_consulta_por_fila(app_bi_trade):
+    _catalogo_grande()
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+    encabezados = ('id_producto', 'id_punto_venta', 'fecha_meta', 'meta_cantidad')
+    ruta = '/api/bi-trade/metas/importar'
+
+    pocas, _ = _consultas_de(cliente, ruta, _archivo_xlsx(encabezados, _filas_de_metas(3)))
+    MetaComercial.objects.all().delete()
+    muchas, respuesta = _consultas_de(
+        cliente, ruta, _archivo_xlsx(encabezados, _filas_de_metas(60))
+    )
+
+    assert respuesta.data['created'] == 60
+    assert MetaComercial.objects.count() == 60
+    assert muchas == pocas
+
+    # Reimportar actualiza en bloque: tampoco depende de cuántas filas son.
+    actualizar, respuesta = _consultas_de(
+        cliente, ruta, _archivo_xlsx(encabezados, _filas_de_metas(60, unidades=9))
+    )
+    assert respuesta.data['updated'] == 60
+    assert MetaComercial.objects.count() == 60
+    assert set(MetaComercial.objects.values_list('meta_cantidad', flat=True)) == {9}
+    assert actualizar <= muchas + 1
+
+
+def test_importar_puntos_de_venta_no_hace_una_consulta_por_fila(app_bi_trade):
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+    encabezados = ('id_punto_venta', 'nombre_pdv', 'regional', 'materiales')
+    ruta = '/api/bi-trade/puntos-venta/importar'
+
+    def filas(cantidad):
+        return [(f'PDV-{n}', f'Punto {n}', 'Zona Norte', None) for n in range(cantidad)]
+
+    pocas, _ = _consultas_de(cliente, ruta, _archivo_xlsx(encabezados, filas(3)))
+    PuntoVenta.objects.all().delete()
+    muchas, _ = _consultas_de(cliente, ruta, _archivo_xlsx(encabezados, filas(40)))
+    assert muchas == pocas
+    assert PuntoVenta.objects.count() == 40
+
+    # La mitad existe y la otra mitad es nueva: una sola carga hace las dos cosas.
+    mixtas = [(f'PDV-{n}', f'Nuevo {n}', 'Zona Sur', None) for n in range(20, 60)]
+    _, respuesta = _consultas_de(cliente, ruta, _archivo_xlsx(encabezados, mixtas))
+    assert (respuesta.data['created'], respuesta.data['updated']) == (20, 20)
+    assert PuntoVenta.objects.count() == 60
+    assert PuntoVenta.objects.get(pk='PDV-25').nombre_pdv == 'Nuevo 25'
+    assert PuntoVenta.objects.get(pk='PDV-5').nombre_pdv == 'Punto 5'
+
+
+def test_importar_ventas_no_hace_una_consulta_por_fila(app_bi_trade):
+    _catalogo_grande()
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+    encabezados = ('id_producto', 'id_punto_venta', 'fecha_venta', 'cantidad_vendida')
+    ruta = '/api/bi-trade/ventas/importar'
+
+    pocas, _ = _consultas_de(cliente, ruta, _archivo_xlsx(encabezados, _filas_de_metas(3)))
+    muchas, _ = _consultas_de(cliente, ruta, _archivo_xlsx(encabezados, _filas_de_metas(60)))
+
+    assert muchas == pocas
+    assert Venta.objects.count() == 63
+
+
+def test_una_clave_repetida_en_el_archivo_actualiza_la_primera(app_bi_trade, catalogo):
+    """Igual que antes: la segunda fila con la misma clave pisa a la primera."""
+    pdv, _sur, producto, _barato = catalogo
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    archivo = _archivo_xlsx(
+        ('id_producto', 'id_punto_venta', 'fecha_meta', 'meta_cantidad'),
+        [
+            (producto.pk, pdv.pk, '2026-10-01', 5),
+            (producto.pk, pdv.pk, '2026-10-01', 8),
+        ],
+    )
+
+    respuesta = cliente_de(editor).post(
+        '/api/bi-trade/metas/importar', {'archivo': archivo}, format='multipart'
+    )
+
+    assert respuesta.status_code == 200, respuesta.data
+    assert (respuesta.data['created'], respuesta.data['updated']) == (1, 1)
+    assert MetaComercial.objects.get().meta_cantidad == 8
+
+
+def test_importar_con_un_codigo_que_no_existe_no_guarda_nada(app_bi_trade, catalogo):
+    pdv, _sur, producto, _barato = catalogo
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    archivo = _archivo_xlsx(
+        ('id_producto', 'id_punto_venta', 'fecha_meta', 'meta_cantidad'),
+        [
+            (producto.pk, pdv.pk, '2026-10-01', 5),
+            ('SKU-NO-EXISTE', pdv.pk, '2026-10-01', 5),
+        ],
+    )
+
+    respuesta = cliente_de(editor).post(
+        '/api/bi-trade/metas/importar', {'archivo': archivo}, format='multipart'
+    )
+
+    assert respuesta.status_code == 400
+    assert respuesta.data['filas'][0]['fila'] == 3
+    assert 'id_producto' in respuesta.data['filas'][0]['errores'][0]
+    assert MetaComercial.objects.count() == 0
+
+
+def test_importar_en_un_canal_usa_sus_encabezados_y_actualiza(app_bi_trade, catalogo_hc):
+    """Los canales heredan la importación: `_hc` en el archivo, la tabla de HC en la base."""
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+    encabezados = ('id_producto_hc', 'id_punto_venta_hc', 'fecha_meta', 'meta_cantidad')
+    ruta = '/api/bi-trade/hc/metas/importar'
+
+    primera = cliente.post(
+        ruta,
+        {'archivo': _archivo_xlsx(encabezados, [('HCP-001', 'HC-101', '2026-10-01', 4)])},
+        format='multipart',
+    )
+    segunda = cliente.post(
+        ruta,
+        {'archivo': _archivo_xlsx(encabezados, [('HCP-001', 'HC-101', '2026-10-01', 7)])},
+        format='multipart',
+    )
+
+    assert primera.data['created'] == 1
+    assert segunda.data['updated'] == 1
+    assert MetaComercialHc.objects.get().meta_cantidad == 7
+    assert MetaComercial.objects.count() == 0
+
+
+def test_el_listado_de_puntos_cuenta_las_ventas_sin_traerlas(app_bi_trade, catalogo):
+    pdv, sur, producto, _barato = catalogo
+    for _ in range(3):
+        Venta.objects.create(
+            id_producto=producto,
+            id_punto_venta=pdv,
+            fecha_venta=date(2026, 3, 4),
+            cantidad_vendida=1,
+        )
+    lector = crear_usuario('lector@supli.tech', app_bi_trade)
+
+    datos = cliente_de(lector).get('/api/bi-trade/puntos-venta').json()
+
+    conteos = {fila['idPuntoVenta']: fila['ventasCount'] for fila in datos}
+    assert conteos == {pdv.pk: 3, sur.pk: 0}
+
+
+def test_importar_metas_partners_no_hace_una_consulta_por_fila(app_bi_trade, catalogo_partners):
+    editor = crear_usuario('metas@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    cliente = cliente_de(editor)
+    ruta = '/api/bi-trade/partners/metas/importar'
+    marcas = [marca.upper() for marca in MarcaPartner.values]
+
+    def filas(cantidad, meta=10):
+        return [
+            ('JULIO', 2026, ('C192', 'C108')[n % 2], meta, marcas[n % len(marcas)], 'X')
+            for n in range(cantidad)
+        ]
+
+    pocas, _ = _consultas_de(cliente, ruta, _excel_de_metas(filas(2)))
+    MetaPartner.objects.all().delete()
+    muchas, respuesta = _consultas_de(cliente, ruta, _excel_de_metas(filas(2 * len(marcas))))
+
+    assert muchas == pocas
+    assert respuesta.json()['created'] == 2 * len(marcas)
+
+    _, respuesta = _consultas_de(cliente, ruta, _excel_de_metas(filas(2 * len(marcas), meta=3)))
+    assert respuesta.json()['updated'] == 2 * len(marcas)
+    metas = {str(valor) for valor in MetaPartner.objects.values_list('meta_unidades', flat=True)}
+    assert metas == {'3.00'}
