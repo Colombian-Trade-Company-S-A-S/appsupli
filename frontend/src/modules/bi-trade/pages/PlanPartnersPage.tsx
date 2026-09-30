@@ -498,7 +498,7 @@ function SubirMetas() {
         Subir metas
       </Button>
       <Dialog open={abierto} onOpenChange={setAbierto}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Metas del mes</DialogTitle>
             <DialogDescription>

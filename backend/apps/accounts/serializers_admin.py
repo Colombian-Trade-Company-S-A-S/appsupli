@@ -3,6 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.crypto import get_random_string
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from .models import Application, Area, Permission, Role, User
 
@@ -81,6 +82,21 @@ class AdminUserSerializer(serializers.ModelSerializer):
     )
     # Solo al crear: contraseña inicial.
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Sin correo se crea igual: es el caso de los asesores y promotores de
+    # punto de venta, que existen en la plataforma pero no inician sesión.
+    # Declararlo a mano quita la validación de unicidad que trae el modelo, así
+    # que se vuelve a poner: el correo sigue siendo único entre quienes tienen.
+    email = serializers.EmailField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        validators=[
+            UniqueValidator(
+                queryset=User.objects.all(), message='Ya existe una cuenta con ese correo.'
+            )
+        ],
+    )
+    puede_iniciar_sesion = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -100,10 +116,12 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'organizacion',
             'regional',
             'punto_venta',
+            'pais',
             'manager',
             'manager_name',
             'is_active',
             'is_admin',
+            'puede_iniciar_sesion',
             'last_login_at',
             'applications',
             'application_names',
@@ -113,6 +131,10 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'password',
         )
         read_only_fields = ('last_login_at',)
+
+    def validate_email(self, value):
+        """Vacío se guarda como nulo: dos vacíos chocarían contra el índice único."""
+        return (value or '').strip().lower() or None
 
     def validate_password(self, value: str) -> str:
         if value:

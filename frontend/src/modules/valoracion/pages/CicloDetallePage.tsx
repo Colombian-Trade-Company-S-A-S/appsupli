@@ -46,7 +46,7 @@ import {
   TabsTrigger,
 } from '@/shared/components/ui';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import { valoracionApi, type Asignacion, type EstadoAsignacion } from '../api';
 import {
   useAsignaciones,
@@ -93,7 +93,7 @@ export default function CicloDetallePage() {
     (data) => data.message,
   );
 
-  if (cargandoCiclo || !ciclo) return <FullPageLoader label="Cargando el ciclo…" />;
+  if (cargandoCiclo || !ciclo) return <EsqueletoPagina forma="detalle" label="Cargando el ciclo…" />;
 
   return (
     <div className="flex flex-col gap-6">
@@ -413,7 +413,7 @@ function JerarquiaDialog({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Generar asignaciones desde el organigrama</DialogTitle>
           <DialogDescription>

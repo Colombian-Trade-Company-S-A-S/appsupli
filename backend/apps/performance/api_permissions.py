@@ -91,6 +91,31 @@ def puede_ver(user, colaborador) -> bool:
     return es_jefe_de(user, colaborador)
 
 
+def puede_cargar_resultado(user, objetivo) -> bool:
+    """
+    Quién carga lo ejecutado: el responsable del objetivo, su jefe o People.
+
+    El responsable es el colaborador salvo que se haya puesto a otra persona,
+    que es el caso de los asesores y promotores: ahí lo carga su Trade Leader.
+    """
+    if puede_definir_a_cualquiera(user):
+        return True
+    responsable_id = objetivo.responsable_resultado_id or objetivo.colaborador_id
+    return user.id == responsable_id or es_jefe_de(user, objetivo.colaborador)
+
+
+def puede_validar_resultado(user, objetivo) -> bool:
+    """
+    Quién da por bueno el resultado: el jefe del colaborador o People.
+
+    Nadie valida lo que él mismo cargó: el paso existe para que otra persona
+    mire la evidencia.
+    """
+    if getattr(objetivo, 'resultado', None) and objetivo.resultado.cargado_por_id == user.id:
+        return False
+    return puede_definir_a_cualquiera(user) or es_jefe_de(user, objetivo.colaborador)
+
+
 def capacidades(user) -> dict:
     """Lo que el frontend necesita para decidir qué pinta y qué esconde."""
     return {

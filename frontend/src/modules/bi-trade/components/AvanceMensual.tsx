@@ -387,7 +387,7 @@ function TooltipDia({
   const { origen } = punto;
 
   return (
-    <div className="grid min-w-56 gap-1.5 rounded-lg border bg-background px-3 py-2 text-xs shadow-xl">
+    <div className="grid min-w-56 gap-1.5 rounded-xl border border-primary/20 bg-popover/90 px-3 py-2 text-xs shadow-xl shadow-primary/10 backdrop-blur-md">
       <div className="flex items-baseline justify-between gap-3">
         <span className="font-medium">Día {punto.dia}</span>
         {!origen.habil && <span className="text-muted-foreground">Domingo o festivo</span>}

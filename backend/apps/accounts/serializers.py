@@ -46,6 +46,7 @@ class UserSerializer(serializers.ModelSerializer):
     area = serializers.CharField(source='area.name', read_only=True, default='')
     manager_name = serializers.CharField(source='manager.full_name', read_only=True, default='')
     team_count = serializers.SerializerMethodField()
+    aviso_app = serializers.CharField(read_only=True, allow_null=True)
     applications = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
 
@@ -66,11 +67,14 @@ class UserSerializer(serializers.ModelSerializer):
             'organizacion',
             'regional',
             'punto_venta',
+            'pais',
             'manager_name',
             'team_count',
             'theme',
             'accent',
             'radius',
+            'app_instalada',
+            'aviso_app',
             'avatar_url',
             'is_active',
             'is_admin',
@@ -175,3 +179,11 @@ class PreferencesSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ('theme', 'accent', 'radius')
+
+
+class DecisionInstalacionSerializer(serializers.Serializer):
+    """Qué respondió la persona al aviso de instalar la app."""
+
+    decision = serializers.ChoiceField(
+        choices=[('instalada', 'Instalada'), ('despues', 'Más tarde'), ('visto', 'Recordatorio visto')]
+    )

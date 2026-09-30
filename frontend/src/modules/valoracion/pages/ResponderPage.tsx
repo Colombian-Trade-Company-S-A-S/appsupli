@@ -22,7 +22,7 @@ import {
   Spinner,
   Textarea,
 } from '@/shared/components/ui';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import { cn } from '@/shared/lib/utils';
 import { valoracionApi } from '../api';
 import { useEvaluacion, useValoracionMutation } from '../hooks';
@@ -77,7 +77,7 @@ export default function ResponderPage() {
     [respuestas],
   );
 
-  if (isLoading || !formulario) return <FullPageLoader label="Abriendo la evaluación…" />;
+  if (isLoading || !formulario) return <EsqueletoPagina forma="formulario" label="Abriendo la evaluación…" />;
 
   const { assignment: asignacion, cycle: ciclo, scale: escala, questions: preguntas } = formulario;
   const total = preguntas.length;
@@ -131,7 +131,7 @@ export default function ResponderPage() {
       )}
 
       {/* Barra de avance pegada arriba: es la referencia mientras se responde. */}
-      <div className="sticky top-0 z-10 -mx-1 rounded-lg border border-border bg-background/95 p-4 backdrop-blur">
+      <div className="sticky top-16 z-10 -mx-1 rounded-lg border border-border bg-background/95 p-4 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-56 flex-1 flex-col gap-2">
             <BarraAvance porcentaje={porcentaje} />

@@ -214,7 +214,7 @@ function RolDialog({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{editando ? 'Editar rol' : 'Nuevo rol'}</DialogTitle>
           <DialogDescription>Elige qué acciones habilita este rol.</DialogDescription>

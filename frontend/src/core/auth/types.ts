@@ -42,6 +42,13 @@ export interface User {
   theme: Theme;
   accent: Accent;
   radius: Radius;
+  /** Ya instaló la app en algún dispositivo: no se le vuelve a ofrecer. */
+  appInstalada: boolean;
+  /**
+   * Aviso que le toca al entrar: `ofrecer` (sin instalar: ¿la instalas?),
+   * `recordar` (instalada: cómo reinstalarla) o `null` (nada).
+   */
+  avisoApp: 'ofrecer' | 'recordar' | null;
   /** Admin de la plataforma: entra a todo. */
   isAdmin: boolean;
   roles: string[];

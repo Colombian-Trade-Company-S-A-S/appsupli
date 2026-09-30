@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   VITE_API_URL: z.string().default('/api'),
-  VITE_APP_NAME: z.string().default('Supli'),
+  VITE_APP_NAME: z.string().default('Supli Tech'),
 });
 
 const parsed = envSchema.safeParse(import.meta.env);

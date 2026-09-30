@@ -14,9 +14,10 @@ from rest_framework.decorators import api_view, parser_classes, permission_class
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
+from apps.core.excel import Columna
+
 from .api_permissions import CanManageData, HasBiTradeApp
 from .canales import TMK
-from .excel import Columna
 from .filters import InventarioTmkFilter, MetaTmkFilter, VentaTmkFilter
 from .models import (
     InventarioTmk,

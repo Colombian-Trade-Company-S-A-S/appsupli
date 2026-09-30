@@ -1,9 +1,9 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useLocation, type RouteObject } from 'react-router-dom';
 import { AppLayout } from '@/app/layouts/AppLayout';
 import { AuthLayout } from '@/app/layouts/AuthLayout';
 import { PublicLayout } from '@/app/layouts/PublicLayout';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina, FullPageLoader } from '@/shared/components/feedback';
 import { PublicOnly } from './PublicOnly';
 import { RequireAdmin } from './RequireAdmin';
 import { RequireApp } from './RequireApp';
@@ -46,6 +46,13 @@ const PerformanceLayout = lazy(() => import('@/modules/performance/pages/Perform
 const PerformanceHomePage = lazy(() => import('@/modules/performance/pages/PerformanceHomePage'));
 const MisObjetivosPage = lazy(() => import('@/modules/performance/pages/MisObjetivosPage'));
 const ObjetivosEquipoPage = lazy(() => import('@/modules/performance/pages/ObjetivosEquipoPage'));
+const PerformanceDashboardPage = lazy(() => import('@/modules/performance/pages/DashboardPage'));
+const TopPerformancePage = lazy(() => import('@/modules/performance/pages/TopPerformancePage'));
+const ChallengeLayout = lazy(() => import('@/modules/challenge/pages/ChallengeLayout'));
+const RetosPage = lazy(() => import('@/modules/challenge/pages/RetosPage'));
+const RetoDetallePage = lazy(() => import('@/modules/challenge/pages/RetoDetallePage'));
+const MisRetosChallengePage = lazy(() => import('@/modules/challenge/pages/MisRetosPage'));
+const TopChallengePage = lazy(() => import('@/modules/challenge/pages/TopChallengePage'));
 
 // ── Supli Performance · Valoración ────────────────────────────────────────
 const ValoracionLayout = lazy(() => import('@/modules/valoracion/pages/ValoracionLayout'));
@@ -65,7 +72,13 @@ const PreguntasPage = lazy(() => import('@/modules/valoracion/pages/PreguntasPag
 const CompetenciasPage = lazy(() => import('@/modules/valoracion/pages/CompetenciasPage'));
 const JerarquiaPage = lazy(() => import('@/modules/valoracion/pages/JerarquiaPage'));
 
-const withSuspense = (node: ReactNode) => <Suspense fallback={<FullPageLoader />}>{node}</Suspense>;
+/** Dentro de la app la página «aparece» en su sitio; afuera, la pantalla de marca. */
+function CargandoRuta() {
+  const { pathname } = useLocation();
+  return pathname.startsWith('/inicio') ? <EsqueletoPagina /> : <FullPageLoader />;
+}
+
+const withSuspense = (node: ReactNode) => <Suspense fallback={<CargandoRuta />}>{node}</Suspense>;
 
 const routes: RouteObject[] = [
   // ── Público: siempre en tema claro ───────────────────────────────────────
@@ -188,6 +201,26 @@ const routes: RouteObject[] = [
                   { index: true, element: withSuspense(<PerformanceHomePage />) },
                   { path: 'mis-objetivos', element: withSuspense(<MisObjetivosPage />) },
                   { path: 'equipo', element: withSuspense(<ObjetivosEquipoPage />) },
+                  {
+                    path: 'dashboard',
+                    element: withSuspense(<PerformanceDashboardPage />),
+                  },
+                  { path: 'top', element: withSuspense(<TopPerformancePage />) },
+                ],
+              },
+            ],
+          },
+          {
+            element: <RequireApp code="supli-challenge" />,
+            children: [
+              {
+                path: 'challenge',
+                element: withSuspense(<ChallengeLayout />),
+                children: [
+                  { index: true, element: withSuspense(<RetosPage />) },
+                  { path: 'retos/:id', element: withSuspense(<RetoDetallePage />) },
+                  { path: 'mis-retos', element: withSuspense(<MisRetosChallengePage />) },
+                  { path: 'top', element: withSuspense(<TopChallengePage />) },
                 ],
               },
             ],

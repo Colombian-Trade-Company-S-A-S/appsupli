@@ -26,7 +26,7 @@ import {
 } from '@/shared/components/ui';
 import { FullPageLoader } from '@/shared/components/feedback';
 import { Cuadricula } from '@/app/layouts/Marca';
-import { useForceLightTheme } from '@/shared/hooks';
+import { useForceTheme } from '@/shared/hooks';
 import { env } from '@/shared/config/env';
 import { ApiError } from '@/shared/api/http-client';
 import type { RegistroPartnerPayload } from '../api';
@@ -69,7 +69,7 @@ const ANTES_DE_EMPEZAR = [
  * como el resto de lo público.
  */
 export default function FormularioPublico() {
-  useForceLightTheme();
+  useForceTheme('light');
   const { token = '' } = useParams();
 
   const opciones = useQuery({

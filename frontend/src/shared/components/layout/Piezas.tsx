@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   Card,
+  CardAction,
   CardContent,
   CardHeader,
   CardTitle,
@@ -12,6 +13,7 @@ import {
   Skeleton,
 } from '@/shared/components/ui';
 import { cn } from '@/shared/lib/utils';
+import { CifraAnimada, Sparkline } from './Cifras';
 
 /**
  * Cifra grande con su rótulo. La pieza básica de todos los tableros.
@@ -19,6 +21,9 @@ import { cn } from '@/shared/lib/utils';
  * `cargando` pinta un esqueleto en lugar del valor. Importa: mientras llega la
  * respuesta, un KPI en cero se lee como un dato real —«no vendimos nada»— y no
  * como «todavía no sé».
+ *
+ * Si el valor es texto o número, sus cifras suben desde cero al aparecer.
+ * `tendencia` dibuja debajo una mini-gráfica con la forma de la serie.
  */
 export function Kpi({
   label,
@@ -26,11 +31,13 @@ export function Kpi({
   hint,
   extra,
   children,
+  tendencia,
   cargando = false,
   className,
 }: {
   label: string;
   value: ReactNode;
+  tendencia?: number[];
   hint?: ReactNode;
   /** Insignia o adorno a la derecha del rótulo. */
   extra?: ReactNode;
@@ -40,11 +47,11 @@ export function Kpi({
 }) {
   return (
     <Card className={cn('gap-2', className)}>
-      <CardHeader className="flex-row items-center justify-between gap-2 pb-0">
+      <CardHeader className="items-center gap-2 pb-0">
         <CardTitle className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
           {label}
         </CardTitle>
-        {extra}
+        {extra && <CardAction className="row-span-1 self-center">{extra}</CardAction>}
       </CardHeader>
       <CardContent className="flex flex-col gap-1">
         {cargando ? (
@@ -54,9 +61,16 @@ export function Kpi({
           </>
         ) : (
           <>
-            <span className="text-2xl font-semibold tabular-nums">{value}</span>
+            <span className="font-heading text-2xl font-semibold tabular-nums">
+              {typeof value === 'string' || typeof value === 'number' ? (
+                <CifraAnimada valor={value} />
+              ) : (
+                value
+              )}
+            </span>
             {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
             {children}
+            {tendencia && <Sparkline datos={tendencia} className="mt-1" />}
           </>
         )}
       </CardContent>

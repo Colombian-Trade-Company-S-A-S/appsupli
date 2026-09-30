@@ -12,9 +12,10 @@ from django.db.models import Count
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
+from apps.core.excel import Columna
+
 from .api_permissions import HasBiTradeApp
 from .canales import FALABELLA
-from .excel import Columna
 from .filters import InventarioFalabellaFilter, MetaFalabellaFilter, VentaFalabellaFilter
 from .models import (
     InventarioFalabella,

@@ -20,7 +20,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/shared/components/ui';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import { ApiError } from '@/shared/api/http-client';
 import { cn } from '@/shared/lib/utils';
 import type { RolEvaluador } from '../api';
@@ -55,7 +55,7 @@ export default function ResultadoDetallePage() {
       </div>
     );
   }
-  if (isLoading || !data) return <FullPageLoader label="Cargando el resultado…" />;
+  if (isLoading || !data) return <EsqueletoPagina forma="detalle" label="Cargando el resultado…" />;
 
   const { result: resultado, items, competencies: competencias } = data;
 

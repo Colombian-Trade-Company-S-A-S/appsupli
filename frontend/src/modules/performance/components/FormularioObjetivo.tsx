@@ -96,6 +96,7 @@ export function FormularioObjetivo({
   }, [objetivo]);
 
   const esBinario = datos.tipoMedicion === 'binario';
+  const esCualitativa = datos.tipoMedicion === 'cualitativa';
   const esFormula = datos.tipoMedicion === 'formula';
   const necesitaMeta =
     datos.tipoMedicion === 'proporcional' || datos.tipoMedicion === 'proporcional_inverso';
@@ -117,7 +118,8 @@ export function FormularioObjetivo({
       peso: datos.peso,
       tipoMedicion: datos.tipoMedicion as TipoMedicion,
       unidad: esBinario ? 'si_no' : datos.unidad,
-      metaValor: esBinario || !datos.metaValor ? null : datos.metaValor,
+      // La cualitativa son siempre dos criterios: la meta la pone el backend.
+      metaValor: esBinario || esCualitativa || !datos.metaValor ? null : datos.metaValor,
       umbralCumplimiento: datos.umbralCumplimiento || null,
       permiteSobrecumplimiento: datos.permiteSobrecumplimiento,
       topeCumplimiento: datos.topeCumplimiento || '100',
@@ -174,8 +176,11 @@ export function FormularioObjetivo({
             setDatos({
               ...datos,
               tipoMedicion: valor as TipoMedicion,
-              // El binario no lleva meta ni unidad numérica.
+              // Ni el binario ni la cualitativa llevan meta numérica.
               ...(valor === 'binario' ? { metaValor: '', unidad: 'si_no' } : {}),
+              ...(valor === 'cualitativa'
+                ? { metaValor: '', unidad: '', permiteSobrecumplimiento: false }
+                : {}),
             })
           }
           opciones={opciones.tiposMedicion}
@@ -188,7 +193,7 @@ export function FormularioObjetivo({
           value={datos.unidad}
           onChange={(unidad) => setDatos({ ...datos, unidad })}
           opciones={opciones.unidades}
-          disabled={esBinario}
+          disabled={esBinario || esCualitativa}
         />
 
         {necesitaMeta && (
@@ -210,6 +215,18 @@ export function FormularioObjetivo({
                 : 'Más es mejor: el cumplimiento es lo logrado sobre esta meta.'}
             </FieldDescription>
           </Field>
+        )}
+
+        {esCualitativa && (
+          <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground md:col-span-1">
+            <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Se mide en criterios cumplidos, no en unidades:{' '}
+              <b className="text-foreground">2 de 2 → 100%</b> ·{' '}
+              <b className="text-foreground">1 de 2 → 50%</b> ·{' '}
+              <b className="text-foreground">0 de 2 → 0%</b>.
+            </span>
+          </div>
         )}
 
         {esBinario && (
@@ -265,7 +282,8 @@ export function FormularioObjetivo({
             onChange={(e) => setDatos({ ...datos, umbralCumplimiento: e.target.value })}
           />
           <FieldDescription>
-            Desde dónde cuenta como cumplido. Alimenta el semáforo.
+            Desde dónde cuenta como cumplido para este objetivo. El color del semáforo lo fijan los
+            cortes de People: verde ≥ 100%, naranja 85–99.9%, rojo &lt; 85%.
           </FieldDescription>
         </Field>
 
@@ -275,6 +293,9 @@ export function FormularioObjetivo({
             <Switch
               id="obj-sobre"
               checked={datos.permiteSobrecumplimiento}
+              // Ni el binario ni la cualitativa pueden pasar de 100: cumplir
+              // todo ya es el techo, no hay nada que superar.
+              disabled={esBinario || esCualitativa}
               onCheckedChange={(valor) =>
                 setDatos({ ...datos, permiteSobrecumplimiento: Boolean(valor) })
               }

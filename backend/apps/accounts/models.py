@@ -110,13 +110,11 @@ class Theme(models.TextChoices):
 
 
 class Accent(models.TextChoices):
-    NEUTRAL = 'neutral', 'Neutro'
-    INDIGO = 'indigo', 'Índigo'
+    """Solo los colores de marca del brandbook de Supli."""
+
+    VIOLET = 'violet', 'Morado'
+    INDIGO = 'indigo', 'Morado oscuro'
     BLUE = 'blue', 'Azul'
-    EMERALD = 'emerald', 'Verde'
-    AMBER = 'amber', 'Ámbar'
-    ROSE = 'rose', 'Rosa'
-    VIOLET = 'violet', 'Violeta'
 
 
 class Radius(models.TextChoices):
@@ -133,7 +131,15 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         LEADER = 'lider', 'Líder'
         COLLABORATOR = 'colaborador', 'Colaborador'
 
-    email = models.EmailField('correo corporativo', unique=True)
+    # Nulo a propósito: los asesores y promotores de punto de venta no tienen
+    # correo corporativo, y aun así tienen que existir en la plataforma —su
+    # jefe les registra objetivos y entran en los rankings—. Sin correo no se
+    # puede iniciar sesión, que es justo la situación de ese personal hasta que
+    # se defina cómo va a ingresar.
+    email = models.EmailField(
+        'correo corporativo', unique=True, null=True, blank=True,
+        help_text='Vacío solo para quien no tiene cuenta corporativa (asesores y promotores).',
+    )
     username = models.CharField('usuario', max_length=80, unique=True)
     first_name = models.CharField('nombres', max_length=100)
     last_name = models.CharField('apellidos', max_length=100, blank=True)
@@ -172,14 +178,29 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         'CAV / punto de venta', max_length=120, blank=True,
         help_text='Solo aplica para asesores y promotores.',
     )
+    pais = models.CharField(
+        'país', max_length=80, blank=True,
+        help_text='Colombia, Perú… Lo mantiene Odoo cuando entre la integración.',
+    )
 
     # ── Apariencia: viaja con la cuenta, no con el navegador ──────────────
-    theme = models.CharField('tema', max_length=10, choices=Theme.choices, default=Theme.SYSTEM)
+    theme = models.CharField('tema', max_length=10, choices=Theme.choices, default=Theme.DARK)
     accent = models.CharField(
-        'color de acento', max_length=20, choices=Accent.choices, default=Accent.NEUTRAL
+        'color de acento', max_length=20, choices=Accent.choices, default=Accent.VIOLET
     )
     radius = models.CharField(
-        'redondeado', max_length=10, choices=Radius.choices, default=Radius.DEFAULT
+        'redondeado', max_length=10, choices=Radius.choices, default=Radius.SHARP
+    )
+
+    # ── App instalable ────────────────────────────────────────────────────
+    # Sin instalar: se le ofrece al entrar y, si dice «más tarde», otra vez a
+    # los 3 inicios de sesión. Instalada: cada 10 inicios se le recuerda cómo
+    # reinstalarla, por si cambió de celular o de computador.
+    app_instalada = models.BooleanField('instaló la app', default=False)
+    inicios_para_aviso_app = models.PositiveSmallIntegerField(
+        'inicios de sesión para volver a ofrecer la app',
+        default=0,
+        help_text='En 0 se le ofrece instalar la app al entrar.',
     )
 
     # ── Accesos: esto es lo que se asigna desde el admin ──────────────────
@@ -214,7 +235,12 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         ordering = ('first_name', 'last_name')
 
     def __str__(self) -> str:
-        return f'{self.full_name} <{self.email}>'
+        return f'{self.full_name} <{self.email}>' if self.email else self.full_name
+
+    @property
+    def puede_iniciar_sesion(self) -> bool:
+        """Sin correo no hay forma de entrar, aunque la persona sí exista acá."""
+        return bool(self.email) and self.is_active
 
     @property
     def full_name(self) -> str:
@@ -252,6 +278,36 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     def has_app_access(self, code: str) -> bool:
         return self.get_accessible_applications().filter(code=code).exists()
 
-    def touch_last_login(self) -> None:
+    INICIOS_HASTA_OFRECER_DE_NUEVO = 3
+    INICIOS_HASTA_RECORDAR_INSTALADA = 10
+
+    def registrar_inicio_de_sesion(self) -> None:
+        """Marca el ingreso y descuenta uno de la espera del aviso de la app."""
         self.last_login_at = timezone.now()
-        self.save(update_fields=['last_login_at', 'updated_at'])
+        campos = ['last_login_at', 'updated_at']
+        if self.inicios_para_aviso_app > 0:
+            self.inicios_para_aviso_app -= 1
+            campos.append('inicios_para_aviso_app')
+        self.save(update_fields=campos)
+
+    @property
+    def aviso_app(self) -> str | None:
+        """Qué aviso le toca al entrar: `ofrecer`, `recordar` o ninguno."""
+        if self.inicios_para_aviso_app > 0:
+            return None
+        return 'recordar' if self.app_instalada else 'ofrecer'
+
+    def decidir_instalacion(self, decision: str) -> None:
+        """
+        `instalada`: la instaló; se le recuerda cómo reinstalarla en 10 inicios.
+        `despues`: no la quiso aún; se le vuelve a ofrecer en 3 inicios.
+        `visto`: leyó el recordatorio; vuelve a salir en 10 inicios.
+        """
+        if decision == 'instalada':
+            self.app_instalada = True
+            self.inicios_para_aviso_app = self.INICIOS_HASTA_RECORDAR_INSTALADA
+        elif decision == 'despues':
+            self.inicios_para_aviso_app = self.INICIOS_HASTA_OFRECER_DE_NUEVO
+        else:
+            self.inicios_para_aviso_app = self.INICIOS_HASTA_RECORDAR_INSTALADA
+        self.save(update_fields=['app_instalada', 'inicios_para_aviso_app', 'updated_at'])

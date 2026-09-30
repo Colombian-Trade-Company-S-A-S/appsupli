@@ -132,7 +132,7 @@ export function BotonesExcel({
         open={filasConError.length > 0}
         onOpenChange={(abierto) => !abierto && setFilasConError([])}
       >
-        <DialogContent className="max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-h-[80dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>El archivo tiene filas con problemas</DialogTitle>
             <DialogDescription>{resumenError}</DialogDescription>

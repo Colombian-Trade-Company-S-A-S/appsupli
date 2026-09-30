@@ -24,7 +24,7 @@ import {
   Spinner,
 } from '@/shared/components/ui';
 import { ErrorBoundary, FullPageLoader } from '@/shared/components/feedback';
-import { useForceLightTheme } from '@/shared/hooks';
+import { useForceTheme } from '@/shared/hooks';
 import { ApiError } from '@/shared/api/http-client';
 import { FuenteDatosProvider } from '../fuente';
 import { crearFuentePublica, sesionPublica, tableroPublico, type SesionPublica } from './api';
@@ -45,7 +45,7 @@ type Aviso = 'vencido' | 'revocado' | null;
  * enlace no tiene una preferencia guardada.
  */
 export default function TableroPublicoLayout() {
-  useForceLightTheme();
+  useForceTheme('light');
   const { token = '' } = useParams();
   const queryClient = useQueryClient();
   const [sesion, setSesion] = useState<SesionPublica | null>(() => sesionPublica.leer(token));

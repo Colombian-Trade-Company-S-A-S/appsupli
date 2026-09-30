@@ -68,7 +68,7 @@ export function ImportarInforme({
       </Button>
 
       <Dialog open={abierto} onOpenChange={(v) => (v ? setAbierto(true) : cerrar())}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Importar informe de Coltrade</DialogTitle>
             <DialogDescription>
@@ -194,7 +194,7 @@ function ResumenImportacion({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Importación terminada</DialogTitle>
           <DialogDescription>{resultado.message}</DialogDescription>

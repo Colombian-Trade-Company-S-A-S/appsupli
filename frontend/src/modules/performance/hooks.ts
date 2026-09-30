@@ -1,7 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/shared/api/http-client';
-import { mesDe, performanceApi, type ObjetivoPayload } from './api';
+import {
+  mesDe,
+  performanceApi,
+  type EstadoValidacion,
+  type ObjetivoPayload,
+  type ResultadoPayload,
+  type TipoCorte,
+} from './api';
 
 export const performanceKeys = {
   todo: ['performance'] as const,
@@ -11,6 +18,7 @@ export const performanceKeys = {
   misObjetivos: (periodo?: string) => ['performance', 'mis-objetivos', periodo ?? ''] as const,
   periodo: (periodo: string, colaborador?: number) =>
     ['performance', 'periodo', periodo, colaborador ?? 'equipo'] as const,
+  acumulado: (corte: Record<string, unknown>) => ['performance', 'acumulado', corte] as const,
 };
 
 export const useOpcionesPerformance = () =>
@@ -90,3 +98,59 @@ export const useEditarObjetivo = () =>
 
 export const useEliminarObjetivo = () =>
   usePerformanceMutation((id: number) => performanceApi.eliminar(id), 'Objetivo eliminado');
+
+/** El cumplimiento del equipo en un corte: mes, Q, semestre o año (A8). */
+export const useAcumulado = (corte: { tipo: TipoCorte; anio?: number; indice?: number }) =>
+  useQuery({
+    queryKey: performanceKeys.acumulado(corte),
+    queryFn: () => performanceApi.acumulado(corte),
+  });
+
+export const useCargarResultado = () =>
+  usePerformanceMutation(
+    ({ objetivo, ...payload }: ResultadoPayload & { objetivo: number }) =>
+      performanceApi.cargarResultado(objetivo, payload),
+    'Resultado cargado',
+  );
+
+export const useValidarResultado = () =>
+  usePerformanceMutation(
+    ({
+      objetivo,
+      estado,
+      observacion,
+    }: {
+      objetivo: number;
+      estado: EstadoValidacion;
+      observacion?: string;
+    }) => performanceApi.validarResultado(objetivo, estado, observacion),
+    (resultado) =>
+      resultado.estadoValidacion === 'validado' ? 'Resultado validado' : 'Resultado devuelto',
+  );
+
+/** La excepción del A9: solo People, y siempre con motivo. */
+export const useHabilitarEdicion = () =>
+  usePerformanceMutation(
+    ({ periodo, habilitada, motivo }: { periodo: string; habilitada: boolean; motivo?: string }) =>
+      performanceApi.habilitarEdicion(mesDe(periodo), habilitada, motivo),
+    (datos) => datos.mensaje,
+  );
+
+export const useDescargarPlantilla = () =>
+  usePerformanceMutation(() => performanceApi.descargarPlantilla(), 'Plantilla descargada');
+
+export const useImportarObjetivos = () =>
+  usePerformanceMutation(
+    ({
+      archivo,
+      colaborador,
+      periodo,
+      modo,
+    }: {
+      archivo: File;
+      colaborador: number;
+      periodo: string;
+      modo: 'agregar' | 'reemplazar';
+    }) => performanceApi.importarObjetivos(archivo, colaborador, periodo, modo),
+    (datos) => datos.message,
+  );

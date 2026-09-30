@@ -428,7 +428,7 @@ function MetaDialog({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editando ? 'Editar meta' : 'Nueva meta'}</DialogTitle>
           <DialogDescription>

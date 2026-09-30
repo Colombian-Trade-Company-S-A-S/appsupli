@@ -25,12 +25,13 @@ function EmptyHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 const emptyMediaVariants = cva(
-  "mb-2 flex shrink-0 items-center justify-center [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "flex shrink-0 items-center justify-center [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-transparent",
-        icon: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground [&_svg:not([class*='size-'])]:size-4",
+        default: "mb-2 bg-transparent",
+        // Ilustración de marca: chip con degradado, glow y dos anillos de adorno.
+        icon: "relative mb-5 flex size-14 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-[#a66bff]/25 via-[#5932d7]/10 to-[#3b6dff]/25 text-primary shadow-[0_0_40px_-6px] shadow-primary/40 ring-1 ring-primary/25 before:pointer-events-none before:absolute before:-inset-2.5 before:rounded-[1.25rem] before:border before:border-dashed before:border-primary/25 before:content-[''] after:pointer-events-none after:absolute after:-inset-5 after:rounded-[1.6rem] after:border after:border-primary/10 after:content-[''] [&_svg:not([class*='size-'])]:size-6",
       },
     },
     defaultVariants: {

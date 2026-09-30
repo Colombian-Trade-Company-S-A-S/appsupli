@@ -33,7 +33,20 @@ class TipoMedicion(models.TextChoices):
     BINARIO = 'binario', 'Binario — cumple / no cumple'
     PROPORCIONAL = 'proporcional', 'Proporcional — logrado ÷ meta'
     PROPORCIONAL_INVERSO = 'proporcional_inverso', 'Proporcional inverso — menos es mejor'
+    CUALITATIVA = 'cualitativa', 'Cualitativa — entregables / hitos (2 criterios)'
     FORMULA = 'formula', 'Fórmula personalizada'
+
+
+#: Criterios de una meta cualitativa (A2): 2 de 2 = 100%, 1 de 2 = 50%, 0 = 0%.
+CRITERIOS_CUALITATIVOS = 2
+
+
+class Semaforo(models.TextChoices):
+    """El color del cumplimiento. Cortes definidos por People (A2)."""
+
+    VERDE = 'verde', 'En meta'
+    NARANJA = 'naranja', 'En riesgo'
+    ROJO = 'rojo', 'Brecha'
 
 
 class Unidad(models.TextChoices):
@@ -95,6 +108,22 @@ class Periodo(TimeStampedModel):
     )
     fecha_apertura = models.DateTimeField('fecha de apertura', null=True, blank=True)
     fecha_cierre = models.DateTimeField('fecha de cierre', null=True, blank=True)
+
+    # ── Excepción de edición (A9) ────────────────────────────────────────
+    # Los objetivos de un mes se congelan solos cuando el mes empieza. People
+    # puede reabrir la edición en casos excepcionales autorizados por el CEO;
+    # queda registrado quién la habilitó, cuándo y con qué motivo.
+    edicion_habilitada = models.BooleanField('edición habilitada por excepción', default=False)
+    habilitada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='periodos_habilitados',
+        verbose_name='habilitada por',
+    )
+    fecha_habilitacion = models.DateTimeField('fecha de la habilitación', null=True, blank=True)
+    motivo_habilitacion = models.TextField('motivo de la habilitación', blank=True)
 
     class Meta:
         verbose_name = 'periodo'

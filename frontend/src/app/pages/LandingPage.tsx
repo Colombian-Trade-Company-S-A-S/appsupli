@@ -43,10 +43,14 @@ function Portada() {
   return (
     <section className="relative isolate overflow-hidden">
       <Cuadricula />
-      {/* Un halo suave detrás del título: da profundidad sin meter otro color. */}
+      {/* Los dos destellos de esquina del brandbook: azul arriba, morado abajo. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute top-0 left-1/2 -z-10 h-80 w-[min(56rem,100%)] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl"
+        className="pointer-events-none absolute -top-32 -right-32 -z-10 size-[28rem] rounded-full bg-[#3b6dff]/25 blur-3xl"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-40 -left-40 -z-10 size-[28rem] rounded-full bg-[#5932d7]/30 blur-3xl"
       />
 
       <div className="mx-auto grid max-w-6xl items-center gap-14 px-4 py-20 sm:px-6 md:py-28 lg:grid-cols-[1.15fr_1fr]">
@@ -57,7 +61,7 @@ function Portada() {
           </Badge>
 
           <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl">
-            Una sola plataforma para <span className="text-muted-foreground">todas las áreas</span>{' '}
+            Una sola plataforma para <span className="text-brand-gradient">todas las áreas</span>{' '}
             de la compañía.
           </h1>
 
@@ -247,13 +251,13 @@ function ComoFunciona() {
 function Llamado() {
   return (
     <section className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
-      <div className="relative isolate flex flex-col items-start gap-6 overflow-hidden rounded-2xl bg-primary px-6 py-12 text-primary-foreground sm:px-12 md:flex-row md:items-center md:justify-between">
+      <div className="relative isolate flex flex-col items-start gap-6 overflow-hidden rounded-2xl bg-brand-gradient px-6 py-12 text-white sm:px-12 md:flex-row md:items-center md:justify-between">
         <Cuadricula invertida />
         <div className="flex max-w-xl flex-col gap-2">
           <h2 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
             ¿Ya tienes tu cuenta?
           </h2>
-          <p className="text-primary-foreground/75 text-pretty">
+          <p className="text-white/80 text-pretty">
             Entra con tu correo corporativo y la contraseña que te entregaron.
           </p>
         </div>

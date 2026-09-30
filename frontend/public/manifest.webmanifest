@@ -1,0 +1,86 @@
+{
+  "id": "/inicio",
+  "name": "Supli Tech",
+  "short_name": "Supli Tech",
+  "description": "La plataforma interna de Supli Tech: una cuenta para todas las áreas.",
+  "lang": "es",
+  "start_url": "/inicio",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0818",
+  "theme_color": "#0a0818",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Mis objetivos",
+      "short_name": "Objetivos",
+      "description": "Tus objetivos y KPIs del mes",
+      "url": "/inicio/performance/objetivos/mis-objetivos",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Mis evaluaciones",
+      "short_name": "Evaluaciones",
+      "description": "Las evaluaciones que te faltan responder",
+      "url": "/inicio/valoracion/mis-evaluaciones",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Supli Challenge",
+      "short_name": "Challenge",
+      "description": "Los retos abiertos",
+      "url": "/inicio/challenge",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Mi perfil",
+      "short_name": "Perfil",
+      "description": "Tu cuenta y la apariencia de la app",
+      "url": "/inicio/perfil",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

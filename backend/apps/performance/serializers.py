@@ -8,25 +8,24 @@ en las vistas. El JSON sale en camelCase, como el resto de la API.
 from decimal import Decimal
 
 from django.db.models import Sum
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.accounts.models import User
 
-from .cumplimiento import FormulaInvalida, evaluar_formula
+from .cumplimiento import FormulaInvalida, evaluar_formula, semaforo
 from .models import (
+    CRITERIOS_CUALITATIVOS,
     MAXIMO_OBJETIVOS,
     PONDERACION_COMPLETA,
     EstadoObjetivo,
-    EstadoPeriodo,
+    Evidencia,
     Objetivo,
     Periodo,
+    Resultado,
     TipoMedicion,
 )
-
-
-def primer_dia(fecha):
-    """El periodo siempre es el primer día del mes: así lo guarda y lo compara."""
-    return fecha.replace(day=1)
+from .periodos import primer_dia, puede_editarse
 
 
 class PersonaSerializer(serializers.ModelSerializer):
@@ -52,6 +51,102 @@ class PersonaSerializer(serializers.ModelSerializer):
         )
 
 
+class EvidenciaSerializer(serializers.ModelSerializer):
+    """El soporte del resultado: siempre un enlace (A5), nunca un archivo subido."""
+
+    class Meta:
+        model = Evidencia
+        fields = ('id', 'nombre', 'link_soporte', 'created_at')
+        read_only_fields = ('id', 'created_at')
+
+    def validate_link_soporte(self, valor):
+        if not valor.strip():
+            raise serializers.ValidationError(
+                'Pega el enlace del soporte en SharePoint o OneDrive.'
+            )
+        return valor.strip()
+
+
+class ResultadoSerializer(serializers.ModelSerializer):
+    """
+    Lo ejecutado de un objetivo, con sus evidencias.
+
+    El porcentaje no se recibe nunca: lo calcula el motor con el tipo de
+    medición del objetivo, y el color sale de los cortes del semáforo.
+    """
+
+    evidencias = EvidenciaSerializer(many=True, required=False)
+    cargado_por_nombre = serializers.CharField(
+        source='cargado_por.full_name', default='', read_only=True
+    )
+    validado_por_nombre = serializers.CharField(
+        source='validado_por.full_name', default='', read_only=True
+    )
+    estado_validacion_label = serializers.CharField(
+        source='get_estado_validacion_display', read_only=True
+    )
+    semaforo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Resultado
+        fields = (
+            'id',
+            'objetivo',
+            'resultado_ejecutado',
+            'porcentaje_cumplimiento',
+            'semaforo',
+            'cargado_por',
+            'cargado_por_nombre',
+            'fecha_carga',
+            'estado_validacion',
+            'estado_validacion_label',
+            'validado_por',
+            'validado_por_nombre',
+            'fecha_validacion',
+            'observacion',
+            'evidencias',
+        )
+        read_only_fields = (
+            'id',
+            'objetivo',
+            'porcentaje_cumplimiento',
+            'cargado_por',
+            'fecha_carga',
+            'estado_validacion',
+            'validado_por',
+            'fecha_validacion',
+        )
+
+    def get_semaforo(self, obj) -> str | None:
+        return semaforo(obj.porcentaje_cumplimiento)
+
+    def validate_resultado_ejecutado(self, valor):
+        if valor is None:
+            raise serializers.ValidationError('Escribe el resultado ejecutado.')
+        if valor < 0:
+            raise serializers.ValidationError('El resultado no puede ser negativo.')
+        return valor
+
+    def validate(self, datos):
+        """El resultado de una meta cualitativa son criterios cumplidos, no unidades."""
+        objetivo = self.instance.objetivo if self.instance else self.context.get('objetivo')
+        valor = datos.get('resultado_ejecutado')
+        if objetivo and valor is not None:
+            cualitativa = objetivo.tipo_medicion == TipoMedicion.CUALITATIVA
+            if cualitativa and valor > CRITERIOS_CUALITATIVOS:
+                raise serializers.ValidationError(
+                    {
+                        'resultadoEjecutado': 'Una meta cualitativa se mide en criterios '
+                        f'cumplidos: de 0 a {CRITERIOS_CUALITATIVOS}.'
+                    }
+                )
+            if objetivo.tipo_medicion == TipoMedicion.BINARIO and valor > 1:
+                raise serializers.ValidationError(
+                    {'resultadoEjecutado': 'Un objetivo binario se carga con 1 (cumple) o 0 (no).'}
+                )
+        return datos
+
+
 class ObjetivoSerializer(serializers.ModelSerializer):
     colaborador_nombre = serializers.CharField(source='colaborador.full_name', read_only=True)
     colaborador_cargo = serializers.CharField(source='colaborador.position', read_only=True)
@@ -66,6 +161,9 @@ class ObjetivoSerializer(serializers.ModelSerializer):
     )
     unidad_label = serializers.CharField(source='get_unidad_display', read_only=True)
     editable = serializers.SerializerMethodField()
+    resultado = ResultadoSerializer(read_only=True)
+    cumplimiento = serializers.SerializerMethodField()
+    semaforo = serializers.SerializerMethodField()
 
     class Meta:
         model = Objetivo
@@ -94,13 +192,38 @@ class ObjetivoSerializer(serializers.ModelSerializer):
             'responsable_nombre',
             'estado',
             'editable',
+            'resultado',
+            'cumplimiento',
+            'semaforo',
             'created_at',
         )
         read_only_fields = ('registrado_por', 'estado')
 
     def get_editable(self, obj) -> bool:
-        """Un objetivo congelado ya no se toca: el mes está en medición."""
-        return not obj.congelado
+        """
+        Si el objetivo todavía se puede tocar.
+
+        El mes se congela solo cuando empieza (A9); antes de eso se edita, y
+        después solo si People habilitó la excepción.
+        """
+        registros = self.context.get('periodos')
+        registro = (
+            registros.get(obj.periodo)
+            if registros is not None
+            else Periodo.objects.filter(periodo=obj.periodo).first()
+        )
+        puede, _motivo = puede_editarse(obj.periodo, registro, timezone.localdate())
+        return puede
+
+    def get_cumplimiento(self, obj) -> float | None:
+        """El % del objetivo, si ya tiene resultado cargado."""
+        resultado = getattr(obj, 'resultado', None)
+        if resultado is None or resultado.porcentaje_cumplimiento is None:
+            return None
+        return float(resultado.porcentaje_cumplimiento)
+
+    def get_semaforo(self, obj) -> str | None:
+        return semaforo(self.get_cumplimiento(obj))
 
     def validate_periodo(self, valor):
         return primer_dia(valor)
@@ -120,19 +243,20 @@ class ObjetivoSerializer(serializers.ModelSerializer):
         meta = datos.get('meta_valor', getattr(instancia, 'meta_valor', None))
         formula = datos.get('formula', getattr(instancia, 'formula', '') or '')
 
-        # El mes en medición ya congeló sus objetivos (regla 5).
+        # El mes se congela solo cuando empieza (A9), y People puede reabrirlo.
         if periodo:
-            estado = (
-                Periodo.objects.filter(periodo=periodo).values_list('estado', flat=True).first()
-            )
-            if estado and estado != EstadoPeriodo.DEFINICION:
-                raise serializers.ValidationError(
-                    'El periodo ya no está en definición: los objetivos quedaron congelados.'
-                )
+            registro = Periodo.objects.filter(periodo=periodo).first()
+            puede, motivo = puede_editarse(periodo, registro, timezone.localdate())
+            if not puede:
+                raise serializers.ValidationError(motivo)
 
-        # La meta es obligatoria salvo en binario, donde el resultado es sí/no.
+        # La meta es obligatoria salvo en binario, donde el resultado es sí/no,
+        # y en cualitativa, donde son siempre dos criterios.
         if tipo == TipoMedicion.BINARIO:
             datos['meta_valor'] = None
+        elif tipo == TipoMedicion.CUALITATIVA:
+            datos['meta_valor'] = Decimal(CRITERIOS_CUALITATIVOS)
+            datos['permite_sobrecumplimiento'] = False
         elif tipo in (TipoMedicion.PROPORCIONAL, TipoMedicion.PROPORCIONAL_INVERSO):
             if meta is None:
                 raise serializers.ValidationError(
@@ -197,6 +321,9 @@ class PeriodoSerializer(serializers.ModelSerializer):
     abierto_por_nombre = serializers.CharField(
         source='abierto_por.full_name', default='', read_only=True
     )
+    habilitada_por_nombre = serializers.CharField(
+        source='habilitada_por.full_name', default='', read_only=True
+    )
 
     class Meta:
         model = Periodo
@@ -209,6 +336,11 @@ class PeriodoSerializer(serializers.ModelSerializer):
             'abierto_por_nombre',
             'fecha_apertura',
             'fecha_cierre',
+            'edicion_habilitada',
+            'habilitada_por',
+            'habilitada_por_nombre',
+            'fecha_habilitacion',
+            'motivo_habilitacion',
         )
         read_only_fields = fields
 

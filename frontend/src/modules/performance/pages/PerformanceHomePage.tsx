@@ -1,13 +1,6 @@
 import { Link } from 'react-router-dom';
+import { ArrowRightIcon, ClipboardCheckIcon, ListChecksIcon, UsersIcon } from 'lucide-react';
 import {
-  ArrowRightIcon,
-  ClipboardCheckIcon,
-  ListChecksIcon,
-  LockIcon,
-  UsersIcon,
-} from 'lucide-react';
-import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -16,7 +9,7 @@ import {
   CardTitle,
 } from '@/shared/components/ui';
 import { Encabezado, Kpi } from '@/shared/components/layout';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import { etiquetaMes } from '../api';
 import { useResumenPerformance } from '../hooks';
 import { EstadoDelMes } from '../components/Piezas';
@@ -31,7 +24,7 @@ import { BASE } from './PerformanceLayout';
 export default function PerformanceHomePage() {
   const { data: resumen, isLoading } = useResumenPerformance();
 
-  if (isLoading || !resumen) return <FullPageLoader label="Abriendo Objetivos y KPIs…" />;
+  if (isLoading || !resumen) return <EsqueletoPagina forma="tablero" label="Abriendo Objetivos y KPIs…" />;
 
   const { capacidades } = resumen;
   const esLider = capacidades.esLider || capacidades.puedeDefinirACualquiera;
@@ -118,14 +111,14 @@ export default function PerformanceHomePage() {
       <Card className="border-dashed bg-muted/30">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <LockIcon className="size-4 text-muted-foreground" />
-            Carga de resultado y evidencia
-            <Badge variant="outline">Fase 2</Badge>
+            <ClipboardCheckIcon className="size-4 text-muted-foreground" />
+            Cómo se mide el mes
           </CardTitle>
           <CardDescription>
-            Se habilita en octubre, cuando inicia la medición: ahí se registra lo ejecutado, se
-            adjunta el soporte y el sistema calcula solo el % de cumplimiento. El dashboard, el
-            semáforo y el Top Performance salen de esos datos.
+            Los objetivos se definen antes de que el mes empiece; cuando arranca, quedan congelados.
+            Ya en curso, cada quien registra lo ejecutado con el enlace del soporte y el sistema
+            calcula solo el % de cumplimiento. De ahí salen el semáforo —verde ≥ 100%, naranja
+            85–99.9%, rojo &lt; 85%— y el Top Performance.
           </CardDescription>
         </CardHeader>
       </Card>

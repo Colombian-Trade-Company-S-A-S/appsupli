@@ -285,7 +285,7 @@ function CicloDialog({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editando ? 'Editar ciclo' : 'Nuevo ciclo'}</DialogTitle>
           <DialogDescription>

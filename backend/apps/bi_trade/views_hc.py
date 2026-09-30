@@ -15,9 +15,10 @@ from rest_framework import status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 
+from apps.core.excel import Columna, ColumnaExport
+
 from .api_permissions import CanManageData, HasBiTradeApp
 from .canales import HC
-from .excel import Columna, ColumnaExport
 from .filters import InventarioHcFilter, MetaHcFilter, VentaHcFilter
 from .models import (
     CategoriaHc,

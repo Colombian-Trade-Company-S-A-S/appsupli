@@ -13,7 +13,6 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-  CommandShortcut,
 } from '@/shared/components/ui';
 import { COMANDOS_POR_APP } from './comandos';
 
@@ -171,18 +170,25 @@ export function usePaletaDeComandos() {
   return { abierta, setAbierta };
 }
 
-/** El botón del topbar: hace visible el atajo para quien no lo conoce. */
+/**
+ * El botón del topbar: una barra de búsqueda visible con el atajo a la vista,
+ * para quien no sabe que existe Ctrl/⌘ + K. Al pasar el mouse se enciende el
+ * borde con el acento.
+ */
 export function BotonPaleta({ onClick }: { onClick: () => void }) {
   return (
     <Button
       variant="outline"
-      className="h-8 gap-2 px-2 text-muted-foreground sm:w-56 sm:justify-start"
+      className="group h-9 gap-2 rounded-full bg-muted/40 px-3 text-muted-foreground shadow-none transition-all hover:border-primary/50 hover:bg-muted/60 hover:shadow-[0_0_0_3px] hover:shadow-primary/15 sm:w-64 sm:justify-start lg:w-80"
       onClick={onClick}
       aria-label="Buscar"
     >
-      <SearchIcon data-icon="inline-start" />
-      <span className="hidden sm:inline">Buscar…</span>
-      <CommandShortcut className="ml-auto hidden sm:inline">{TECLA_PALETA}</CommandShortcut>
+      <SearchIcon data-icon="inline-start" className="transition-colors group-hover:text-primary" />
+      <span className="hidden truncate sm:inline xl:hidden">Buscar…</span>
+      <span className="hidden truncate xl:inline">Buscar pantallas y acciones…</span>
+      <kbd className="ml-auto hidden items-center rounded-md border bg-background px-1.5 py-0.5 font-sans text-[11px] font-medium text-muted-foreground sm:inline-flex">
+        {TECLA_PALETA}
+      </kbd>
     </Button>
   );
 }

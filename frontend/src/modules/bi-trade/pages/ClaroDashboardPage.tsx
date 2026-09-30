@@ -65,6 +65,16 @@ export default function ClaroDashboardPage() {
   const totales = data?.totales;
   const periodo = data?.periodo;
   const ritmo = calcularRitmo(data);
+  // Las mini-gráficas llegan hasta hoy: los días por venir irían planos.
+  const hoy = new Date().toLocaleDateString('en-CA');
+  const corridos = (data?.serie ?? []).filter((dia) => dia.fecha <= hoy);
+  const tendencia = {
+    cumplimiento: corridos.map((dia) =>
+      dia.metaAcumulada ? (dia.ventasAcumuladas * 100) / dia.metaAcumulada : 0,
+    ),
+    acumulado: corridos.map((dia) => dia.ventasAcumuladas),
+    diario: corridos.filter((dia) => dia.habil).map((dia) => dia.ventas),
+  };
   const hayFiltros = !!filtros.regional || !!filtros.marca || !!filtros.id_punto_venta;
   const nombrePunto =
     puntos.find((p) => p.idPuntoVenta === filtros.id_punto_venta)?.nombrePdv ??
@@ -206,6 +216,7 @@ export default function ClaroDashboardPage() {
           label="Cumplimiento del mes"
           cargando={isLoading}
           value={`${totales?.cumplimiento ?? 0}%`}
+          tendencia={tendencia.cumplimiento}
           extra={<BadgeRitmo ritmo={ritmo} />}
           hint={
             ritmo && ritmo.habilesCorridos > 0
@@ -219,6 +230,7 @@ export default function ClaroDashboardPage() {
           label="Vendido en el mes"
           cargando={isLoading}
           value={formatoMonedaCorta(totales?.ventasDinero ?? 0)}
+          tendencia={tendencia.acumulado}
           hint={`${formatoNumero(totales?.ventasCantidad ?? 0)} unidades de ${formatoNumero(
             totales?.metaCantidad ?? 0,
           )} de meta`}
@@ -227,6 +239,7 @@ export default function ClaroDashboardPage() {
           label="Meta diaria"
           cargando={isLoading}
           value={formatoMonedaCorta(totales?.metaDiaria ?? 0)}
+          tendencia={tendencia.diario}
           hint={
             periodo
               ? `${formatoMoneda(totales?.metaDinero ?? 0)} ÷ ${periodo.diasHabiles} días hábiles`

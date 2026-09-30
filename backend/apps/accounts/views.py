@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from .serializers import (
     ChangePasswordSerializer,
+    DecisionInstalacionSerializer,
     LoginSerializer,
     PreferencesSerializer,
     UserSerializer,
@@ -24,7 +25,7 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        serializer.validated_data['user'].touch_last_login()
+        serializer.validated_data['user'].registrar_inicio_de_sesion()
         return Response(serializer.to_representation(serializer.validated_data))
 
 
@@ -82,4 +83,17 @@ class PreferencesView(APIView):
         serializer = PreferencesSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        return Response(UserSerializer(request.user).data)
+
+
+class InstalacionAppView(APIView):
+    """POST /api/auth/instalacion-app — {decision: instalada | despues | visto}."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=DecisionInstalacionSerializer, responses=UserSerializer)
+    def post(self, request):
+        serializer = DecisionInstalacionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request.user.decidir_instalacion(serializer.validated_data['decision'])
         return Response(UserSerializer(request.user).data)

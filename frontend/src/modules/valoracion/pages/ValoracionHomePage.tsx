@@ -13,7 +13,7 @@ import {
   CardTitle,
   Spinner,
 } from '@/shared/components/ui';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import { valoracionApi } from '../api';
 import { useResumen, useValoracionMutation } from '../hooks';
 import { Encabezado, Kpi, formatoFecha } from '../components/Piezas';
@@ -31,7 +31,7 @@ export default function ValoracionHomePage() {
     (data) => data.message ?? 'Configuración actualizada',
   );
 
-  if (isLoading || !resumen) return <FullPageLoader label="Cargando…" />;
+  if (isLoading || !resumen) return <EsqueletoPagina forma="tablero" label="Cargando…" />;
 
   const { capabilities: puede, progress: avance, settings } = resumen;
   const tarjetas = SECCIONES.filter((s) => !s.exacto && s.visible(puede));

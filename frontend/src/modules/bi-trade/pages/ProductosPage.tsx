@@ -313,7 +313,7 @@ function ProductoDialog({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editando ? 'Editar producto' : 'Nuevo producto'}</DialogTitle>
           <DialogDescription>

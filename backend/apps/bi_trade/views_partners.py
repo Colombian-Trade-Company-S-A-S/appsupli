@@ -21,8 +21,9 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 from rest_framework.response import Response
 
+from apps.core.excel import Columna, ErrorDeFila, construir_plantilla, leer_archivo
+
 from .api_permissions import CanManageData, HasBiTradeApp, ReadOnlyOrCanManage
-from .excel import Columna, ErrorDeFila, construir_plantilla, leer_archivo
 from .models import (
     MarcaPartner,
     MetaPartner,

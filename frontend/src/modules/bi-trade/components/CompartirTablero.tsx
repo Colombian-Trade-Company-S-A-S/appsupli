@@ -104,7 +104,7 @@ export function CompartirTablero({
         Compartir
       </Button>
       <Dialog open={abierto} onOpenChange={setAbierto}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{titulo}</DialogTitle>
             <DialogDescription>{descripcion}</DialogDescription>

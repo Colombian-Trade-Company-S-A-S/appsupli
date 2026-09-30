@@ -16,7 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/shared/components/ui';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import type { Segmentacion } from '../api';
 import { usePersona } from '../hooks';
 import { FiltrosSegmentacion } from '../components/Filtros';
@@ -29,7 +29,7 @@ export default function PersonaPage() {
   const [filtros, setFiltros] = useState<Segmentacion>({});
   const { data, isLoading } = usePersona(Number(id), filtros);
 
-  if (isLoading || !data) return <FullPageLoader label="Cargando la ficha…" />;
+  if (isLoading || !data) return <EsqueletoPagina forma="detalle" label="Cargando la ficha…" />;
 
   const { person: persona, consolidated: consolidado, results: resultados } = data;
 

@@ -12,6 +12,12 @@ export const authApi = {
   me: () => api.get<User>('/auth/me'),
   updatePreferences: (payload: PreferencesPayload) =>
     api.patch<User>('/auth/preferences', payload),
+  /**
+   * `instalada`: la instaló (recordatorio en 10 inicios). `despues`: se le
+   * vuelve a ofrecer en 3. `visto`: leyó el recordatorio (otra vez en 10).
+   */
+  decidirInstalacion: (decision: 'instalada' | 'despues' | 'visto') =>
+    api.post<User>('/auth/instalacion-app', { decision }),
   logout: () => api.post<void>('/auth/logout'),
   verifyPassword: (password: string) => api.post<void>('/auth/verify-password', { password }),
   changePassword: (payload: ChangePasswordPayload) =>

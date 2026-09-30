@@ -1,4 +1,4 @@
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDownIcon, LogOutIcon, UserIcon } from 'lucide-react';
 import { useAuth } from '@/core/auth';
 import { useAppearanceEffect } from '@/shared/hooks';
@@ -21,11 +21,17 @@ import {
 } from '@/shared/components/ui';
 import { AppSidebar } from './AppSidebar';
 import { BotonPaleta, CommandPalette, usePaletaDeComandos } from './CommandPalette';
+import { AvisoInstalarApp } from './InstalarApp';
+import { NavegacionMovil } from './NavegacionMovil';
 
 /** Layout privado: sidebar + barra superior. Aquí sí se puede cambiar el tema. */
 export function AppLayout() {
   useAppearanceEffect();
   const { abierta, setAbierta } = usePaletaDeComandos();
+  const { pathname } = useLocation();
+  // La entrada se anima al cambiar de app o de pantalla principal, no en cada
+  // pestaña: la clave llega hasta el tercer tramo (/inicio/<app>/<sección>).
+  const seccion = pathname.split('/').slice(0, 4).join('/');
 
   return (
     <SidebarProvider>
@@ -36,12 +42,17 @@ export function AppLayout() {
           la página entera y la mete por debajo del sidebar fijo. */}
       <SidebarInset className="min-w-0">
         <AppHeader onBuscar={() => setAbierta(true)} />
-        <main className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        {/* En celular deja aire abajo para la barra de navegación. */}
+        <main className="min-w-0 flex-1 p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:p-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6">
           <ErrorBoundary>
-            <Outlet />
+            <div key={seccion} className="animate-entrada-pagina">
+              <Outlet />
+            </div>
           </ErrorBoundary>
         </main>
       </SidebarInset>
+      <NavegacionMovil onBuscar={() => setAbierta(true)} />
+      <AvisoInstalarApp />
     </SidebarProvider>
   );
 }

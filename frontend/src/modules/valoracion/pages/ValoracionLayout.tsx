@@ -11,7 +11,7 @@ import {
   UsersIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { FullPageLoader } from '@/shared/components/feedback';
+import { EsqueletoPagina } from '@/shared/components/feedback';
 import { cn } from '@/shared/lib/utils';
 import type { Capacidades } from '../api';
 import { useResumen } from '../hooks';
@@ -81,7 +81,7 @@ export default function ValoracionLayout() {
   const { data: resumen, isLoading } = useResumen();
   const { pathname } = useLocation();
 
-  if (isLoading || !resumen) return <FullPageLoader label="Abriendo Supli performance…" />;
+  if (isLoading || !resumen) return <EsqueletoPagina forma="tablero" label="Abriendo Supli performance…" />;
 
   const secciones = SECCIONES.filter((s) => s.visible(resumen.capabilities));
   const activa = (seccion: Seccion) => {

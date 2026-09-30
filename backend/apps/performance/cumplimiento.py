@@ -15,7 +15,13 @@ import ast
 import operator
 from decimal import Decimal, InvalidOperation
 
-from .models import TipoMedicion
+from .models import CRITERIOS_CUALITATIVOS, Semaforo, TipoMedicion
+
+#: Cortes del semáforo, cerrados por People (A2 del documento de definiciones):
+#: verde desde 100, naranja de 85 a 99.9, rojo por debajo de 85. Están acá y no
+#: repartidos por las vistas para que cambiarlos sea cambiar dos números.
+SEMAFORO_VERDE = Decimal('100')
+SEMAFORO_NARANJA = Decimal('85')
 
 #: Lo único que se permite dentro de una fórmula escrita por un usuario.
 _OPERACIONES = {
@@ -124,6 +130,13 @@ def calcular_cumplimiento(objetivo, resultado_ejecutado) -> Decimal:
         # ser una división por cero. Pendiente de confirmar con People.
         pct = (meta / logrado) * 100 if logrado > 0 else 100.0
 
+    elif objetivo.tipo_medicion == TipoMedicion.CUALITATIVA:
+        # Entregables o hitos: se cuentan criterios cumplidos, no unidades.
+        # Dos de dos es 100%, uno es 50% y ninguno es 0% (A2). Nunca pasa de
+        # 100: no hay sobrecumplimiento posible cuando ya se cumplió todo.
+        cumplidos = min(max(logrado, 0.0), float(CRITERIOS_CUALITATIVOS))
+        pct = cumplidos / CRITERIOS_CUALITATIVOS * 100
+
     elif objetivo.tipo_medicion == TipoMedicion.FORMULA:
         pct = evaluar_formula(objetivo.formula, {'logrado': logrado, 'meta': meta})
 
@@ -148,3 +161,31 @@ def cumplimiento_total(pares) -> Decimal:
     """
     total = sum(_a_float(peso) / 100 * _a_float(pct) for peso, pct in pares)
     return Decimal(f'{total:.2f}')
+
+
+def semaforo(porcentaje) -> str | None:
+    """
+    El color de un cumplimiento: verde ≥ 100, naranja 85–99.9, rojo < 85.
+
+    Sin porcentaje no hay color: un objetivo sin resultado cargado no está en
+    rojo, está sin medir, y pintarlo de rojo diría algo que no es.
+    """
+    if porcentaje is None:
+        return None
+    valor = Decimal(f'{_a_float(porcentaje):.2f}')
+    if valor >= SEMAFORO_VERDE:
+        return Semaforo.VERDE
+    if valor >= SEMAFORO_NARANJA:
+        return Semaforo.NARANJA
+    return Semaforo.ROJO
+
+
+def cortes_semaforo() -> dict:
+    """Los cortes, para que el frontend pinte la leyenda con los mismos números."""
+    return {
+        'verde_desde': float(SEMAFORO_VERDE),
+        'naranja_desde': float(SEMAFORO_NARANJA),
+        'etiquetas': [
+            {'value': valor, 'label': etiqueta} for valor, etiqueta in Semaforo.choices
+        ],
+    }

@@ -1,3 +1,4 @@
+import { BotonInstalarApp } from '@/app/layouts/InstalarApp';
 import {
   AtSignIcon,
   BadgeCheckIcon,
@@ -60,6 +61,7 @@ export default function ProfilePage() {
             <p className="text-sm text-muted-foreground">
               {user.position || '—'} · {user.area || '—'}
             </p>
+            <BotonInstalarApp variante="perfil" className="mt-2 self-center sm:self-start" />
           </div>
           <Badge variant={user.isAdmin ? 'default' : 'secondary'} className="sm:ml-auto">
             {user.isAdmin && <ShieldCheckIcon data-icon="inline-start" />}

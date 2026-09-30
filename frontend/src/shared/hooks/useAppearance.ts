@@ -3,7 +3,7 @@ import { create } from 'zustand';
 
 export type Theme = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
-export type Accent = 'neutral' | 'indigo' | 'blue' | 'emerald' | 'amber' | 'rose' | 'violet';
+export type Accent = 'violet' | 'indigo' | 'blue';
 export type Radius = 'sharp' | 'default' | 'rounded';
 
 export interface Appearance {
@@ -12,15 +12,14 @@ export interface Appearance {
   radius: Radius;
 }
 
-/** Catálogo de acentos. `swatch` es el color de la muestra en el selector. */
-export const ACCENTS: Array<{ value: Accent; label: string; swatch: string }> = [
-  { value: 'neutral', label: 'Neutro', swatch: 'var(--foreground)' },
-  { value: 'indigo', label: 'Índigo', swatch: 'oklch(0.55 0.21 285)' },
-  { value: 'blue', label: 'Azul', swatch: 'oklch(0.55 0.18 250)' },
-  { value: 'emerald', label: 'Verde', swatch: 'oklch(0.52 0.13 158)' },
-  { value: 'amber', label: 'Ámbar', swatch: 'oklch(0.62 0.14 70)' },
-  { value: 'rose', label: 'Rosa', swatch: 'oklch(0.56 0.2 15)' },
-  { value: 'violet', label: 'Violeta', swatch: 'oklch(0.55 0.22 310)' },
+/**
+ * Catálogo de acentos: solo los colores de marca del brandbook.
+ * `swatch` es la muestra y `check` el color del chulito encima.
+ */
+export const ACCENTS: Array<{ value: Accent; label: string; swatch: string; check: string }> = [
+  { value: 'violet', label: 'Morado', swatch: '#a66bff', check: '#0f0b33' },
+  { value: 'indigo', label: 'Morado oscuro', swatch: '#5932d7', check: '#ffffff' },
+  { value: 'blue', label: 'Azul', swatch: '#3b6dff', check: '#ffffff' },
 ];
 
 export const RADII: Array<{ value: Radius; label: string; preview: string }> = [
@@ -30,7 +29,8 @@ export const RADII: Array<{ value: Radius; label: string; preview: string }> = [
 ];
 
 const STORAGE_KEY = 'supli.appearance';
-const POR_DEFECTO: Appearance = { theme: 'system', accent: 'neutral', radius: 'default' };
+const POR_DEFECTO: Appearance = { theme: 'dark', accent: 'violet', radius: 'sharp' };
+const ACENTOS_VALIDOS = new Set<string>(ACCENTS.map((a) => a.value));
 
 const media = () => window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -40,7 +40,10 @@ const resolver = (theme: Theme): ResolvedTheme =>
 /** Copia local: evita el parpadeo mientras llega la preferencia del backend. */
 function leerCache(): Appearance {
   try {
-    return { ...POR_DEFECTO, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') };
+    const cache = { ...POR_DEFECTO, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') };
+    // Acentos de antes del brandbook (verde, ámbar…) ya no existen.
+    if (!ACENTOS_VALIDOS.has(cache.accent)) cache.accent = POR_DEFECTO.accent;
+    return cache;
   } catch {
     return POR_DEFECTO;
   }
@@ -69,9 +72,19 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => ({
   },
 
   hydrate(preferencias) {
-    get().set(preferencias);
+    const { accent, ...resto } = preferencias;
+    get().set(accent && ACENTOS_VALIDOS.has(accent) ? preferencias : resto);
   },
 }));
+
+/** Pinta la apariencia guardada antes del primer render: sin destello blanco. */
+export function aplicarAparienciaInicial() {
+  const { resolvedTheme, accent, radius } = useAppearanceStore.getState();
+  const root = document.documentElement;
+  root.classList.toggle('dark', resolvedTheme === 'dark');
+  root.dataset.accent = accent;
+  root.dataset.radius = radius;
+}
 
 /** Escribe la apariencia en <html>. La monta el layout privado. */
 export function useAppearanceEffect() {
@@ -95,15 +108,16 @@ export function useAppearanceEffect() {
 }
 
 /**
- * Fuerza el tema claro mientras el componente esté montado.
- * Lo usan la landing y el login: fuera de la app nunca hay modo oscuro.
+ * Fuerza un tema mientras el componente esté montado, sin tocar la
+ * preferencia de la persona. La portada y el login van en oscuro (la base
+ * del brandbook); los formularios públicos de Partners, en claro.
  */
-export function useForceLightTheme() {
+export function useForceTheme(tema: ResolvedTheme) {
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.remove('dark');
+    root.classList.toggle('dark', tema === 'dark');
     return () => {
       root.classList.toggle('dark', useAppearanceStore.getState().resolvedTheme === 'dark');
     };
-  }, []);
+  }, [tema]);
 }

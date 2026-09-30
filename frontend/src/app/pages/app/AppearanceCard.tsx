@@ -113,7 +113,7 @@ export function AppearanceCard() {
                   style={{ background: opcion.swatch }}
                 >
                   {accent === opcion.value && (
-                    <CheckIcon className="size-4 text-background" strokeWidth={3} />
+                    <CheckIcon className="size-4" style={{ color: opcion.check }} strokeWidth={3} />
                   )}
                 </span>
               </button>
@@ -163,34 +163,35 @@ function Grupo({ titulo, children }: { titulo: string; children: React.ReactNode
   );
 }
 
-/** Miniatura de la interfaz para reconocer el tema de un vistazo. */
+/** Miniatura con los colores de marca de cada tema: blanco puro o azul noche. */
+const MINIATURA = {
+  light: { fondo: 'bg-white', barra: 'bg-[#e6e1f5]', tenue: 'bg-[#efebfa]' },
+  dark: { fondo: 'bg-[#0a0818]', barra: 'bg-[#2a2450]', tenue: 'bg-[#1d1838]' },
+};
+
 function VistaPrevia({ tema }: { tema: Theme }) {
   if (tema === 'system') {
     return (
       <span className="flex h-12 w-full overflow-hidden rounded border">
-        <span className="flex w-1/2 flex-col gap-1 bg-white p-1.5">
-          <span className="h-1.5 w-full rounded-full bg-neutral-300" />
-          <span className="h-1.5 w-2/3 rounded-full bg-neutral-300" />
-        </span>
-        <span className="flex w-1/2 flex-col gap-1 bg-neutral-900 p-1.5">
-          <span className="h-1.5 w-full rounded-full bg-neutral-600" />
-          <span className="h-1.5 w-2/3 rounded-full bg-neutral-600" />
-        </span>
+        <Mitad tema="light" className="w-1/2" />
+        <Mitad tema="dark" className="w-1/2" />
       </span>
     );
   }
-
-  const oscuro = tema === 'dark';
   return (
-    <span
-      className={cn(
-        'flex h-12 w-full flex-col gap-1 overflow-hidden rounded border p-1.5',
-        oscuro ? 'bg-neutral-900' : 'bg-white',
-      )}
-    >
-      <span className={cn('h-1.5 w-full rounded-full', oscuro ? 'bg-neutral-600' : 'bg-neutral-300')} />
-      <span className={cn('h-1.5 w-2/3 rounded-full', oscuro ? 'bg-neutral-600' : 'bg-neutral-300')} />
-      <span className={cn('h-1.5 w-1/2 rounded-full', oscuro ? 'bg-neutral-700' : 'bg-neutral-200')} />
+    <span className="flex h-12 w-full overflow-hidden rounded border">
+      <Mitad tema={tema} className="w-full" />
+    </span>
+  );
+}
+
+function Mitad({ tema, className }: { tema: 'light' | 'dark'; className: string }) {
+  const c = MINIATURA[tema];
+  return (
+    <span className={cn('flex flex-col gap-1 p-1.5', c.fondo, className)}>
+      <span className="h-1.5 w-1/3 rounded-full bg-primary" />
+      <span className={cn('h-1.5 w-full rounded-full', c.barra)} />
+      <span className={cn('h-1.5 w-2/3 rounded-full', c.tenue)} />
     </span>
   );
 }

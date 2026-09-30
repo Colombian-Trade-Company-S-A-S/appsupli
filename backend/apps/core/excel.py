@@ -1,12 +1,16 @@
 """
-Plantillas e importación en Excel para los CRUD de BI Trade.
+Plantillas e importación en Excel, compartidas por todos los módulos.
 
-Cada viewset declara sus columnas una sola vez y de ahí salen las dos cosas:
+Quien las usa declara sus columnas una sola vez y de ahí salen las dos cosas:
 la plantilla que se descarga y el lector que valida lo que se sube. Así la
 plantilla nunca se desincroniza de lo que el importador acepta.
+
+Nació en BI Trade y vive en `core` desde que Supli Performance carga objetivos
+con el mismo formato: es la misma plantilla, con otras columnas.
 """
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from openpyxl import Workbook, load_workbook
@@ -31,7 +35,7 @@ class Columna:
     """Una columna de la plantilla y su regla de lectura."""
 
     nombre: str
-    tipo: str = 'texto'  # texto | entero | fecha | opcion
+    tipo: str = 'texto'  # texto | entero | decimal | fecha | opcion | si_no
     obligatoria: bool = True
     opciones: list[str] = field(default_factory=list)
     ayuda: str = ''
@@ -42,8 +46,10 @@ class Columna:
         return {
             'texto': 'Texto',
             'entero': 'Número entero',
+            'decimal': 'Número (admite decimales)',
             'fecha': 'Fecha (AAAA-MM-DD)',
             'opcion': 'Una de las opciones listadas',
+            'si_no': 'Sí o No',
         }[self.tipo]
 
 
@@ -67,6 +73,25 @@ def _leer_celda(valor, columna: Columna):
         if entero < 0:
             raise ErrorDeFila(f'«{columna.nombre}» no puede ser negativo.')
         return entero
+
+    if columna.tipo == 'decimal':
+        # Coma o punto: el archivo puede venir de un Excel en español.
+        texto = str(valor).strip().replace(',', '.')
+        try:
+            numero = Decimal(texto)
+        except (InvalidOperation, ValueError) as exc:
+            raise ErrorDeFila(f'«{columna.nombre}» debe ser un número.') from exc
+        if numero < 0:
+            raise ErrorDeFila(f'«{columna.nombre}» no puede ser negativo.')
+        return numero
+
+    if columna.tipo == 'si_no':
+        texto = str(valor).strip().lower()
+        if texto in ('sí', 'si', 'x', 'true', 'verdadero', '1', '1.0'):
+            return True
+        if texto in ('no', 'false', 'falso', '0', '0.0'):
+            return False
+        raise ErrorDeFila(f'«{columna.nombre}» se responde con Sí o con No.')
 
     if columna.tipo == 'fecha':
         if isinstance(valor, datetime):

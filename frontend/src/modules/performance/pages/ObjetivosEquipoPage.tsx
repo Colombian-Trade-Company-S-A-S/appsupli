@@ -1,33 +1,61 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangleIcon, LockIcon, PlayIcon, PlusIcon, TargetIcon } from 'lucide-react';
+import {
+  AlertTriangleIcon,
+  LockIcon,
+  PlayIcon,
+  PlusIcon,
+  TargetIcon,
+  UnlockIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Alert,
   AlertDescription,
   AlertTitle,
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Field,
+  FieldLabel,
+  Textarea,
 } from '@/shared/components/ui';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
-import { ConfirmarBorrado, FullPageLoader } from '@/shared/components/feedback';
+import { ConfirmarBorrado, EsqueletoPagina } from '@/shared/components/feedback';
 import { ApiError } from '@/shared/api/http-client';
 import { etiquetaMes, mesDe, performanceApi, type Objetivo, type PesoIncompleto } from '../api';
 import {
   performanceKeys,
   useEliminarObjetivo,
+  useHabilitarEdicion,
   useObjetivos,
   useOpcionesPerformance,
   useResumenPeriodo,
+  useValidarResultado,
 } from '../hooks';
-import { BannerPonderacion, EstadoDelMes, Selector } from '../components/Piezas';
+import {
+  AvisoCongelado,
+  BannerPonderacion,
+  EstadoDelMes,
+  LeyendaSemaforo,
+  Selector,
+} from '../components/Piezas';
+import { CargaExcel } from '../components/CargaExcel';
 import { FormularioObjetivo } from '../components/FormularioObjetivo';
+import { FormularioResultado } from '../components/FormularioResultado';
 import { TablaObjetivos } from '../components/TablaObjetivos';
+
+/** El mes en curso: desde que empieza, ya se pueden cargar resultados. */
+const mesActual = () => new Date().toISOString().slice(0, 7);
 
 /**
  * «Objetivos del equipo»: la pantalla del mockup aprobado.
@@ -43,6 +71,9 @@ export default function ObjetivosEquipoPage() {
   const [editando, setEditando] = useState<Objetivo | undefined>();
   const [porBorrar, setPorBorrar] = useState<Objetivo | null>(null);
   const [pendientes, setPendientes] = useState<PesoIncompleto | null>(null);
+  const [cargando, setCargando] = useState<Objetivo | null>(null);
+  const [excepcion, setExcepcion] = useState(false);
+  const [motivo, setMotivo] = useState('');
 
   const periodos = opciones?.periodos ?? [];
   const equipo = opciones?.equipo ?? [];
@@ -56,6 +87,8 @@ export default function ObjetivosEquipoPage() {
   });
   const { data: resumen } = useResumenPeriodo(periodoElegido, colaborador?.id);
   const eliminar = useEliminarObjetivo();
+  const validar = useValidarResultado();
+  const habilitarEdicion = useHabilitarEdicion();
   const queryClient = useQueryClient();
 
   const activar = useMutation({
@@ -75,7 +108,7 @@ export default function ObjetivosEquipoPage() {
     },
   });
 
-  if (cargandoOpciones || !opciones) return <FullPageLoader label="Abriendo Objetivos y KPIs…" />;
+  if (cargandoOpciones || !opciones) return <EsqueletoPagina forma="lista" label="Abriendo Objetivos y KPIs…" />;
 
   if (equipo.length === 0) {
     return (
@@ -96,12 +129,16 @@ export default function ObjetivosEquipoPage() {
   const enDefinicion = estadoPeriodo === 'definicion';
   const disponible = ponderacion?.pesoDisponible ?? 100;
   const completos = ponderacion?.objetivos ?? 0;
+  // El mes se congela solo cuando empieza (A9). Lo dice el backend, que es
+  // quien conoce la fecha y la excepción que haya autorizado People.
+  const editable = resumen?.editable ?? true;
+  const empezado = periodoElegido.slice(0, 7) <= mesActual();
 
   return (
     <div className="flex flex-col gap-6">
       <Encabezado
         titulo="Registrar objetivos y KPIs"
-        descripcion="Los objetivos los define el jefe. El colaborador solo consulta y, desde octubre, carga su resultado y evidencia."
+        descripcion="Los objetivos los define el jefe. El colaborador los consulta y, cuando el mes empieza, carga su resultado con la evidencia."
       >
         <EstadoDelMes estado={estadoPeriodo} label={resumen?.estadoLabel ?? 'En definición'} />
         {opciones.capacidades.puedeGestionarPeriodos && enDefinicion && (
@@ -166,7 +203,28 @@ export default function ObjetivosEquipoPage() {
 
       <BannerPonderacion ponderacion={ponderacion} />
 
-      {enDefinicion ? (
+      <AvisoCongelado
+        motivo={resumen?.motivo ?? ''}
+        edicionHabilitada={!!resumen?.edicionHabilitada}
+      >
+        {opciones.capacidades.puedeGestionarPeriodos && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() =>
+              resumen?.edicionHabilitada
+                ? habilitarEdicion.mutate({ periodo: periodoElegido, habilitada: false })
+                : setExcepcion(true)
+            }
+          >
+            {resumen?.edicionHabilitada ? <LockIcon /> : <UnlockIcon />}
+            {resumen?.edicionHabilitada ? 'Volver a congelar' : 'Habilitar edición'}
+          </Button>
+        )}
+      </AvisoCongelado>
+
+      {editable ? (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -192,15 +250,10 @@ export default function ObjetivosEquipoPage() {
             )}
           </CardContent>
         </Card>
-      ) : (
-        <Alert>
-          <LockIcon />
-          <AlertTitle>El mes está en medición</AlertTitle>
-          <AlertDescription>
-            Los objetivos quedaron congelados y ya no se editan. Para cambiar alguno hace falta la
-            autorización de People.
-          </AlertDescription>
-        </Alert>
+      ) : null}
+
+      {editable && (
+        <CargaExcel colaborador={colaborador} periodo={periodoElegido} deshabilitado={!editable} />
       )}
 
       <Card className="py-0">
@@ -218,20 +271,74 @@ export default function ObjetivosEquipoPage() {
           titulo="Esta persona no tiene objetivos este mes"
           descripcion="Agrega el primero con el formulario de arriba. Entre todos deben sumar 100%."
         >
-          <TablaObjetivos objetivos={objetivos} onEditar={setEditando} onEliminar={setPorBorrar} />
+          <TablaObjetivos
+            objetivos={objetivos}
+            onEditar={setEditando}
+            onEliminar={setPorBorrar}
+            onCargar={setCargando}
+            onValidar={(objetivo) => validar.mutate({ objetivo: objetivo.id, estado: 'validado' })}
+            // El resultado se carga desde que el mes empieza: antes no hay qué
+            // cargar. Validar es dar por bueno lo que ya subió alguien más.
+            puedeCargar={() => empezado}
+            puedeValidar={(objetivo) => objetivo.resultado?.estadoValidacion !== 'validado'}
+          />
         </EstadoTabla>
+        <div className="px-6 pb-6">
+          <LeyendaSemaforo cortes={opciones.semaforo} />
+        </div>
       </Card>
 
-      <Card className="border-dashed bg-muted/30">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <LockIcon className="size-4 text-muted-foreground" />
-            Carga de resultado y evidencia
-            <Badge variant="outline">Fase 2</Badge>
-          </CardTitle>
-          <CardDescription>Se habilita en octubre, cuando inicia la medición.</CardDescription>
-        </CardHeader>
-      </Card>
+      <Dialog open={!!cargando} onOpenChange={(abierto) => !abierto && setCargando(null)}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Cargar resultado</DialogTitle>
+            <DialogDescription>
+              Lo ejecutado del mes y sus soportes. El % de cumplimiento lo calcula el sistema.
+            </DialogDescription>
+          </DialogHeader>
+          {cargando && (
+            <FormularioResultado objetivo={cargando} onListo={() => setCargando(null)} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={excepcion} onOpenChange={setExcepcion}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Habilitar la edición de {etiquetaMes(periodoElegido)}</DialogTitle>
+            <DialogDescription>
+              Es una excepción: los objetivos de un mes se editan hasta el último día del mes
+              anterior. Queda registrado quién la habilitó, cuándo y por qué.
+            </DialogDescription>
+          </DialogHeader>
+          <Field className="min-w-0">
+            <FieldLabel htmlFor="excepcion-motivo">Motivo y quién lo autorizó</FieldLabel>
+            <Textarea
+              id="excepcion-motivo"
+              rows={3}
+              placeholder="Reestructuración del área, autorizada por el CEO el 2 de octubre."
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+            />
+          </Field>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setExcepcion(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!motivo.trim() || habilitarEdicion.isPending}
+              onClick={() =>
+                habilitarEdicion.mutate(
+                  { periodo: periodoElegido, habilitada: true, motivo },
+                  { onSuccess: () => setExcepcion(false) },
+                )
+              }
+            >
+              Habilitar edición
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmarBorrado
         abierto={!!porBorrar}

@@ -119,7 +119,7 @@ export function CampanaDialog({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{editando ? 'Reglas del concurso' : 'Nueva campaña'}</DialogTitle>
           <DialogDescription>
