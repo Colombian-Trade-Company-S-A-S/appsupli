@@ -23,6 +23,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [touched, setTouched] = useState(false);
+  const [olvido, setOlvido] = useState(false);
 
   const emailError = touched && !email ? 'El correo es obligatorio' : undefined;
   const passwordError = touched && !password ? 'La contraseña es obligatoria' : undefined;
@@ -41,9 +42,10 @@ export default function LoginPage() {
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Hola de nuevo</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Bienvenido a appsupli</h1>
         <p className="text-sm text-muted-foreground">
-          Entra con tu correo corporativo y tu contraseña.
+          Accede con tu cuenta corporativa y descubre las herramientas que Supli tiene disponibles
+          para ti.
         </p>
       </div>
 
@@ -92,18 +94,26 @@ export default function LoginPage() {
           <Field>
             <Button type="submit" size="lg" disabled={isSubmitting}>
               {isSubmitting && <Spinner data-icon="inline-start" />}
-              {isSubmitting ? 'Entrando…' : 'Entrar'}
+              {isSubmitting ? 'Iniciando sesión…' : 'Iniciar sesión'}
             </Button>
+            <button
+              type="button"
+              onClick={() => setOlvido((v) => !v)}
+              className="self-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              ¿Olvidaste tu contraseña?
+            </button>
+            {olvido && (
+              <p className="text-center text-sm text-muted-foreground">
+                Solicita el restablecimiento de tu contraseña con el administrador de appsupli.
+              </p>
+            )}
           </Field>
         </FieldGroup>
       </form>
 
       <div className="flex flex-col gap-4">
         <Separator />
-        <p className="text-sm text-muted-foreground">
-          ¿No puedes entrar? Pídele al administrador de la plataforma que revise tu cuenta o
-          restablezca tu contraseña.
-        </p>
         <Link
           to="/"
           className="flex items-center gap-1.5 self-start text-sm text-muted-foreground transition-colors hover:text-foreground"

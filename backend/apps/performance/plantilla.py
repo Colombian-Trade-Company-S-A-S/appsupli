@@ -28,9 +28,9 @@ COLUMNAS = [
         tipo='opcion',
         opciones=list(TipoMedicion.values),
         ayuda=(
-            'binario: cumple o no cumple · proporcional: logrado ÷ meta · '
-            'proporcional_inverso: menos es mejor · cualitativa: 2 criterios · '
-            'formula: fórmula propia.'
+            'binario: cumple o no cumple · proporcional: meta a alcanzar (más es mejor) · '
+            'proporcional_inverso: meta a reducir (menos es mejor) · cualitativa: 2 criterios · '
+            'formula: cálculo personalizado.'
         ),
         ejemplo=TipoMedicion.PROPORCIONAL.value,
     ),

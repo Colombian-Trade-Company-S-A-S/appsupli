@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HomeIcon, LogOutIcon, SearchIcon, UserIcon } from 'lucide-react';
-import { useAuth } from '@/core/auth';
+import { aplanarApps, useAuth } from '@/core/auth';
 import { iconoDeApp } from '@/shared/lib/appIcons';
 import {
   Button,
@@ -53,7 +53,10 @@ export function CommandPalette({
   const puede = (permiso?: string) =>
     !permiso || user.isAdmin || user.permissions.includes(permiso);
 
-  const atajosDeApps = user.applications
+  // Los sub-módulos también se buscan y traen sus atajos (Valoración, Objetivos).
+  const apps = aplanarApps(user.applications);
+
+  const atajosDeApps = apps
     .map((app) => ({
       app,
       comandos: (COMANDOS_POR_APP[app.code] ?? []).filter((c) => puede(c.permiso)),
@@ -89,11 +92,11 @@ export function CommandPalette({
             </CommandItem>
           </CommandGroup>
 
-          {user.applications.length > 0 && (
+          {apps.length > 0 && (
             <>
               <CommandSeparator />
               <CommandGroup heading="Aplicaciones">
-                {user.applications.map((app) => {
+                {apps.map((app) => {
                   const Icono = iconoDeApp(app.icon);
                   return (
                     <CommandItem

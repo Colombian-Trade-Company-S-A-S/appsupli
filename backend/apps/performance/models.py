@@ -28,13 +28,18 @@ class EstadoPeriodo(models.TextChoices):
 
 
 class TipoMedicion(models.TextChoices):
-    """Cómo se calcula el cumplimiento. Agregar uno es agregar un caso al motor."""
+    """
+    Cómo se calcula el cumplimiento. Agregar uno es agregar un caso al motor.
 
-    BINARIO = 'binario', 'Binario — cumple / no cumple'
-    PROPORCIONAL = 'proporcional', 'Proporcional — logrado ÷ meta'
-    PROPORCIONAL_INVERSO = 'proporcional_inverso', 'Proporcional inverso — menos es mejor'
+    Las etiquetas son para el jefe que llena el formulario, sin términos
+    técnicos; el código es lo que usan el motor y la plantilla de Excel.
+    """
+
+    BINARIO = 'binario', 'Cumple o no cumple'
+    PROPORCIONAL = 'proporcional', 'Meta a alcanzar'
+    PROPORCIONAL_INVERSO = 'proporcional_inverso', 'Meta a reducir'
     CUALITATIVA = 'cualitativa', 'Cualitativa — entregables / hitos (2 criterios)'
-    FORMULA = 'formula', 'Fórmula personalizada'
+    FORMULA = 'formula', 'Cálculo personalizado'
 
 
 #: Criterios de una meta cualitativa (A2): 2 de 2 = 100%, 1 de 2 = 50%, 0 = 0%.

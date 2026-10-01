@@ -11,7 +11,7 @@ import {
   UserRoundIcon,
   UsersIcon,
 } from 'lucide-react';
-import { useAuth } from '@/core/auth';
+import { aplanarApps, useAuth } from '@/core/auth';
 import { iconoDeApp } from '@/shared/lib/appIcons';
 import {
   Avatar,
@@ -48,21 +48,19 @@ export default function HomePage() {
   if (!user) return null;
 
   const aplicaciones = user.applications;
+  // Contenedores y sub-módulos: una tarjeta o un indicador puede venir de
+  // cualquiera de los dos (la de Valoración vive dentro de Supli Performance).
+  const todas = aplanarApps(aplicaciones);
   // Cada módulo aporta su propia tarjeta; el home solo pide las que
   // corresponden a las apps que esta persona tiene asignadas.
-  const widgets = aplicaciones
+  const widgets = todas
     .map((app) => ({ code: app.code, Widget: WIDGETS_POR_APP[app.code] }))
     .filter((entrada): entrada is { code: string; Widget: NonNullable<typeof entrada.Widget> } =>
       Boolean(entrada.Widget),
     );
 
-  // Los indicadores pueden venir de una app o de uno de sus sub-módulos.
-  const codigos = aplicaciones.flatMap((app) => [
-    app.code,
-    ...(app.children ?? []).map((hijo) => hijo.code),
-  ]);
-  const kpis = codigos
-    .map((code) => ({ code, Kpis: KPIS_POR_APP[code] }))
+  const kpis = todas
+    .map(({ code }) => ({ code, Kpis: KPIS_POR_APP[code] }))
     .filter((entrada): entrada is { code: string; Kpis: NonNullable<typeof entrada.Kpis> } =>
       Boolean(entrada.Kpis),
     );

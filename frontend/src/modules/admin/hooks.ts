@@ -16,6 +16,9 @@ export function useAdminUsers(filtros: Record<string, unknown>) {
   return useQuery({
     queryKey: adminKeys.users(filtros),
     queryFn: () => adminApi.users.list({ ...filtros, page_size: 200 }),
+    // Mientras llega el resultado de un filtro nuevo se queda la lista
+    // anterior: sin esto la tabla se vacía y vuelve el esqueleto cada vez.
+    placeholderData: (anterior) => anterior,
   });
 }
 

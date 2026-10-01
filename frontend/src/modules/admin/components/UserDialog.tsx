@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { adminApi, type AdminUser, type AdminUserPayload, type UserKind } from '../api';
 import { useAdminMutation, useApplications, useAreas, useRoles } from '../hooks';
+import { AYUDA_APPS, AYUDA_ROLES, ayudaDe, type Ayuda } from '../ayudas';
+import { AyudaAcceso } from './AyudaAcceso';
 import {
   Button,
   Checkbox,
@@ -257,7 +259,11 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
             <Casillas
               titulo="Aplicaciones"
               descripcion="A qué áreas de la plataforma puede entrar."
-              opciones={apps.map((a) => ({ id: a.id, label: a.name }))}
+              opciones={apps.map((a) => ({
+                id: a.id,
+                label: a.name,
+                ayuda: ayudaDe(AYUDA_APPS, a.code, a.description),
+              }))}
               seleccionadas={datos.applications ?? []}
               onToggle={(id) => alternar('applications', id)}
             />
@@ -265,7 +271,11 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
             <Casillas
               titulo="Roles"
               descripcion="Paquetes de permisos que se suman a los accesos directos."
-              opciones={roles.map((r) => ({ id: r.id, label: r.name }))}
+              opciones={roles.map((r) => ({
+                id: r.id,
+                label: r.name,
+                ayuda: ayudaDe(AYUDA_ROLES, r.code, r.description),
+              }))}
               seleccionadas={datos.roles ?? []}
               onToggle={(id) => alternar('roles', id)}
               vacio="Todavía no hay roles creados."
@@ -290,7 +300,7 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
 interface CasillasProps {
   titulo: string;
   descripcion: string;
-  opciones: Array<{ id: number; label: string }>;
+  opciones: Array<{ id: number; label: string; ayuda?: Ayuda }>;
   seleccionadas: number[];
   onToggle: (id: number) => void;
   vacio?: string;
@@ -315,16 +325,16 @@ function Casillas({
       ) : (
         <div className="grid gap-2 sm:grid-cols-2">
           {opciones.map((opcion) => (
-            <label
-              key={opcion.id}
-              className="flex cursor-pointer items-center gap-2 rounded-md border p-2.5 text-sm"
-            >
-              <Checkbox
-                checked={seleccionadas.includes(opcion.id)}
-                onCheckedChange={() => onToggle(opcion.id)}
-              />
-              {opcion.label}
-            </label>
+            <div key={opcion.id} className="flex items-center rounded-md border pr-1.5 text-sm">
+              <label className="flex flex-1 cursor-pointer items-center gap-2 p-2.5">
+                <Checkbox
+                  checked={seleccionadas.includes(opcion.id)}
+                  onCheckedChange={() => onToggle(opcion.id)}
+                />
+                {opcion.label}
+              </label>
+              {opcion.ayuda && <AyudaAcceso titulo={opcion.label} ayuda={opcion.ayuda} />}
+            </div>
           ))}
         </div>
       )}

@@ -32,6 +32,8 @@ import {
 } from '@/shared/components/ui';
 import { adminApi, type AdminPermission, type AdminRole } from '../api';
 import { useAdminMutation, usePermissions, useRoles } from '../hooks';
+import { AYUDA_PERMISOS, ayudaDe } from '../ayudas';
+import { AyudaAcceso } from './AyudaAcceso';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
 
 export function RolesTab() {
@@ -266,23 +268,30 @@ function RolDialog({
                     <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       {aplicacion}
                     </h4>
-                    {lista.map((permiso) => (
-                      <label
-                        key={permiso.id}
-                        className="flex cursor-pointer items-start gap-2 rounded-md border p-2.5"
-                      >
-                        <Checkbox
-                          checked={datos.permissions.includes(permiso.id)}
-                          onCheckedChange={() => alternar(permiso.id)}
-                        />
-                        <span className="flex flex-col">
-                          <span className="text-sm">{permiso.name}</span>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {permiso.code}
-                          </span>
-                        </span>
-                      </label>
-                    ))}
+                    {lista.map((permiso) => {
+                      const ayuda = ayudaDe(AYUDA_PERMISOS, permiso.code);
+                      return (
+                        <div key={permiso.id} className="flex items-start rounded-md border pr-1.5">
+                          <label className="flex flex-1 cursor-pointer items-start gap-2 p-2.5">
+                            <Checkbox
+                              checked={datos.permissions.includes(permiso.id)}
+                              onCheckedChange={() => alternar(permiso.id)}
+                            />
+                            <span className="flex flex-col">
+                              <span className="text-sm">{permiso.name}</span>
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {permiso.code}
+                              </span>
+                            </span>
+                          </label>
+                          {ayuda && (
+                            <span className="pt-1.5">
+                              <AyudaAcceso titulo={permiso.name} ayuda={ayuda} />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ))
               )}

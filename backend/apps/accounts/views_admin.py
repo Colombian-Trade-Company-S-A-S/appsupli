@@ -1,5 +1,5 @@
 """Módulo de Administración: gestión de usuarios, áreas, apps, permisos y roles."""
-from django.db.models import Q
+from django.db.models import Count
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -21,15 +21,25 @@ class AdminViewSet(viewsets.ModelViewSet):
     permission_classes = [IsPlatformAdmin]
 
 
+# Los conteos de usuarios van anotados en la misma consulta: con `users.count`
+# en el serializer salía una consulta por fila, y contra el Postgres de Render
+# cada una es un viaje de red.
+_CONTEO_USUARIOS = Count('users', distinct=True)
+
+
 class AreaViewSet(AdminViewSet):
-    queryset = Area.objects.order_by('name')
+    queryset = Area.objects.annotate(conteo_usuarios=_CONTEO_USUARIOS).order_by('name')
     serializer_class = AreaSerializer
     search_fields = ('name',)
     filterset_fields = ('is_active',)
 
 
 class ApplicationViewSet(AdminViewSet):
-    queryset = Application.objects.prefetch_related('permissions').order_by('order', 'name')
+    queryset = (
+        Application.objects.annotate(conteo_usuarios=_CONTEO_USUARIOS)
+        .prefetch_related('permissions')
+        .order_by('order', 'name')
+    )
     serializer_class = ApplicationSerializer
     search_fields = ('name', 'code')
     filterset_fields = ('is_active',)
@@ -44,33 +54,26 @@ class PermissionViewSet(AdminViewSet):
 
 
 class RoleViewSet(AdminViewSet):
-    queryset = Role.objects.prefetch_related('permissions').order_by('name')
+    queryset = (
+        Role.objects.annotate(conteo_usuarios=_CONTEO_USUARIOS)
+        .prefetch_related('permissions')
+        .order_by('name')
+    )
     serializer_class = RoleSerializer
     search_fields = ('name', 'code')
 
 
 class UserViewSet(AdminViewSet):
+    # `extra_permissions` también va precargado: el serializer lo devuelve y,
+    # sin esto, cada usuario del listado (hasta 200) era una consulta más.
     queryset = User.objects.select_related('area', 'manager').prefetch_related(
-        'applications', 'roles'
+        'applications', 'roles', 'extra_permissions'
     )
     serializer_class = AdminUserSerializer
     search_fields = ('first_name', 'last_name', 'email', 'username', 'position')
     filterset_fields = ('is_active', 'kind', 'area')
     ordering_fields = ('first_name', 'email', 'last_login_at')
     ordering = ('first_name', 'last_name')
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        buscar = self.request.query_params.get('search')
-        if buscar:
-            qs = qs.filter(
-                Q(first_name__icontains=buscar)
-                | Q(last_name__icontains=buscar)
-                | Q(email__icontains=buscar)
-                | Q(username__icontains=buscar)
-                | Q(position__icontains=buscar)
-            )
-        return qs
 
     def destroy(self, request, *args, **kwargs):
         usuario = self.get_object()

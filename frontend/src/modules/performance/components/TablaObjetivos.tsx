@@ -35,11 +35,11 @@ function metaLegible(objetivo: Objetivo): string {
 }
 
 const TIPO_CORTO: Record<Objetivo['tipoMedicion'], string> = {
-  binario: 'Binario',
-  proporcional: 'Proporcional',
-  proporcional_inverso: 'Prop. inverso',
+  binario: 'Cumple o no',
+  proporcional: 'Meta a alcanzar',
+  proporcional_inverso: 'Meta a reducir',
   cualitativa: 'Cualitativa',
-  formula: 'Fórmula',
+  formula: 'Cálculo personalizado',
 };
 
 /**

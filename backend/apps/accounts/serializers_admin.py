@@ -8,8 +8,22 @@ from rest_framework.validators import UniqueValidator
 from .models import Application, Area, Permission, Role, User
 
 
+class ConteoUsuariosField(serializers.ReadOnlyField):
+    """
+    Cuántos usuarios tiene. En el listado viene anotado por el viewset
+    (`conteo_usuarios`); al crear o editar uno solo, se cuenta aparte.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(source='*', **kwargs)
+
+    def to_representation(self, instancia):
+        anotado = getattr(instancia, 'conteo_usuarios', None)
+        return anotado if anotado is not None else instancia.users.count()
+
+
 class AreaSerializer(serializers.ModelSerializer):
-    user_count = serializers.IntegerField(source='users.count', read_only=True)
+    user_count = ConteoUsuariosField()
 
     class Meta:
         model = Area
@@ -26,7 +40,7 @@ class PermissionSerializer(serializers.ModelSerializer):
 
 class ApplicationSerializer(serializers.ModelSerializer):
     permissions = PermissionSerializer(many=True, read_only=True)
-    user_count = serializers.IntegerField(source='users.count', read_only=True)
+    user_count = ConteoUsuariosField()
 
     class Meta:
         model = Application
@@ -52,7 +66,7 @@ class RoleSerializer(serializers.ModelSerializer):
     permission_codes = serializers.SlugRelatedField(
         source='permissions', slug_field='code', many=True, read_only=True
     )
-    user_count = serializers.IntegerField(source='users.count', read_only=True)
+    user_count = ConteoUsuariosField()
 
     class Meta:
         model = Role

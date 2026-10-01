@@ -11,7 +11,7 @@ import {
   UserRoundIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useAuth } from '@/core/auth';
+import { aplanarApps, useAuth } from '@/core/auth';
 import {
   Avatar,
   AvatarFallback,
@@ -36,6 +36,9 @@ const KIND_LABELS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador
 export default function ProfilePage() {
   const { user } = useAuth();
   if (!user) return null;
+
+  // Con sus sub-módulos: tener Objetivos y KPIs es un acceso, no solo «Supli Performance».
+  const aplicaciones = aplanarApps(user.applications);
 
   const datos = [
     { icon: AtSignIcon, label: 'Correo', valor: user.email },
@@ -91,8 +94,8 @@ export default function ProfilePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
-            <Seccion titulo="Aplicaciones" total={user.applications.length}>
-              {user.applications.length === 0 ? (
+            <Seccion titulo="Aplicaciones" total={aplicaciones.length}>
+              {aplicaciones.length === 0 ? (
                 <Vacio
                   icon={LayoutGridIcon}
                   titulo="Sin aplicaciones"
@@ -100,7 +103,7 @@ export default function ProfilePage() {
                 />
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {user.applications.map((app) => (
+                  {aplicaciones.map((app) => (
                     <Badge key={app.code} variant="secondary">
                       {app.name}
                     </Badge>

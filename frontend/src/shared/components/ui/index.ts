@@ -32,4 +32,5 @@ export * from './select';
 export * from './switch';
 export * from './textarea';
 export * from './tooltip';
+export * from './hover-card';
 export * from './collapsible';

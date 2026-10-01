@@ -8,6 +8,7 @@ import {
   UserCheckIcon,
   UserXIcon,
 } from 'lucide-react';
+import { useDebounced } from '@/shared/hooks';
 import { useAuth } from '@/core/auth';
 import {
   Avatar,
@@ -64,8 +65,10 @@ export function UsersTab() {
   const [porBorrar, setPorBorrar] = useState<AdminUser | null>(null);
 
   const { data: areas = [] } = useAreas();
+  // Se busca cuando se deja de escribir, no con cada letra.
+  const busquedaEstable = useDebounced(busqueda.trim());
   const { data: usuarios = [], isLoading } = useAdminUsers({
-    search: busqueda || undefined,
+    search: busquedaEstable || undefined,
     is_active: estado === 'todos' ? undefined : estado === 'activos',
     area: area || undefined,
   });

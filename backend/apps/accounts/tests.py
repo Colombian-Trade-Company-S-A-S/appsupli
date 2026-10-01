@@ -144,3 +144,79 @@ def test_instalada_se_recuerda_como_reinstalarla_cada_diez_ingresos():
 
 def test_la_decision_debe_ser_una_conocida():
     assert decidir(persona(), 'nunca').status_code == 400
+
+
+# ── Listados de Administración: consultas fijas, no una por fila ───────────
+#
+# Contra el Postgres de Render cada consulta es un viaje de red. Si un listado
+# hace una por fila, con 200 usuarios la pantalla tarda segundos; estas
+# pruebas fallan si el número de consultas vuelve a crecer con las filas.
+
+
+def poblar_accesos(desde: int, hasta: int) -> None:
+    """Personas con área, app, rol y permiso extra; y un área, app y rol por cada una."""
+    from apps.accounts.models import Application, Area, Permission, Role
+
+    for numero in range(desde, hasta):
+        area = Area.objects.create(name=f'Área {numero}')
+        app = Application.objects.create(
+            code=f'app-{numero}', name=f'App {numero}', base_path=f'/inicio/app-{numero}'
+        )
+        permiso = Permission.objects.create(
+            code=f'app-{numero}:data:manage', name='Editar', application=app
+        )
+        rol = Role.objects.create(code=f'rol-{numero}', name=f'Rol {numero}')
+        rol.permissions.add(permiso)
+        usuario = User.objects.create_user(
+            email=f'persona{numero}@supli.tech',
+            username=f'persona{numero}',
+            first_name=f'Persona {numero}',
+            password='clave-123456',
+            area=area,
+        )
+        usuario.applications.add(app)
+        usuario.roles.add(rol)
+        usuario.extra_permissions.add(permiso)
+
+
+def contar_consultas(cliente: APIClient, ruta: str) -> int:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as capturadas:
+        respuesta = cliente.get(ruta, {'page_size': 200})
+    assert respuesta.status_code == 200, respuesta.data
+    return len(capturadas)
+
+
+@pytest.mark.parametrize(
+    'ruta',
+    [
+        RUTA,
+        '/api/admin/areas',
+        '/api/admin/applications',
+        '/api/admin/roles',
+        '/api/admin/permissions',
+    ],
+)
+def test_los_listados_no_hacen_una_consulta_por_fila(ruta):
+    cliente = cliente_admin()
+    poblar_accesos(0, 2)
+    pocas = contar_consultas(cliente, ruta)
+    poblar_accesos(2, 30)
+    muchas = contar_consultas(cliente, ruta)
+    assert muchas == pocas, f'{ruta}: {pocas} consultas con 2 filas y {muchas} con 30'
+
+
+def test_el_listado_de_usuarios_sigue_trayendo_sus_accesos():
+    cliente = cliente_admin()
+    poblar_accesos(0, 1)
+    fila = next(u for u in cliente.get(RUTA).json()['items'] if u['username'] == 'persona0')
+    assert fila['applicationNames'] == ['App 0']
+    assert fila['roleNames'] == ['Rol 0']
+    assert len(fila['extraPermissions']) == 1
+
+    areas = {a['name']: a['userCount'] for a in cliente.get('/api/admin/areas').json()['items']}
+    assert areas['Área 0'] == 1
+    roles = {r['name']: r['userCount'] for r in cliente.get('/api/admin/roles').json()['items']}
+    assert roles['Rol 0'] == 1

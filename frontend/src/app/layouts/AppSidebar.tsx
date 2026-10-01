@@ -99,7 +99,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <GrupoApps titulo="Trámites" apps={tramites} pathname={pathname} onNavegar={close} />
+        <GrupoApps titulo="Cultura y desempeño" apps={tramites} pathname={pathname} onNavegar={close} />
         <GrupoApps
           titulo="Aplicaciones"
           apps={aplicaciones}
