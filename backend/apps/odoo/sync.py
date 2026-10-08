@@ -18,6 +18,7 @@ Las tres opciones son independientes:
 
 Con `simular` se calcula todo igual y al final se deshace: es la vista previa.
 """
+import re
 import unicodedata
 from collections import Counter
 
@@ -34,8 +35,47 @@ from .models import Sincronizacion
 PARTICULAS = {'de', 'del', 'la', 'las', 'los', 'y', 'san', 'da', 'do', 'dos', 'van', 'von'}
 
 
-def _titulo(texto: str) -> str:
-    return ' '.join(p.lower() if p.lower() in PARTICULAS else p.capitalize() for p in texto.split())
+# Lo que se queda en mayúscula aunque Odoo lo traiga todo en mayúsculas.
+SIGLAS = {
+    'CAV', 'SAS', 'BI', 'HC', 'TMK', 'KAM', 'CEO', 'CFO', 'COO', 'CTO', 'IT', 'TI', 'RRHH',
+    'PDV', 'ERP', 'CRM', 'SKU', 'QA', 'HR', 'UX', 'UI', 'SST', 'NIT', 'B2B', 'B2C', 'POS', 'SAC',
+}
+ROMANOS = {'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'XI', 'XII'}
+# Conectores que van en minúscula salvo al empezar.
+MINUSCULAS = {
+    'de', 'del', 'la', 'las', 'los', 'el', 'y', 'e', 'o', 'u', 'en', 'a', 'al', 'para', 'por',
+    'con', 'sin', 'of', 'and', 'the', 'for', 'to', 'in',
+}
+
+
+def nombre_propio(texto: str) -> str:
+    """
+    «ASESOR COMERCIAL - CAV MEDELLIN PREMIUM, C301» → «Asesor Comercial - CAV Medellin Premium, C301».
+
+    Odoo trae casi todo en mayúsculas. Solo se tocan las palabras escritas
+    todas en mayúscula o todas en minúscula: «Retail» o «iPhone» quedan como
+    vienen. Siglas, códigos con números y romanos siguen en mayúscula.
+    """
+    # De paso, sin espacios dobles ni al final, que en Odoo abundan.
+    texto = ' '.join((texto or '').split())
+    primera = True
+
+    def palabra(m: re.Match) -> str:
+        nonlocal primera
+        original, es_primera = m.group(0), primera
+        primera = False
+        if not (original.isupper() or original.islower()):
+            return original
+        mayus = original.upper()
+        if any(c.isdigit() for c in original) or mayus in SIGLAS or mayus in ROMANOS:
+            return mayus
+        # «E-COMMERCE»: la letra pegada al guion es parte de la palabra, no un conector.
+        pegada = m.end() < len(texto) and texto[m.end()] == '-'
+        if not es_primera and not pegada and original.lower() in MINUSCULAS:
+            return original.lower()
+        return original.capitalize()
+
+    return re.sub(r'\w+', palabra, texto)
 
 
 def separar_nombre(completo: str) -> tuple[str, str]:
@@ -54,10 +94,10 @@ def separar_nombre(completo: str) -> tuple[str, str]:
         grupos.append(' '.join(pendiente))
 
     if len(grupos) <= 1:
-        return _titulo(' '.join(grupos)), ''
+        return nombre_propio(' '.join(grupos)), ''
     if len(grupos) == 2:
-        return _titulo(grupos[1]), _titulo(grupos[0])
-    return _titulo(' '.join(grupos[2:])), _titulo(' '.join(grupos[:2]))
+        return nombre_propio(grupos[1]), nombre_propio(grupos[0])
+    return nombre_propio(' '.join(grupos[2:])), nombre_propio(' '.join(grupos[:2]))
 
 
 def _id(relacion) -> int | None:
@@ -117,7 +157,7 @@ class Sincronizador:
         self.departamentos = {d.odoo_id: d for d in Departamento.objects.all()}
         for fila in filas:
             dep = self.departamentos.get(fila['id']) or Departamento(odoo_id=fila['id'])
-            nombre, activo = fila['name'][:200], bool(fila['active'])
+            nombre, activo = nombre_propio(fila['name'])[:200], bool(fila['active'])
             if dep.pk is None or (dep.nombre, dep.activo) != (nombre, activo):
                 dep.nombre, dep.activo = nombre, activo
                 dep.save()
@@ -162,10 +202,12 @@ class Sincronizador:
                 area = Area.objects.create(
                     name=nombre[:100], description='Creada por la sincronización con Odoo.', odoo=True
                 )
-            elif not (area.odoo and area.is_active):
-                # Un área que ya existía con el mismo nombre pasa a ser de Odoo.
+            elif not (area.odoo and area.is_active and area.name == nombre[:100]):
+                # Un área que ya existía con el mismo nombre pasa a ser de Odoo,
+                # escrita como la escribe la sincronización.
                 area.odoo = area.is_active = True
-                area.save(update_fields=['odoo', 'is_active', 'updated_at'])
+                area.name = nombre[:100]
+                area.save(update_fields=['odoo', 'is_active', 'name', 'updated_at'])
             self._areas[clave] = area
         return self._areas[clave]
 
@@ -334,9 +376,9 @@ class Sincronizador:
             'first_name': nombres[:100],
             'last_name': apellidos[:100],
             'cedula': _cedula(fila['identification_id'])[:30],
-            'position': (fila['job_title'] or _nombre(fila['job_id']))[:120],
-            'organizacion': _nombre(fila['company_id'])[:120],
-            'regional': _nombre(fila['work_location_id'])[:120],
+            'position': nombre_propio(fila['job_title'] or _nombre(fila['job_id']))[:120],
+            'organizacion': nombre_propio(_nombre(fila['company_id']))[:120],
+            'regional': nombre_propio(_nombre(fila['work_location_id']))[:120],
             'manager': jefe if jefe != usuario else None,
             'email': self._correo_para(usuario, fila),
         }

@@ -147,8 +147,11 @@ const recurso = <T, P>(ruta: string) => ({
 });
 
 export const adminApi = {
+  // Sin crear ni borrar: las personas entran y salen con la sincronización de Odoo.
   users: {
-    ...recurso<AdminUser, AdminUserPayload>('/admin/users'),
+    list: (params?: Record<string, unknown>) => api.getList<AdminUser>('/admin/users', params),
+    update: (id: number, payload: AdminUserPayload) =>
+      api.patch<AdminUser>(`/admin/users/${id}`, payload),
     toggleActive: (id: number) => api.post<AdminUser>(`/admin/users/${id}/toggle-active`),
   },
   // Solo lectura: las áreas vienen de Odoo.

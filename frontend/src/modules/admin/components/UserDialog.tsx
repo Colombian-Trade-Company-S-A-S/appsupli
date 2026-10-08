@@ -40,12 +40,11 @@ const VACIO: AdminUserPayload = {
 interface UserDialogProps {
   abierto: boolean;
   onOpenChange: (abierto: boolean) => void;
-  /** Si viene, se edita; si no, se crea. */
-  usuario?: AdminUser | null;
+  /** Solo se edita: las personas se crean con la sincronización de Odoo. */
+  usuario: AdminUser | null;
 }
 
 export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) {
-  const editando = !!usuario;
   // Nombre y correo de quien viene de Odoo se cambian allá, no aquí.
   const deOdoo = !!usuario?.odooId;
   const [datos, setDatos] = useState<AdminUserPayload>(VACIO);
@@ -54,9 +53,8 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
   const { data: roles = [] } = useRoles();
 
   const guardar = useAdminMutation(
-    (payload: AdminUserPayload) =>
-      editando ? adminApi.users.update(usuario.id, payload) : adminApi.users.create(payload),
-    editando ? 'Usuario actualizado' : 'Usuario creado',
+    (payload: AdminUserPayload) => adminApi.users.update(usuario!.id, payload),
+    'Usuario actualizado',
   );
 
   useEffect(() => {
@@ -86,14 +84,13 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
       const actuales = prev[campo] ?? [];
       return {
         ...prev,
-        [campo]: actuales.includes(id)
-          ? actuales.filter((x) => x !== id)
-          : [...actuales, id],
+        [campo]: actuales.includes(id) ? actuales.filter((x) => x !== id) : [...actuales, id],
       };
     });
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
+    if (!usuario) return;
     const payload = { ...datos };
     if (!payload.password) delete payload.password;
     guardar.mutate(payload, { onSuccess: () => onOpenChange(false) });
@@ -103,11 +100,9 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
     <Dialog open={abierto} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{editando ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle>
+          <DialogTitle>Editar usuario</DialogTitle>
           <DialogDescription>
-            {editando
-              ? 'Define a qué aplicaciones entra. Su información de la organización viene de Odoo.'
-              : 'Solo para cuentas que no están en Odoo (servicio, soporte). Las personas de la compañía llegan con la sincronización.'}
+            Define a qué aplicaciones entra. Su información de la organización viene de Odoo.
           </DialogDescription>
         </DialogHeader>
 
@@ -176,7 +171,9 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
                   set('kind', v ? 'admin' : 'colaborador')
                 }
               />
-              <FieldLabel htmlFor="isAdmin">Administrador de la plataforma (acceso total)</FieldLabel>
+              <FieldLabel htmlFor="isAdmin">
+                Administrador de la plataforma (acceso total)
+              </FieldLabel>
             </Field>
 
             <Field orientation="horizontal">
@@ -189,20 +186,14 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
             </Field>
 
             <Field>
-              <FieldLabel htmlFor="password">
-                {editando ? 'Nueva contraseña (opcional)' : 'Contraseña inicial'}
-              </FieldLabel>
+              <FieldLabel htmlFor="password">Nueva contraseña (opcional)</FieldLabel>
               <PasswordInput
                 id="password"
                 autoComplete="new-password"
                 value={datos.password ?? ''}
                 onChange={(e) => set('password', e.target.value)}
               />
-              <FieldDescription>
-                {editando
-                  ? 'Déjala vacía para no cambiarla.'
-                  : 'Si la dejas vacía se genera una aleatoria.'}
-              </FieldDescription>
+              <FieldDescription>Déjala vacía para no cambiarla.</FieldDescription>
             </Field>
 
             <Separator />
@@ -240,7 +231,7 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
           </Button>
           <Button type="submit" form="user-form" disabled={guardar.isPending}>
             {guardar.isPending && <Spinner data-icon="inline-start" />}
-            {editando ? 'Guardar cambios' : 'Crear usuario'}
+            Guardar cambios
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -262,7 +253,10 @@ function DatosOdoo({ usuario }: { usuario: AdminUser }) {
     ['Área', usuario.areaName],
     ['Dirección', usuario.direccion],
     ['Jefe directo', usuario.managerName],
-    ['Tipo', usuario.kind === 'lider' ? 'Líder' : usuario.kind === 'admin' ? 'Admin' : 'Colaborador'],
+    [
+      'Tipo',
+      usuario.kind === 'lider' ? 'Líder' : usuario.kind === 'admin' ? 'Admin' : 'Colaborador',
+    ],
     ['Regional', usuario.regional],
     ['Cédula', usuario.cedula],
     ['Departamento en Odoo', usuario.departamentoNombre],
@@ -280,7 +274,10 @@ function DatosOdoo({ usuario }: { usuario: AdminUser }) {
       </dl>
       <p className="text-xs text-muted-foreground">
         Se cambian en Odoo y llegan con la siguiente sincronización
-        {usuario.sincronizadoOdooAt ? ` (última: ${formatoFechaHora(usuario.sincronizadoOdooAt)})` : ''}.
+        {usuario.sincronizadoOdooAt
+          ? ` (última: ${formatoFechaHora(usuario.sincronizadoOdooAt)})`
+          : ''}
+        .
       </p>
     </div>
   );

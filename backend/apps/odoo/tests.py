@@ -82,10 +82,10 @@ def test_crea_empleados_con_jerarquia_y_organigrama():
     assert juan.kind == angie.kind == User.Kind.LEADER
     assert asesor.kind == User.Kind.COLLABORATOR
     # Dirección y área salen del árbol, no del texto del nombre.
-    assert (angie.direccion, angie.area.name) == ('Commercial Directorate', 'SALES')
+    assert (angie.direccion, angie.area.name) == ('Commercial Directorate', 'Sales')
     assert (juan.direccion, juan.area) == ('Commercial Directorate', None)
-    assert (laura.direccion, laura.area.name) == ('', 'TECH')
-    assert angie.organizacion == 'COLOMBIAN TRADE COMPANY SAS'
+    assert (laura.direccion, laura.area.name) == ('', 'Tech')
+    assert angie.organizacion == 'Colombian Trade Company SAS'
     assert angie.regional == 'Regional Centro Norte'
     # Sin clave: nadie entra hasta que tenga Microsoft o el admin le ponga una.
     assert not angie.has_usable_password()
@@ -136,7 +136,7 @@ def test_actualiza_lo_que_cambia_en_odoo():
     cliente._empleados[2]['job_title'] = 'PROMOTOR'
     registro = todo(cliente)
     assert registro.resumen['actualizados'] == 1
-    assert User.objects.get(odoo_id=3).position == 'PROMOTOR'
+    assert User.objects.get(odoo_id=3).position == 'Promotor'
 
 
 def test_sin_actualizar_no_toca_a_los_existentes():
@@ -145,7 +145,7 @@ def test_sin_actualizar_no_toca_a_los_existentes():
     cliente._empleados[2]['job_title'] = 'PROMOTOR'
     registro = sincronizar(cliente=cliente, crear=True, actualizar=False, desactivar=False)
     assert registro.resumen['existentes_sin_actualizar'] == 4
-    assert User.objects.get(odoo_id=3).position == 'ASESOR'
+    assert User.objects.get(odoo_id=3).position == 'Asesor'
 
 
 def test_un_vacio_en_odoo_no_borra_lo_que_hay():
@@ -155,7 +155,7 @@ def test_un_vacio_en_odoo_no_borra_lo_que_hay():
     cliente._empleados[2]['parent_id'] = False
     todo(cliente)
     asesor = User.objects.get(odoo_id=3)
-    assert asesor.area.name == 'SALES'
+    assert asesor.area.name == 'Sales'
     assert asesor.manager.odoo_id == 2
 
 
@@ -318,7 +318,7 @@ def test_a_quien_viene_de_odoo_no_se_le_editan_sus_datos():
     )
     assert respuesta.status_code == 200, respuesta.data
     angie.refresh_from_db()
-    assert (angie.first_name, angie.position, angie.phone) == ('Angie Lorena', 'ASESOR', '300')
+    assert (angie.first_name, angie.position, angie.phone) == ('Angie Lorena', 'Asesor', '300')
     # Tiene equipo en Odoo: sigue siendo líder aunque el formulario diga otra cosa.
     assert angie.kind == User.Kind.LEADER
 
@@ -327,7 +327,7 @@ def test_las_areas_no_se_crean_desde_administracion():
     api = cliente_admin()
     assert api.post('/api/admin/areas', {'name': 'Nueva'}, format='json').status_code == 405
     todo(OdooFalso())
-    assert set(Area.objects.filter(odoo=True).values_list('name', flat=True)) == {'SALES', 'TECH'}
+    assert set(Area.objects.filter(odoo=True).values_list('name', flat=True)) == {'Sales', 'Tech'}
 
 
 # ── Eliminar a quien no está en Odoo ─────────────────────────────────────
@@ -449,7 +449,7 @@ def test_eliminar_borra_las_areas_que_no_son_de_odoo():
     Area.objects.create(name='Logistics')
     Area.objects.create(name='Tech')  # Misma área que en Odoo: se conserva y queda marcada.
     registro = todo(OdooFalso(), eliminar=True)
-    assert set(Area.objects.values_list('name', flat=True)) == {'SALES', 'Tech'}
+    assert set(Area.objects.values_list('name', flat=True)) == {'Sales', 'Tech'}
     assert Area.objects.filter(odoo=False).count() == 0
     assert registro.resumen['areas_eliminadas'] == 1
 
@@ -458,3 +458,26 @@ def test_sin_eliminar_las_areas_ajenas_se_quedan():
     Area.objects.create(name='Logistics')
     todo(OdooFalso())
     assert Area.objects.filter(name='Logistics').exists()
+
+
+@pytest.mark.parametrize('odoo, app', [
+    ('ASESOR COMERCIAL - CAV MEDELLIN PREMIUM, C301', 'Asesor Comercial - CAV Medellin Premium, C301'),
+    ('ASESOR COMERCIAL - CAV SOACHA MERCURIO II, C104', 'Asesor Comercial - CAV Soacha Mercurio II, C104'),
+    ('PROMOTOR HOMECENTER Y FALABELLA PEREIRA', 'Promotor Homecenter y Falabella Pereira'),
+    ('TRADE MARKETING MANAGER', 'Trade Marketing Manager'),
+    ('SALES/ Retail', 'Sales/ Retail'),
+    ('E-COMMERCE', 'E-Commerce'),
+    ('COLOMBIAN TRADE COMPANY SAS', 'Colombian Trade Company SAS'),
+    ('Head of sales', 'Head of Sales'),
+    ('PEOPLE ANALYST  SENIOR ', 'People Analyst Senior'),
+])
+def test_lo_que_viene_en_mayusculas_queda_como_nombre_propio(odoo, app):
+    from apps.odoo.sync import nombre_propio
+
+    assert nombre_propio(odoo) == app
+
+
+def test_un_area_existente_queda_escrita_como_nombre_propio():
+    Area.objects.create(name='TECH', odoo=True)
+    todo(OdooFalso())
+    assert list(Area.objects.filter(name__iexact='tech').values_list('name', flat=True)) == ['Tech']

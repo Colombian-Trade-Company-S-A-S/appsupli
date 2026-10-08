@@ -25,52 +25,42 @@ def cliente_admin() -> APIClient:
     return cliente
 
 
-def test_un_asesor_sin_correo_se_crea_y_no_inicia_sesion():
-    respuesta = cliente_admin().post(
-        RUTA,
-        {
-            'username': 'asesor.norte',
-            'firstName': 'Asesor',
-            'lastName': 'PDV Norte',
-            'position': 'Promotor',
-            'puntoVenta': 'CAV Titán Plaza',
-            'pais': 'Colombia',
-        },
-        format='json',
+def test_un_asesor_sin_correo_existe_y_no_inicia_sesion():
+    # Así llegan de Odoo los asesores de punto de venta: sin correo corporativo.
+    asesor = User.objects.create(username='asesor.norte', first_name='Asesor', email=None)
+    fila = next(
+        u for u in cliente_admin().get(RUTA).json()['items'] if u['username'] == 'asesor.norte'
     )
-
-    assert respuesta.status_code == 201, respuesta.data
-    asesor = User.objects.get(username='asesor.norte')
-    # Nulo y no cadena vacía: dos vacíos chocarían contra el índice único.
-    assert asesor.email is None
     assert asesor.puede_iniciar_sesion is False
-    assert respuesta.json()['puedeIniciarSesion'] is False
+    assert fila['puedeIniciarSesion'] is False
 
 
 def test_dos_personas_sin_correo_conviven():
-    cliente = cliente_admin()
-    for numero in (1, 2):
-        respuesta = cliente.post(
-            RUTA,
-            {'username': f'promotor{numero}', 'firstName': f'Promotor {numero}'},
-            format='json',
-        )
-        assert respuesta.status_code == 201, respuesta.data
-
+    # Nulo y no cadena vacía: dos vacíos chocarían contra el índice único.
+    User.objects.create(username='promotor1', first_name='Promotor 1', email=None)
+    User.objects.create(username='promotor2', first_name='Promotor 2', email=None)
     assert User.objects.filter(email__isnull=True).count() == 2
 
 
 def test_el_correo_sigue_siendo_unico_entre_quienes_lo_tienen():
     cliente = cliente_admin()
-    datos = {'email': 'repetido@supli.tech', 'username': 'uno', 'firstName': 'Uno'}
-    assert cliente.post(RUTA, datos, format='json').status_code == 201
+    User.objects.create_user(email='repetido@supli.tech', username='uno', first_name='Uno', password='clave-123456')
+    dos = User.objects.create(username='dos', first_name='Dos')
 
-    repetido = cliente.post(
-        RUTA, {**datos, 'username': 'dos', 'firstName': 'Dos'}, format='json'
-    )
+    repetido = cliente.patch(f'{RUTA}/{dos.id}', {'email': 'repetido@supli.tech'}, format='json')
 
     assert repetido.status_code == 400
     assert 'email' in repetido.data['errors']
+
+
+def test_los_usuarios_no_se_crean_ni_se_borran_desde_administracion():
+    cliente = cliente_admin()
+    otro = User.objects.create(username='otro', first_name='Otro')
+    assert cliente.post(RUTA, {'username': 'nuevo', 'firstName': 'Nuevo'}, format='json').status_code == 405
+    assert cliente.delete(f'{RUTA}/{otro.id}').status_code == 405
+    assert User.objects.filter(username='otro').exists()
+    # Activar e inactivar sí: es un tema de acceso.
+    assert cliente.post(f'{RUTA}/{otro.id}/toggle-active').status_code == 200
 
 
 def test_sin_correo_no_se_entra_aunque_exista_la_cuenta():

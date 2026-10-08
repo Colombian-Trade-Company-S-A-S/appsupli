@@ -1,13 +1,5 @@
 import { useState } from 'react';
-import {
-  MoreHorizontalIcon,
-  PencilIcon,
-  PlusIcon,
-  SearchIcon,
-  Trash2Icon,
-  UserCheckIcon,
-  UserXIcon,
-} from 'lucide-react';
+import { MoreHorizontalIcon, PencilIcon, SearchIcon, UserCheckIcon, UserXIcon } from 'lucide-react';
 import { useDebounced } from '@/shared/hooks';
 import { useAuth } from '@/core/auth';
 import {
@@ -45,7 +37,6 @@ import {
 } from '@/shared/components/ui';
 import { adminApi, type AdminUser } from '../api';
 import { useAdminMutation, useAdminUsers, useAreas } from '../hooks';
-import { ConfirmarBorrado } from '@/shared/components/feedback';
 import { UserDialog } from './UserDialog';
 
 const TIPOS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
@@ -62,7 +53,6 @@ export function UsersTab() {
   const [area, setArea] = useState('');
   const [editando, setEditando] = useState<AdminUser | null>(null);
   const [dialogoAbierto, setDialogoAbierto] = useState(false);
-  const [porBorrar, setPorBorrar] = useState<AdminUser | null>(null);
 
   const { data: areas = [] } = useAreas();
   // Se busca cuando se deja de escribir, no con cada letra.
@@ -77,12 +67,6 @@ export function UsersTab() {
     (id: number) => adminApi.users.toggleActive(id),
     'Estado actualizado',
   );
-  const eliminar = useAdminMutation((id: number) => adminApi.users.remove(id), 'Usuario eliminado');
-
-  const abrirNuevo = () => {
-    setEditando(null);
-    setDialogoAbierto(true);
-  };
 
   const abrirEdicion = (usuario: AdminUser) => {
     setEditando(usuario);
@@ -125,19 +109,23 @@ export function UsersTab() {
           </SelectContent>
         </Select>
 
-        <ToggleGroup value={[estado]} onValueChange={(v) => setEstado(v[0] ?? 'todos')} variant="outline">
+        <ToggleGroup
+          value={[estado]}
+          onValueChange={(v) => setEstado(v[0] ?? 'todos')}
+          variant="outline"
+        >
           {ESTADOS.map((e) => (
             <ToggleGroupItem key={e.value} value={e.value}>
               {e.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-
-        <Button onClick={abrirNuevo}>
-          <PlusIcon data-icon="inline-start" />
-          Nuevo usuario
-        </Button>
       </div>
+
+      <p className="text-sm text-muted-foreground">
+        Las personas llegan y salen con la sincronización de Odoo (pestaña Odoo). Aquí se manejan
+        sus accesos.
+      </p>
 
       <Card className="py-0">
         {isLoading ? (
@@ -153,7 +141,9 @@ export function UsersTab() {
                 <SearchIcon />
               </EmptyMedia>
               <EmptyTitle>Sin resultados</EmptyTitle>
-              <EmptyDescription>Ajusta la búsqueda o los filtros.</EmptyDescription>
+              <EmptyDescription>
+                Ajusta la búsqueda o los filtros, o sincroniza con Odoo.
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -229,14 +219,6 @@ export function UsersTab() {
                               {usuario.isActive ? <UserXIcon /> : <UserCheckIcon />}
                               {usuario.isActive ? 'Inactivar' : 'Activar'}
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              variant="destructive"
-                              disabled={usuario.id === yo?.id}
-                              onClick={() => setPorBorrar(usuario)}
-                            >
-                              <Trash2Icon />
-                              Eliminar
-                            </DropdownMenuItem>
                           </DropdownMenuGroup>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -253,22 +235,7 @@ export function UsersTab() {
         {usuarios.length} usuario{usuarios.length === 1 ? '' : 's'}
       </p>
 
-      <UserDialog
-        abierto={dialogoAbierto}
-        onOpenChange={setDialogoAbierto}
-        usuario={editando}
-      />
-
-      <ConfirmarBorrado
-        abierto={!!porBorrar}
-        onOpenChange={(v) => !v && setPorBorrar(null)}
-        titulo="¿Eliminar usuario?"
-        descripcion={`Se eliminará la cuenta de ${porBorrar?.fullName}. Si solo quieres bloquear el acceso, mejor inactívala.`}
-        onConfirmar={() => {
-          if (porBorrar) eliminar.mutate(porBorrar.id);
-          setPorBorrar(null);
-        }}
-      />
+      <UserDialog abierto={dialogoAbierto} onOpenChange={setDialogoAbierto} usuario={editando} />
     </div>
   );
 }

@@ -2,6 +2,7 @@
 from django.db.models import Count
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
 from .api_permissions import IsPlatformAdmin
@@ -78,14 +79,14 @@ class UserViewSet(AdminViewSet):
     ordering_fields = ('first_name', 'email', 'last_login_at')
     ordering = ('first_name', 'last_name')
 
-    def destroy(self, request, *args, **kwargs):
-        usuario = self.get_object()
-        if usuario == request.user:
-            return Response(
-                {'message': 'No puedes eliminar tu propia cuenta.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return super().destroy(request, *args, **kwargs)
+    # Ni se crean ni se borran aquí: las personas entran y salen con la
+    # sincronización de Odoo. Queda editar sus accesos y activar/inactivar.
+    http_method_names = ['get', 'patch', 'post', 'head', 'options']
+
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            'POST', detail='Los usuarios se crean con la sincronización de Odoo, no desde aquí.'
+        )
 
     @action(detail=True, methods=['post'], url_path='toggle-active')
     def toggle_active(self, request, pk=None):
