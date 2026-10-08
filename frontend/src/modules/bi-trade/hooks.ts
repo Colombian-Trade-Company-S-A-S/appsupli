@@ -7,7 +7,9 @@ import {
   partnersApi,
   partnersTableroApi,
   type FiltrosAvance,
+  type FiltrosBelkin,
   type FiltrosConcurso,
+  type FuenteTableroBelkin,
   type FiltrosCumplimiento,
   type FiltrosDia,
   type FiltrosDashboard,
@@ -53,6 +55,8 @@ export const biTradeKeys = {
   belkinRegistros: (filtros: Record<string, unknown>) =>
     ['bi-trade', 'belkin', 'registros', filtros] as const,
   belkinCatalogo: (lista: string) => ['bi-trade', 'belkin', 'catalogo', lista] as const,
+  belkinTablero: (clave: string, filtros: FiltrosBelkin) =>
+    ['bi-trade', 'belkin', 'tablero', clave, filtros] as const,
 };
 
 /**
@@ -309,6 +313,17 @@ export const useOpcionesBelkin = () =>
     queryKey: biTradeKeys.belkinOpciones(),
     queryFn: () => belkinApi.opciones(),
     staleTime: 5 * 60 * 1000,
+  });
+
+/**
+ * El tablero del plan Belkin, de la app o de un enlace público según la
+ * fuente. Conserva el mes anterior mientras llega el nuevo.
+ */
+export const useTableroBelkin = (fuente: FuenteTableroBelkin, filtros: FiltrosBelkin) =>
+  useQuery({
+    queryKey: biTradeKeys.belkinTablero(fuente.clave, filtros),
+    queryFn: () => fuente.consultar(filtros),
+    placeholderData: (anterior) => anterior,
   });
 
 /** Una página de los registros del plan, del más reciente al más viejo. */

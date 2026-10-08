@@ -386,6 +386,9 @@ class CanalEnlace(models.TextChoices):
     HC = 'hc', 'Homecenter'
     FALABELLA = 'falabella', 'Falabella'
     TMK = 'tmk', 'Tmk Ecommerce Claro'
+    #: El tablero del plan Belkin. Con contraseña y de solo lectura, como los de
+    #: arriba; no confundir con `BELKIN`, que es su formulario.
+    BELKIN_TABLERO = 'belkin_bi', 'Plan Recomiéndame Belkin (tablero)'
     #: Los que escriben: quien los abre diligencia el formulario de un plan.
     PARTNERS = 'partners', 'Plan Partners (formulario)'
     BELKIN = 'belkin', 'Plan Recomiéndame Belkin (formulario)'
@@ -1224,6 +1227,29 @@ class MetaPartner(TimeStampedModel):
 # El registro no guarda ni la regional ni la categoría: las toma del punto y
 # del producto. Si en el catálogo un punto pasa de Zona Norte a Zona Sur, o un
 # producto de Case Apple a Lámina, todo lo ya cargado se mueve con él.
+#
+# Hay dos clases de punto. Los que tienen regional son de Coltrade: su asesor
+# recomienda y lo registra en el formulario. Los que no tienen regional son
+# «fuera de Coltrade»: no usan el formulario, y lo que cuenta para ellos son las
+# ventas de productos Belkin que trae el informe de Claro al importarlo.
+
+
+class CategoriaPdvBelkin(models.IntegerChoices):
+    """
+    Categoría del punto para el bono: fija cuántas recomendaciones pide cada
+    escalón. La 1 es la que más pide; la 3, la que menos.
+    """
+
+    UNO = 1, 'Categoría 1'
+    DOS = 2, 'Categoría 2'
+    TRES = 3, 'Categoría 3'
+
+
+class FuenteRegistroBelkin(models.TextChoices):
+    """De dónde salió un registro del plan."""
+
+    FORMULARIO = 'formulario', 'Formulario'
+    INFORME = 'informe', 'Informe de ventas Claro'
 
 
 class RegionalBelkin(TimeStampedModel):
@@ -1250,15 +1276,31 @@ class PuntoVentaBelkin(TimeStampedModel):
 
     id_punto_venta = models.CharField('centro de costos', max_length=60, primary_key=True)
     nombre_pdv = models.CharField('nombre del punto de venta', max_length=100)
+    #: Sin regional, el punto es fuera de Coltrade: sus registros llegan del
+    #: informe de ventas, no del formulario.
     id_regional = models.ForeignKey(
         RegionalBelkin,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         db_column='id_regional',
         related_name='puntos_venta',
         verbose_name='regional',
     )
+    categoria = models.PositiveSmallIntegerField(
+        'categoría',
+        choices=CategoriaPdvBelkin.choices,
+        null=True,
+        blank=True,
+        help_text='Fija cuántas recomendaciones pide cada bono. Sin categoría no gana bono.',
+    )
     activo = models.BooleanField(
-        'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+        'activo',
+        default=True,
+        help_text=(
+            'Si se desactiva, deja de aparecer en el formulario y, si es fuera de '
+            'Coltrade, deja de tomar ventas del informe.'
+        ),
     )
 
     class Meta:
@@ -1359,7 +1401,13 @@ class ProductoBelkin(TimeStampedModel):
 
 
 class RegistroBelkin(TimeStampedModel):
-    """Una recomendación de producto Belkin hecha por un asesor Apple."""
+    """
+    Una recomendación de producto Belkin hecha por un asesor Apple.
+
+    Cada registro es una unidad. Los del formulario los carga el asesor; los
+    del informe son las ventas de un punto fuera de Coltrade, una fila por
+    unidad vendida, y se reemplazan cada vez que se vuelve a importar el mes.
+    """
 
     id_registro = models.AutoField('id del registro', primary_key=True)
     id_punto_venta = models.ForeignKey(
@@ -1388,6 +1436,15 @@ class RegistroBelkin(TimeStampedModel):
     )
     fecha_recomendacion = models.DateField('fecha de la recomendación')
     observacion = models.TextField('observación', blank=True, default='')
+    # `db_default` además de `default`: la base pone «formulario» aunque quien
+    # inserte sea una versión de la app que todavía no conoce la columna.
+    fuente = models.CharField(
+        'fuente',
+        max_length=20,
+        choices=FuenteRegistroBelkin.choices,
+        default=FuenteRegistroBelkin.FORMULARIO,
+        db_default=FuenteRegistroBelkin.FORMULARIO,
+    )
     registrado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

@@ -24,4 +24,5 @@ urlpatterns = [
     path('<str:token>/productos', publico.productos, name='productos'),
     path('<str:token>/puntos-venta', publico.puntos_venta, name='puntos-venta'),
     path('<str:token>/campanas', publico.campanas, name='campanas'),
+    path('<str:token>/belkin', publico.tablero_belkin, name='belkin'),
 ]

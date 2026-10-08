@@ -304,6 +304,16 @@ export interface ResultadoInforme {
     sinPuntoVenta: number;
     reemplazado: boolean;
   };
+  /**
+   * Solo en Claro: las ventas de los puntos fuera de Coltrade que pasaron al
+   * plan Recomiéndame Belkin.
+   */
+  belkin?: {
+    creados: number;
+    eliminados: number;
+    omitidosPorDia: number;
+    puntos: string[];
+  } | null;
   message: string;
 }
 
@@ -737,11 +747,17 @@ export type Canal = 'claro' | 'hc' | 'falabella' | 'tmk';
 /** Los planes con formulario abierto por enlace: los únicos enlaces que escriben. */
 export type CanalFormulario = 'partners' | 'belkin';
 
+/** El tablero de un plan compartido por enlace. No es un canal: no tiene sus hojas. */
+export type CanalTableroPlan = 'belkin_bi';
+
 /**
- * Qué abre un enlace público: un tablero de solo lectura, o el formulario de
- * un plan.
+ * Qué abre un enlace público: el tablero de un canal o de un plan, de solo
+ * lectura, o el formulario de un plan.
  */
-export type CanalEnlace = Canal | CanalFormulario;
+export type CanalEnlace = Canal | CanalFormulario | CanalTableroPlan;
+
+export const esTableroBelkin = (canal: CanalEnlace | undefined): canal is 'belkin_bi' =>
+  canal === 'belkin_bi';
 
 export const esCanalFormulario = (canal: CanalEnlace | undefined): canal is CanalFormulario =>
   canal === 'partners' || canal === 'belkin';
@@ -948,12 +964,22 @@ export interface RegionalBelkin {
   puntosCount: number;
 }
 
-/** Un punto de venta: el código es el centro de costos («C159»). */
+/** La categoría del punto para el bono: la 1 es la que más recomendaciones pide. */
+export type CategoriaPdvBelkin = 1 | 2 | 3;
+
+/**
+ * Un punto de venta: el código es el centro de costos («C159»).
+ *
+ * Sin regional, el punto es fuera de Coltrade: no usa el formulario y sus
+ * registros llegan del informe de ventas de Claro.
+ */
 export interface PuntoVentaBelkin {
   idPuntoVenta: string;
   nombrePdv: string;
-  idRegional: number;
+  idRegional: number | null;
+  /** Vacío si el punto es fuera de Coltrade. */
   regional: string;
+  categoria: CategoriaPdvBelkin | null;
   activo: boolean;
   /** «Cav Andino \ C159», como se leía en el formulario anterior. */
   etiqueta: string;
@@ -992,7 +1018,7 @@ export interface ProductoBelkin {
 
 export interface RegistroBelkin {
   idRegistro: number;
-  idRegional: number;
+  idRegional: number | null;
   regional: string;
   idPuntoVenta: string;
   nombrePdv: string;
@@ -1006,6 +1032,7 @@ export interface RegistroBelkin {
   productoEtiqueta: string;
   fechaRecomendacion: string;
   observacion: string;
+  fuente: 'formulario' | 'informe';
   origen: string;
   createdAt: string;
 }
@@ -1017,7 +1044,7 @@ export type RegistroBelkinPayload = Pick<
 export type RegionalBelkinPayload = Pick<RegionalBelkin, 'nombre' | 'activa'>;
 export type PuntoVentaBelkinPayload = Pick<
   PuntoVentaBelkin,
-  'idPuntoVenta' | 'nombrePdv' | 'idRegional' | 'activo'
+  'idPuntoVenta' | 'nombrePdv' | 'idRegional' | 'categoria' | 'activo'
 >;
 export type AsesorApplePayload = Pick<AsesorApple, 'nombre' | 'idPuntoVenta' | 'activo'>;
 export type CategoriaBelkinPayload = Pick<CategoriaBelkin, 'nombre' | 'activa'>;
@@ -1035,14 +1062,116 @@ export interface OpcionesBelkin {
   productos: Array<{ value: string; label: string; idCategoria: number }>;
 }
 
+/** Un promotor del mes: lo que registró en su punto y el bono que le da. */
+export interface PromotorBelkin {
+  codigo: string;
+  punto: string;
+  regional: string;
+  categoria: CategoriaPdvBelkin | null;
+  /** `null`: registros que llegaron sin asesor. */
+  idAsesor: number | null;
+  asesor: string;
+  formulario: number;
+  informe: number;
+  recomendaciones: number;
+  bono: number;
+  /** Cuántas más suben el bono, y a cuánto. `null` en el tope o sin categoría. */
+  siguiente: { faltan: number; bono: number } | null;
+}
+
+export interface PuntoTableroBelkin {
+  codigo: string;
+  punto: string;
+  regional: string;
+  fueraDeColtrade: boolean;
+  categoria: CategoriaPdvBelkin | null;
+  formulario: number;
+  informe: number;
+  recomendaciones: number;
+  /** De Claro en los puntos de Coltrade; del informe en los de fuera. */
+  ventas: number;
+  bono: number;
+  promotores: number;
+}
+
+export interface DashboardBelkin {
+  filtros: { anio: number; mes: number; regional: string; punto: string; periodo: string };
+  periodos: Array<{ anio: number; mes: number; label: string }>;
+  /** Lo que piden los filtros. `regional` del punto es el id, o `fuera`. */
+  opciones: {
+    regionales: Array<{ value: string; label: string }>;
+    puntos: Array<{ value: string; label: string; regional: string }>;
+  };
+  totales: {
+    recomendaciones: number;
+    formulario: number;
+    informe: number;
+    ventas: number;
+    bono: number;
+    promotores: number;
+    promotoresConBono: number;
+    puntos: number;
+    ventasHasta: string | null;
+    ultimoRegistro: string | null;
+  };
+  promotores: PromotorBelkin[];
+  porPunto: PuntoTableroBelkin[];
+  porDia: Array<{ fecha: string; recomendaciones: number; ventas: number }>;
+  porCategoria: Array<{ categoria: string; recomendaciones: number }>;
+  escalones: Array<{
+    categoria: CategoriaPdvBelkin;
+    escalones: Array<{ valor: number; recomendaciones: number }>;
+  }>;
+  topeBono: number;
+}
+
+/** Sin `anio` ni `mes`, el tablero abre en el último mes con registros. */
+export interface FiltrosBelkin {
+  anio?: number;
+  mes?: number;
+  /** El id de la regional, o `fuera` para los puntos sin regional. */
+  regional?: string;
+  punto?: string;
+}
+
 export const belkinApi = {
   opciones: () => api.get<OpcionesBelkin>(`${RUTA}/belkin/opciones`),
+  dashboard: (filtros: FiltrosBelkin) =>
+    api.get<DashboardBelkin>(
+      `${RUTA}/belkin/dashboard`,
+      filtros as unknown as Record<string, unknown>,
+    ),
+  /** «Recomendado contra vendido, por punto» en .xlsx, con todos los puntos del filtro. */
+  exportarPuntos: (filtros: FiltrosBelkin) =>
+    descargarArchivo(
+      `${RUTA}/belkin/dashboard/puntos/exportar`,
+      'belkin-puntos.xlsx',
+      filtros as unknown as Record<string, unknown>,
+    ),
   registros: recurso<RegistroBelkin, Partial<RegistroBelkinPayload>>('/belkin/registros'),
   regionales: recurso<RegionalBelkin, Partial<RegionalBelkinPayload>>('/belkin/regionales'),
   puntosVenta: recurso<PuntoVentaBelkin, Partial<PuntoVentaBelkinPayload>>('/belkin/puntos-venta'),
   asesores: recurso<AsesorApple, Partial<AsesorApplePayload>>('/belkin/asesores'),
   categorias: recurso<CategoriaBelkin, Partial<CategoriaBelkinPayload>>('/belkin/categorias'),
   productos: recurso<ProductoBelkin, Partial<ProductoBelkinPayload>>('/belkin/productos'),
+};
+
+/**
+ * De dónde saca el tablero Belkin sus datos. La app y el enlace público ven
+ * el mismo tablero; el enlace no trae `exportarPuntos`, así que no ofrece el
+ * Excel.
+ */
+export interface FuenteTableroBelkin {
+  /** Separa la caché de la app de la de cada enlace. */
+  clave: string;
+  consultar: (filtros: FiltrosBelkin) => Promise<DashboardBelkin>;
+  exportarPuntos?: (filtros: FiltrosBelkin) => Promise<unknown>;
+}
+
+export const fuenteBelkinApp: FuenteTableroBelkin = {
+  clave: 'app',
+  consultar: belkinApi.dashboard,
+  exportarPuntos: belkinApi.exportarPuntos,
 };
 
 // ── Plan Partners · metas y tablero ────────────────────────────────────────

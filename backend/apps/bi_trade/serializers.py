@@ -13,6 +13,7 @@ from .models import (
     CategoriaBelkin,
     CategoriaHc,
     EscalaTicket,
+    FuenteRegistroBelkin,
     Inventario,
     InventarioFalabella,
     InventarioHc,
@@ -832,7 +833,8 @@ class RegionalBelkinSerializer(serializers.ModelSerializer):
 
 class PuntoVentaBelkinSerializer(serializers.ModelSerializer):
     etiqueta = serializers.CharField(read_only=True)
-    regional = serializers.CharField(source='id_regional.nombre', read_only=True)
+    # Vacío si el punto es fuera de Coltrade.
+    regional = serializers.CharField(source='id_regional.nombre', read_only=True, default='')
     asesores_count = Conteo('asesores')
     registros_count = Conteo('registros')
 
@@ -843,6 +845,7 @@ class PuntoVentaBelkinSerializer(serializers.ModelSerializer):
             'nombre_pdv',
             'id_regional',
             'regional',
+            'categoria',
             'activo',
             'etiqueta',
             'asesores_count',
@@ -859,7 +862,9 @@ class PuntoVentaBelkinSerializer(serializers.ModelSerializer):
 class AsesorAppleSerializer(serializers.ModelSerializer):
     nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
     punto_venta_etiqueta = serializers.CharField(source='id_punto_venta.etiqueta', read_only=True)
-    regional = serializers.CharField(source='id_punto_venta.id_regional.nombre', read_only=True)
+    regional = serializers.CharField(
+        source='id_punto_venta.id_regional.nombre', read_only=True, default=''
+    )
     registros_count = Conteo('registros')
 
     class Meta:
@@ -930,7 +935,9 @@ class RegistroBelkinSerializer(serializers.ModelSerializer):
     # La regional y la categoría se leen del catálogo de hoy, no de cuando se
     # guardó: si el punto o el producto cambian de grupo, el registro también.
     id_regional = serializers.IntegerField(source='id_punto_venta.id_regional_id', read_only=True)
-    regional = serializers.CharField(source='id_punto_venta.id_regional.nombre', read_only=True)
+    regional = serializers.CharField(
+        source='id_punto_venta.id_regional.nombre', read_only=True, default=''
+    )
     nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
     punto_venta_etiqueta = serializers.CharField(source='id_punto_venta.etiqueta', read_only=True)
     asesor = serializers.CharField(source='id_asesor.nombre', read_only=True, default='')
@@ -958,12 +965,16 @@ class RegistroBelkinSerializer(serializers.ModelSerializer):
             'producto_etiqueta',
             'fecha_recomendacion',
             'observacion',
+            'fuente',
             'origen',
             'created_at',
         )
+        read_only_fields = ('fuente',)
 
     def get_origen(self, obj) -> str:
-        """Quién lo cargó: la persona con cuenta, o el enlace público."""
+        """Quién lo cargó: la persona con cuenta, el enlace público o el informe."""
+        if obj.fuente == FuenteRegistroBelkin.INFORME:
+            return 'Informe de ventas Claro'
         if obj.registrado_por_id:
             return obj.registrado_por.full_name
         if obj.enlace_id:
@@ -979,12 +990,23 @@ class RegistroBelkinSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate(self, attrs: dict) -> dict:
-        """El asesor tiene que ser del punto elegido.
+        """El punto tiene que ser de Coltrade y el asesor, de ese punto.
 
-        Si no se cruzan, lo más probable es que se haya cambiado el punto
-        después de elegir al asesor.
+        Un punto sin regional es fuera de Coltrade: lo suyo llega del informe
+        de ventas y se reemplaza al volver a importarlo, así que el formulario
+        no lo carga ni lo corrige. Si el asesor no es del punto, lo más
+        probable es que se haya cambiado el punto después de elegirlo.
         """
         punto = attrs.get('id_punto_venta') or getattr(self.instance, 'id_punto_venta', None)
+        if punto and punto.id_regional_id is None:
+            raise serializers.ValidationError(
+                {
+                    'id_punto_venta': (
+                        f'{punto.nombre_pdv} es fuera de Coltrade: sus registros llegan del '
+                        'informe de ventas de Claro, no del formulario.'
+                    )
+                }
+            )
         if 'id_asesor' in attrs:
             asesor = attrs['id_asesor']
         else:

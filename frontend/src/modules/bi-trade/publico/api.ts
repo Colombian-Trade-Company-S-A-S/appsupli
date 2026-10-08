@@ -8,6 +8,8 @@ import type {
   CanalEnlace,
   Concurso,
   CumplimientoDiario,
+  DashboardBelkin,
+  FuenteTableroBelkin,
   Opciones,
   OpcionesBelkin,
   OpcionesPartners,
@@ -147,6 +149,44 @@ export const formularioPublicoBelkin = {
       .then((r) => r.data),
 };
 
+/**
+ * Una consulta pública: el acceso en su cabecera y, si el servidor lo rechaza
+ * —403 si venció o regeneraron la contraseña, 404 si revocaron el enlace—,
+ * avisa a quien abrió la sesión. La consulta igual falla, para que ninguna
+ * pantalla se quede pintando datos viejos como si fueran de ahora.
+ */
+function pedidoPublico(token: string, acceso: string, onSinAcceso: (estado: 403 | 404) => void) {
+  return <T>(tramo: string, params?: object) =>
+    cliente
+      .get<T>(`${ruta(token)}/${tramo}`, {
+        params,
+        headers: { 'X-Acceso-Publico': acceso },
+      })
+      .then((r) => r.data)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+          onSinAcceso(error.status);
+        }
+        throw error;
+      });
+}
+
+/**
+ * El tablero del plan Belkin abierto por enlace. Sin `exportarPuntos`: el
+ * tablero no ofrece el Excel, y el servidor tampoco lo expone por esta puerta.
+ */
+export function crearFuenteBelkinPublica(
+  token: string,
+  acceso: string,
+  onSinAcceso: (estado: 403 | 404) => void,
+): FuenteTableroBelkin {
+  const pedir = pedidoPublico(token, acceso, onSinAcceso);
+  return {
+    clave: `publico:${token}`,
+    consultar: (filtros) => pedir<DashboardBelkin>('belkin', filtros),
+  };
+}
+
 /** Nunca se llama: los botones de descarga no se muestran en solo lectura. */
 const soloLectura = () => Promise.reject(new Error('El tablero público es de solo lectura.'));
 
@@ -166,19 +206,7 @@ export function crearFuentePublica(
   canal: Canal,
   onSinAcceso: (estado: 403 | 404) => void,
 ): FuenteDatos {
-  const pedir = <T>(tramo: string, params?: object) =>
-    cliente
-      .get<T>(`${ruta(token)}/${tramo}`, {
-        params,
-        headers: { 'X-Acceso-Publico': acceso },
-      })
-      .then((r) => r.data)
-      .catch((error: unknown) => {
-        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-          onSinAcceso(error.status);
-        }
-        throw error;
-      });
+  const pedir = pedidoPublico(token, acceso, onSinAcceso);
 
   return {
     clave: `publico:${token}`,

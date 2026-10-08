@@ -11,7 +11,8 @@ export const LISTAS_BELKIN = {
   },
   puntosVenta: {
     titulo: 'Puntos de venta',
-    descripcion: 'Cada punto con su centro de costos y su regional.',
+    descripcion:
+      'Cada punto con su centro de costos, su regional y su categoría del bono. Sin regional es fuera de Coltrade: lo suyo llega del informe de ventas.',
     icono: StoreIcon,
     ruta: 'puntos-venta',
   },

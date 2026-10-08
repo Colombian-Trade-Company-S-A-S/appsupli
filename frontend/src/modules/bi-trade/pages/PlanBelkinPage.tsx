@@ -1,65 +1,48 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeftIcon, ClipboardListIcon, MegaphoneIcon } from 'lucide-react';
-import {
-  Button,
-  Card,
-  CardContent,
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/shared/components/ui';
-import { Encabezado } from '@/shared/components/layout';
+import { ArrowLeftIcon, ClipboardListIcon } from 'lucide-react';
+import { Button } from '@/shared/components/ui';
+import { fuenteBelkinApp } from '../api';
+import { CompartirTablero } from '../components/CompartirTablero';
+import { TableroBelkin } from '../components/TableroBelkin';
 import { LISTAS_BELKIN, ORDEN_LISTAS_BELKIN } from '../listasBelkin';
 import { PLANES } from '../planes';
 
 const BASE = PLANES.belkin.ruta;
 
 /**
- * La portada del plan Recomiéndame Belkin. Arriba, como en los tableros de los
- * canales, los accesos: el formulario y cada lista que lo alimenta. Todavía no
- * tiene tablero; cuando lo tenga, va aquí abajo.
+ * La portada del plan Recomiéndame Belkin: el tablero, con los accesos que
+ * solo tiene quien entra con cuenta —el formulario, las listas y compartir—.
+ * El enlace público muestra el mismo tablero sin nada de esto.
  */
 export default function PlanBelkinPage() {
   return (
-    <div className="flex flex-col gap-6">
-      <Encabezado titulo={PLANES.belkin.titulo} descripcion={PLANES.belkin.descripcion}>
-        <Button variant="outline" render={<Link to="/inicio/bi-trade" />}>
-          <ArrowLeftIcon data-icon="inline-start" />
-          BI Trade
-        </Button>
-        <Button render={<Link to={`${BASE}/formulario`} />}>
-          <ClipboardListIcon data-icon="inline-start" />
-          Formulario
-        </Button>
-        {ORDEN_LISTAS_BELKIN.map((lista) => {
-          const { titulo, icono: Icono, ruta } = LISTAS_BELKIN[lista];
-          return (
-            <Button key={lista} variant="outline" render={<Link to={`${BASE}/listas/${ruta}`} />}>
-              <Icono data-icon="inline-start" />
-              {titulo}
-            </Button>
-          );
-        })}
-      </Encabezado>
-
-      <Card>
-        <CardContent>
-          <Empty className="py-12">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <MegaphoneIcon />
-              </EmptyMedia>
-              <EmptyTitle>El tablero del plan llega pronto</EmptyTitle>
-              <EmptyDescription>
-                Mientras tanto, registra recomendaciones en el formulario y mantén las listas al día
-                con los botones de arriba.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </CardContent>
-      </Card>
-    </div>
+    <TableroBelkin
+      fuente={fuenteBelkinApp}
+      acciones={
+        <>
+          <Button variant="outline" render={<Link to="/inicio/bi-trade" />}>
+            <ArrowLeftIcon data-icon="inline-start" />
+            BI Trade
+          </Button>
+          <Button render={<Link to={`${BASE}/formulario`} />}>
+            <ClipboardListIcon data-icon="inline-start" />
+            Formulario
+          </Button>
+          <CompartirTablero
+            canal="belkin_bi"
+            descripcion="Un enlace de solo lectura con contraseña. Quien lo abra ve este tablero sin cuenta: sin el formulario, sin las listas del plan y sin descargar nada."
+          />
+          {ORDEN_LISTAS_BELKIN.map((lista) => {
+            const { titulo, icono: Icono, ruta } = LISTAS_BELKIN[lista];
+            return (
+              <Button key={lista} variant="outline" render={<Link to={`${BASE}/listas/${ruta}`} />}>
+                <Icono data-icon="inline-start" />
+                {titulo}
+              </Button>
+            );
+          })}
+        </>
+      }
+    />
   );
 }

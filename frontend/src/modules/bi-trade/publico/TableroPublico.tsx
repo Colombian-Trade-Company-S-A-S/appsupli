@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useState, type FormEvent } from 'react';
+import { Suspense, useCallback, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LayoutDashboardIcon, Link2OffIcon, LockIcon, LogOutIcon } from 'lucide-react';
@@ -26,9 +26,16 @@ import {
 import { ErrorBoundary, FullPageLoader } from '@/shared/components/feedback';
 import { useForceTheme } from '@/shared/hooks';
 import { ApiError } from '@/shared/api/http-client';
-import { esCanalFormulario } from '../api';
+import { esCanalFormulario, esTableroBelkin } from '../api';
+import { TableroBelkin } from '../components/TableroBelkin';
 import { FuenteDatosProvider } from '../fuente';
-import { crearFuentePublica, sesionPublica, tableroPublico, type SesionPublica } from './api';
+import {
+  crearFuenteBelkinPublica,
+  crearFuentePublica,
+  sesionPublica,
+  tableroPublico,
+  type SesionPublica,
+} from './api';
 
 /** Por qué se volvió a la puerta con una sesión que ya estaba abierta. */
 type Aviso = 'vencido' | 'revocado' | null;
@@ -36,8 +43,9 @@ type Aviso = 'vencido' | 'revocado' | null;
 /**
  * El tablero compartido por enlace: sin sesión, sin sidebar y sin navbar.
  *
- * Sin contraseña muestra la puerta; con ella, las mismas tres hojas de la app
- * dentro de una fuente de datos de solo lectura. Si el servidor rechaza el
+ * Sin contraseña muestra la puerta; con ella, las mismas hojas de la app dentro
+ * de una fuente de datos de solo lectura —o, si el enlace es del plan Belkin,
+ * su tablero, sin el Excel ni las listas—. Si el servidor rechaza el
  * acceso a mitad de camino —venció, cambiaron la contraseña o revocaron el
  * enlace— se vuelve a la puerta diciendo por qué, en vez de dejar la pantalla
  * con datos viejos o un error suelto.
@@ -57,15 +65,35 @@ export default function TableroPublicoLayout() {
   // su propia ruta en el servidor. Si llega uno por aquí, se manda para allá.
   const esFormulario = esCanalFormulario(sesion?.canal);
 
-  const fuente = useMemo(() => {
-    if (!sesion || esCanalFormulario(sesion.canal)) return null;
-    return crearFuentePublica(token, sesion.acceso, sesion.canal ?? 'claro', (estado) => {
+  // Lo que se consultó con este enlace sale de la caché al cerrar la sesión:
+  // las hojas de los canales y el tablero Belkin guardan con llaves distintas.
+  const olvidarConsultas = useCallback(() => {
+    const clave = `publico:${token}`;
+    queryClient.removeQueries({ queryKey: ['publico', clave] });
+    queryClient.removeQueries({ queryKey: ['bi-trade', 'belkin', 'tablero', clave] });
+  }, [token, queryClient]);
+
+  const perderAcceso = useCallback(
+    (estado: 403 | 404) => {
       sesionPublica.borrar(token);
-      queryClient.removeQueries({ queryKey: ['publico', `publico:${token}`] });
+      olvidarConsultas();
       setAviso(estado === 404 ? 'revocado' : 'vencido');
       setSesion(null);
-    });
-  }, [token, sesion, queryClient]);
+    },
+    [token, olvidarConsultas],
+  );
+
+  const fuente = useMemo(() => {
+    if (!sesion || esCanalFormulario(sesion.canal) || esTableroBelkin(sesion.canal)) return null;
+    return crearFuentePublica(token, sesion.acceso, sesion.canal ?? 'claro', perderAcceso);
+  }, [token, sesion, perderAcceso]);
+
+  // El tablero del plan Belkin no es un canal: no tiene hojas ni catálogos,
+  // solo su tablero, y va sin el Excel ni los accesos de la app.
+  const fuenteBelkin = useMemo(() => {
+    if (!sesion || !esTableroBelkin(sesion.canal)) return null;
+    return crearFuenteBelkinPublica(token, sesion.acceso, perderAcceso);
+  }, [token, sesion, perderAcceso]);
 
   if (!token) return <Navigate to="/" replace />;
 
@@ -74,7 +102,7 @@ export default function TableroPublicoLayout() {
     return <Navigate to={`/${tramo}/${encodeURIComponent(token)}`} replace />;
   }
 
-  if (!sesion || !fuente) {
+  if (!sesion || (!fuente && !fuenteBelkin)) {
     return (
       <PuertaClave
         token={token}
@@ -88,51 +116,86 @@ export default function TableroPublicoLayout() {
     );
   }
 
+  const salir = () => {
+    sesionPublica.borrar(token);
+    olvidarConsultas();
+    setAviso(null);
+    setSesion(null);
+  };
+
+  if (fuenteBelkin) {
+    // Las hojas de los canales (/dia, /tickets) no existen en este tablero.
+    const base = `/tablero/${encodeURIComponent(token)}`;
+    if (pathname.replace(/\/$/, '') !== base) return <Navigate to={base} replace />;
+    return (
+      <MarcoPublico nombre={sesion.nombre} subtitulo="Plan Recomiéndame Belkin" onSalir={salir}>
+        <TableroBelkin fuente={fuenteBelkin} />
+      </MarcoPublico>
+    );
+  }
+
+  if (!fuente) return null;
+
   // Homecenter y Falabella no tienen concurso: si alguien llega a /tickets
   // con un enlace de esos canales, va a la primera hoja en vez de ver un error.
   if (!fuente.hojas.includes('tickets') && pathname.endsWith('/tickets')) {
     return <Navigate to={fuente.base} replace />;
   }
 
-  const salir = () => {
-    sesionPublica.borrar(token);
-    queryClient.removeQueries({ queryKey: ['publico', fuente.clave] });
-    setAviso(null);
-    setSesion(null);
-  };
-
   return (
     <FuenteDatosProvider fuente={fuente}>
-      <div className="min-h-svh bg-background" data-canal={fuente.canal}>
-        <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-2.5 sm:px-6">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground [&_svg]:size-4">
-                <LayoutDashboardIcon />
-              </span>
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate text-sm font-semibold">{sesion.nombre}</span>
-                <span className="text-xs text-muted-foreground">
-                  {fuente.nombreCanal} · solo lectura
-                </span>
-              </div>
-            </div>
-            <Button variant="ghost" size="sm" onClick={salir}>
-              <LogOutIcon data-icon="inline-start" />
-              Salir
-            </Button>
-          </div>
-        </header>
-
-        <main className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-6">
-          <ErrorBoundary>
-            <Suspense fallback={<CargandoHoja />}>
-              <Outlet />
-            </Suspense>
-          </ErrorBoundary>
-        </main>
-      </div>
+      <MarcoPublico
+        nombre={sesion.nombre}
+        subtitulo={fuente.nombreCanal}
+        canal={fuente.canal}
+        onSalir={salir}
+      >
+        <Suspense fallback={<CargandoHoja />}>
+          <Outlet />
+        </Suspense>
+      </MarcoPublico>
     </FuenteDatosProvider>
+  );
+}
+
+/** El marco del enlace: quién lo abrió, que es de solo lectura y la salida. */
+function MarcoPublico({
+  nombre,
+  subtitulo,
+  canal,
+  onSalir,
+  children,
+}: {
+  nombre: string;
+  subtitulo: string;
+  canal?: string;
+  onSalir: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-h-svh bg-background" data-canal={canal}>
+      <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-2.5 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground [&_svg]:size-4">
+              <LayoutDashboardIcon />
+            </span>
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-semibold">{nombre}</span>
+              <span className="text-xs text-muted-foreground">{subtitulo} · solo lectura</span>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onSalir}>
+            <LogOutIcon data-icon="inline-start" />
+            Salir
+          </Button>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-6">
+        <ErrorBoundary>{children}</ErrorBoundary>
+      </main>
+    </div>
   );
 }
 

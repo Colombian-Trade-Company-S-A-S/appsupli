@@ -17,6 +17,30 @@ import { PLANES } from '../planes';
 
 const PLAN = PLANES.belkin.ruta;
 
+/** El valor de los desplegables para un punto sin regional. */
+const FUERA = 'fuera';
+const FUERA_DE_COLTRADE = 'Fuera de Coltrade';
+/** El valor del desplegable de categoría para un punto que no gana bono. */
+const SIN_CATEGORIA = 'sin';
+
+const OPCIONES_CATEGORIA = [
+  { value: '1', label: 'Categoría 1' },
+  { value: '2', label: 'Categoría 2' },
+  { value: '3', label: 'Categoría 3' },
+  { value: SIN_CATEGORIA, label: 'Sin categoría (no gana bono)' },
+];
+
+/** La regional de un punto, o «Fuera de Coltrade» si no tiene. */
+const regionalDe = (regional: string) => regional || FUERA_DE_COLTRADE;
+
+function BadgeRegional({ regional }: { regional: string }) {
+  return regional ? (
+    <Badge variant="secondary">{regional}</Badge>
+  ) : (
+    <Badge variant="outline">{FUERA_DE_COLTRADE}</Badge>
+  );
+}
+
 /** Lo que comparten las cinco listas: su título, su descripción y a dónde volver. */
 const base = (lista: ListaBelkin) => ({
   clave: lista,
@@ -57,10 +81,10 @@ function Regionales({ puedeAdministrar }: { puedeAdministrar: boolean }) {
 function PuntosVenta({ puedeAdministrar }: { puedeAdministrar: boolean }) {
   const { data = [], isLoading } = useCatalogoBelkin('puntosVenta');
   const { data: regionales = [] } = useCatalogoBelkin('regionales');
-  const opcionesRegional = regionales.map((r) => ({
-    value: String(r.idRegional),
-    label: r.nombre,
-  }));
+  const opcionesRegional = [
+    ...regionales.map((r) => ({ value: String(r.idRegional), label: r.nombre })),
+    { value: FUERA, label: FUERA_DE_COLTRADE },
+  ];
   const config: Config<PuntoVentaBelkin> = {
     ...base('puntosVenta'),
     singular: 'Punto de venta',
@@ -69,11 +93,11 @@ function PuntosVenta({ puedeAdministrar }: { puedeAdministrar: boolean }) {
     id: (p) => p.idPuntoVenta,
     nombre: (p) => p.nombrePdv,
     activo: (p) => p.activo,
-    textoDe: (p) => `${p.etiqueta} ${p.regional}`,
+    textoDe: (p) => `${p.etiqueta} ${regionalDe(p.regional)}`,
     filtro: {
       label: 'Regional',
       opciones: opcionesRegional,
-      valorDe: (p) => String(p.idRegional),
+      valorDe: (p) => (p.idRegional ? String(p.idRegional) : FUERA),
     },
     columnas: [
       {
@@ -81,7 +105,16 @@ function PuntosVenta({ puedeAdministrar }: { puedeAdministrar: boolean }) {
         celda: (p) => <span className="font-mono font-medium">{p.idPuntoVenta}</span>,
       },
       { titulo: 'Nombre', celda: (p) => p.nombrePdv },
-      { titulo: 'Regional', celda: (p) => <Badge variant="secondary">{p.regional}</Badge> },
+      { titulo: 'Regional', celda: (p) => <BadgeRegional regional={p.regional} /> },
+      {
+        titulo: 'Categoría',
+        celda: (p) =>
+          p.categoria ? (
+            <span className="tabular-nums">{p.categoria}</span>
+          ) : (
+            <span className="text-muted-foreground">Sin categoría</span>
+          ),
+      },
       {
         titulo: 'Asesores',
         celda: (p) => <Cuenta n={p.asesoresCount} />,
@@ -116,26 +149,38 @@ function PuntosVenta({ puedeAdministrar }: { puedeAdministrar: boolean }) {
         tipo: 'select',
         opciones: opcionesRegional,
         placeholder: 'Selecciona la regional',
+        ayuda:
+          'Fuera de Coltrade: no sale en el formulario; sus registros llegan del informe de ventas de Claro.',
+      },
+      {
+        clave: 'categoria',
+        label: 'Categoría del bono',
+        tipo: 'select',
+        opciones: OPCIONES_CATEGORIA,
+        placeholder: 'Selecciona la categoría',
+        ayuda: 'Fija cuántas recomendaciones pide cada bono. La 1 es la que más pide.',
       },
       ACTIVO,
     ],
     valores: (p) => ({
       idPuntoVenta: p?.idPuntoVenta ?? '',
       nombrePdv: p?.nombrePdv ?? '',
-      idRegional: p ? String(p.idRegional) : '',
+      idRegional: p ? (p.idRegional ? String(p.idRegional) : FUERA) : '',
+      categoria: p ? (p.categoria ? String(p.categoria) : SIN_CATEGORIA) : '',
       activo: p?.activo ?? true,
     }),
     payload: (v, editando) => ({
       ...(editando ? {} : { idPuntoVenta: v.idPuntoVenta }),
       nombrePdv: v.nombrePdv,
-      idRegional: v.idRegional ? Number(v.idRegional) : null,
+      idRegional: v.idRegional && v.idRegional !== FUERA ? Number(v.idRegional) : null,
+      categoria: v.categoria && v.categoria !== SIN_CATEGORIA ? Number(v.categoria) : null,
       activo: v.activo,
     }),
     crear: (p) => belkinApi.puntosVenta.create(p),
     editar: (id, p) => belkinApi.puntosVenta.update(id, p),
     borrar: (id) => belkinApi.puntosVenta.remove(id),
     avisoEdicion:
-      'Si lo cambias de regional, todos sus registros —también los viejos— pasan a la nueva.',
+      'Si lo cambias de regional o de categoría, todos sus registros —también los viejos— se leen con la nueva.',
   };
   return <Catalogo config={config} puedeAdministrar={puedeAdministrar} />;
 }
@@ -145,7 +190,7 @@ function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
   const { data: puntos = [] } = useCatalogoBelkin('puntosVenta');
   const opcionesPunto = puntos.map((p) => ({
     value: p.idPuntoVenta,
-    label: `${p.etiqueta} · ${p.regional}`,
+    label: `${p.etiqueta} · ${regionalDe(p.regional)}`,
   }));
   const config: Config<AsesorApple> = {
     ...base('asesores'),
@@ -155,7 +200,7 @@ function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
     id: (a) => a.idAsesor,
     nombre: (a) => a.nombre,
     activo: (a) => a.activo,
-    textoDe: (a) => `${a.nombre} ${a.puntoVentaEtiqueta} ${a.regional}`,
+    textoDe: (a) => `${a.nombre} ${a.puntoVentaEtiqueta} ${regionalDe(a.regional)}`,
     filtro: {
       label: 'Punto de venta',
       opciones: puntos.map((p) => ({ value: p.idPuntoVenta, label: p.etiqueta })),
@@ -169,7 +214,7 @@ function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
       { titulo: 'Punto de venta', celda: (a) => a.puntoVentaEtiqueta },
       {
         titulo: 'Regional',
-        celda: (a) => <Badge variant="secondary">{a.regional}</Badge>,
+        celda: (a) => <BadgeRegional regional={a.regional} />,
         className: 'hidden md:table-cell',
       },
       {

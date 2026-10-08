@@ -31,6 +31,7 @@ from apps.core.excel import (
 from apps.core.pagination import StandardPagination
 
 from .api_permissions import CanManageData, HasBiTradeApp, ReadOnlyOrCanManage
+from .belkin import registros_del_informe
 from .calendario import dias_del_mes, dias_habiles, es_habil, festivos
 from .canales import CLARO, Canal
 from .filters import InventarioFilter, MetaFilter, VentaFilter
@@ -1487,6 +1488,11 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     **Inventario.** Siempre se reemplaza completo: el informe es la foto del
     stock de hoy, no un movimiento que se acumule.
 
+    **Plan Belkin.** Solo en Claro: las ventas de productos del plan en los
+    puntos fuera de Coltrade pasan a ser registros del plan, con el mismo mes y
+    el mismo modo. Esos puntos no están en el catálogo de Claro, así que se
+    toman del archivo y no de las ventas ya filtradas.
+
     Lo que no cruza con la base se cuenta y se reporta, no se inventa: si el
     punto de venta o el producto no existen en la app, esa fila no entra.
     """
@@ -1549,12 +1555,21 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     with transaction.atomic():
         resumen_ventas = _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal)
         resumen_inventario = _importar_inventario(lectura, productos, puntos, canal)
+        resumen_belkin = (
+            registros_del_informe(
+                lectura, anio, mes, reemplazar=modo == MODO_SOBRESCRIBIR, usuario=request.user
+            )
+            if canal is CLARO
+            else None
+        )
 
     partes = []
     if resumen_ventas['creadas']:
         partes.append(f'{resumen_ventas["creadas"]} venta(s)')
     if resumen_inventario['creados']:
         partes.append(f'{resumen_inventario["creados"]} registro(s) de inventario')
+    if resumen_belkin and resumen_belkin['creados']:
+        partes.append(f'{resumen_belkin["creados"]} registro(s) del plan Belkin')
     mensaje = (
         'Importación lista: ' + _lista_en_espanol(partes) + '.'
         if partes
@@ -1567,6 +1582,7 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
             'modo': modo,
             'ventas': resumen_ventas,
             'inventario': resumen_inventario,
+            'belkin': resumen_belkin,
             'message': mensaje,
         }
     )

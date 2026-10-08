@@ -63,7 +63,7 @@ router.register(
 router.register('partners/productos', _par.ProductoPartnerViewSet, basename='partners-productos')
 router.register('partners/registros', _par.RegistroPartnerViewSet, basename='partners-registros')
 router.register('partners/metas', _par.MetaPartnerViewSet, basename='partners-metas')
-# Plan Recomiéndame Belkin: el formulario y sus catálogos.
+# Plan Recomiéndame Belkin: el formulario, sus catálogos y el tablero.
 _bel = views_belkin
 router.register('belkin/regionales', _bel.RegionalBelkinViewSet, basename='belkin-regionales')
 router.register(
@@ -79,6 +79,12 @@ urlpatterns = [
     path('partners/opciones', _par.opciones_partners, name='partners-opciones'),
     path('partners/dashboard', _par.dashboard_partners, name='partners-dashboard'),
     path('belkin/opciones', _bel.opciones_belkin, name='belkin-opciones'),
+    path('belkin/dashboard', _bel.dashboard_belkin, name='belkin-dashboard'),
+    path(
+        'belkin/dashboard/puntos/exportar',
+        _bel.exportar_puntos_belkin,
+        name='belkin-dashboard-puntos-exportar',
+    ),
     path('dashboard', views.dashboard, name='dashboard'),
     path('cumplimiento', views.cumplimiento, name='cumplimiento'),
     path('avance-mensual', views.avance_mensual, name='avance-mensual'),

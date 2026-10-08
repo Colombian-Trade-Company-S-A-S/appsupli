@@ -12,7 +12,7 @@ export const PLANES = {
     icono: MegaphoneIcon,
     enConstruccion: false,
     descripcion:
-      'El formulario de recomendaciones y las listas que lo alimentan: puntos, asesores y productos.',
+      'Recomendaciones del mes contra las ventas de Claro y el bono de cada promotor según la categoría de su punto.',
     /** Ruta del formulario de carga, si el plan ya tiene uno. */
     formulario: '/inicio/bi-trade/plan-recomiendame-belkin/formulario',
   },

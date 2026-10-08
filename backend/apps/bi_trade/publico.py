@@ -16,8 +16,9 @@ navegador ni viaja en cada petición. Regenerar la contraseña sube la versión
 del enlace y deja sin efecto los accesos que ya se habían emitido.
 
 Lo que ve el enlace es de solo lectura y está acotado a propósito: los tres
-cálculos del tablero y los catálogos mínimos para sus filtros. No hay
-exportación, importación ni CRUD, y los catálogos no llevan precios.
+cálculos del tablero y los catálogos mínimos para sus filtros, o el tablero del
+plan Belkin si el enlace es de ese. No hay exportación, importación ni CRUD, y
+los catálogos no llevan precios.
 """
 import secrets
 
@@ -39,8 +40,9 @@ from rest_framework.throttling import SimpleRateThrottle
 
 from .api_permissions import CanManageData, HasBiTradeApp
 from .canales import CANALES, CLARO, Canal
-from .models import CANALES_FORMULARIO, Campana, EnlacePublico
+from .models import CANALES_FORMULARIO, Campana, CanalEnlace, EnlacePublico
 from .views import _calcular_avance, _calcular_concurso, _calcular_dia, opciones_de
+from .views_belkin import _calcular_tablero as _calcular_tablero_belkin
 
 #: Cuánto dura un acceso antes de volver a pedir la contraseña: una jornada.
 DURACION_ACCESO = 12 * 60 * 60
@@ -183,8 +185,15 @@ def _vista_publica(funcion):
 
 
 def canal_del_enlace(request) -> Canal:
-    """El canal del enlace que abrió la consulta: Claro, Homecenter o Falabella."""
-    return CANALES.get(request.enlace_publico.canal, CLARO)
+    """
+    El canal del enlace que abrió la consulta: Claro, Homecenter, Falabella o
+    Tmk. Un enlace que no es de un canal —el del tablero Belkin— no entra a
+    estas consultas: responde como si la ruta no existiera.
+    """
+    canal = CANALES.get(request.enlace_publico.canal)
+    if canal is None:
+        raise exceptions.NotFound('Este enlace no abre este tablero.')
+    return canal
 
 
 @_vista_publica
@@ -242,6 +251,20 @@ def campanas(request, token):
     return Response(
         list(Campana.objects.order_by('-desde', 'nombre').values('id_campana', 'nombre', 'activa'))
     )
+
+
+@_vista_publica
+def tablero_belkin(request, token):
+    """
+    El tablero del plan Recomiéndame Belkin, para los enlaces de ese tablero.
+
+    Es la misma consulta que ve la app, con sus filtros. No hay exportación ni
+    listas detrás: el Excel por punto y los catálogos del plan solo se abren
+    con cuenta.
+    """
+    if request.enlace_publico.canal != CanalEnlace.BELKIN_TABLERO:
+        raise exceptions.NotFound('Este enlace no abre el tablero del plan Belkin.')
+    return Response(_calcular_tablero_belkin(request.query_params))
 
 
 # ── Gestión: quién crea y revoca los enlaces ───────────────────────────────

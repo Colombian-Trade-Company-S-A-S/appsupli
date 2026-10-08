@@ -190,7 +190,7 @@ function ResumenImportacion({
   onCerrar: () => void;
 }) {
   if (!resultado) return null;
-  const { ventas, inventario } = resultado;
+  const { ventas, inventario, belkin } = resultado;
 
   return (
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
@@ -272,6 +272,43 @@ function ResumenImportacion({
               </p>
             )}
           </Bloque>
+
+          {belkin && (
+            <>
+              <Separator />
+              <Bloque titulo="Plan Recomiéndame Belkin · puntos fuera de Coltrade">
+                <Renglon etiqueta="Registros creados" valor={belkin.creados} destacado />
+                {belkin.eliminados > 0 && (
+                  <Renglon
+                    etiqueta="Registros del informe reemplazados"
+                    valor={belkin.eliminados}
+                  />
+                )}
+                {belkin.omitidosPorDia > 0 && (
+                  <Renglon
+                    etiqueta="Omitidos: su día ya tenía registros del informe"
+                    valor={belkin.omitidosPorDia}
+                  />
+                )}
+                {belkin.puntos.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-xs text-muted-foreground">Puntos:</span>
+                    {belkin.puntos.map((punto) => (
+                      <Badge key={punto} variant="secondary">
+                        {punto}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  belkin.creados === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      El archivo no traía ventas de productos del plan en puntos fuera de Coltrade.
+                    </p>
+                  )
+                )}
+              </Bloque>
+            </>
+          )}
         </div>
 
         <DialogFooter>

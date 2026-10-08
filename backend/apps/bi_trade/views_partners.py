@@ -58,7 +58,10 @@ MESES = {
     'NOVIEMBRE': 11,
     'DICIEMBRE': 12,
 }
-NOMBRE_DEL_MES = {numero: nombre.capitalize() for nombre, numero in MESES.items()}
+# Sin el alias: si no, «Setiembre» pisaría a «Septiembre» al nombrar el mes 9.
+NOMBRE_DEL_MES = {
+    numero: nombre.capitalize() for nombre, numero in MESES.items() if nombre != 'SETIEMBRE'
+}
 
 #: Las columnas del Excel de metas, con los mismos encabezados del archivo que
 #: Trade ya arma cada mes: no hay que rehacerlo para subirlo.
