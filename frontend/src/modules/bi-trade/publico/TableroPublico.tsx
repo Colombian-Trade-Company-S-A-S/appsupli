@@ -26,6 +26,7 @@ import {
 import { ErrorBoundary, FullPageLoader } from '@/shared/components/feedback';
 import { useForceTheme } from '@/shared/hooks';
 import { ApiError } from '@/shared/api/http-client';
+import { esCanalFormulario } from '../api';
 import { FuenteDatosProvider } from '../fuente';
 import { crearFuentePublica, sesionPublica, tableroPublico, type SesionPublica } from './api';
 
@@ -54,10 +55,10 @@ export default function TableroPublicoLayout() {
 
   // Un enlace del formulario no abre tableros: vive en su propia página, con
   // su propia ruta en el servidor. Si llega uno por aquí, se manda para allá.
-  const esFormulario = sesion?.canal === 'partners';
+  const esFormulario = esCanalFormulario(sesion?.canal);
 
   const fuente = useMemo(() => {
-    if (!sesion || sesion.canal === 'partners') return null;
+    if (!sesion || esCanalFormulario(sesion.canal)) return null;
     return crearFuentePublica(token, sesion.acceso, sesion.canal ?? 'claro', (estado) => {
       sesionPublica.borrar(token);
       queryClient.removeQueries({ queryKey: ['publico', `publico:${token}`] });
@@ -68,7 +69,10 @@ export default function TableroPublicoLayout() {
 
   if (!token) return <Navigate to="/" replace />;
 
-  if (esFormulario) return <Navigate to={`/formulario/${encodeURIComponent(token)}`} replace />;
+  if (esFormulario) {
+    const tramo = sesion?.canal === 'belkin' ? 'formulario/belkin' : 'formulario';
+    return <Navigate to={`/${tramo}/${encodeURIComponent(token)}`} replace />;
+  }
 
   if (!sesion || !fuente) {
     return (

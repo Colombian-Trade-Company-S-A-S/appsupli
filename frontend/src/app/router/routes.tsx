@@ -30,11 +30,17 @@ const PlanPartnersPage = lazy(() => import('@/modules/bi-trade/pages/PlanPartner
 const PlanPartnersFormularioPage = lazy(
   () => import('@/modules/bi-trade/pages/PlanPartnersFormularioPage'),
 );
-const PlanEnConstruccionPage = lazy(
-  () => import('@/modules/bi-trade/pages/PlanEnConstruccionPage'),
+const PlanPartnersListaPage = lazy(() => import('@/modules/bi-trade/pages/PlanPartnersListaPage'));
+const PlanBelkinPage = lazy(() => import('@/modules/bi-trade/pages/PlanBelkinPage'));
+const PlanBelkinFormularioPage = lazy(
+  () => import('@/modules/bi-trade/pages/PlanBelkinFormularioPage'),
 );
+const PlanBelkinListaPage = lazy(() => import('@/modules/bi-trade/pages/PlanBelkinListaPage'));
 const TableroPublicoLayout = lazy(() => import('@/modules/bi-trade/publico/TableroPublico'));
 const FormularioPublico = lazy(() => import('@/modules/bi-trade/publico/FormularioPublico'));
+const FormularioPublicoBelkin = lazy(
+  () => import('@/modules/bi-trade/publico/FormularioPublicoBelkin'),
+);
 const CumplimientoDiarioPage = lazy(
   () => import('@/modules/bi-trade/pages/CumplimientoDiarioPage'),
 );
@@ -174,10 +180,17 @@ const routes: RouteObject[] = [
                 path: 'bi-trade/claro/dia',
                 element: withSuspense(<CumplimientoDiarioPage />),
               },
-              // Planes sin informe todavía: la página dice «en construcción».
               {
                 path: 'bi-trade/plan-recomiendame-belkin',
-                element: withSuspense(<PlanEnConstruccionPage plan="belkin" />),
+                element: withSuspense(<PlanBelkinPage />),
+              },
+              {
+                path: 'bi-trade/plan-recomiendame-belkin/formulario',
+                element: withSuspense(<PlanBelkinFormularioPage />),
+              },
+              {
+                path: 'bi-trade/plan-recomiendame-belkin/listas/:lista',
+                element: withSuspense(<PlanBelkinListaPage />),
               },
               {
                 path: 'bi-trade/plan-partners',
@@ -186,6 +199,10 @@ const routes: RouteObject[] = [
               {
                 path: 'bi-trade/plan-partners/formulario',
                 element: withSuspense(<PlanPartnersFormularioPage />),
+              },
+              {
+                path: 'bi-trade/plan-partners/listas/:lista',
+                element: withSuspense(<PlanPartnersListaPage />),
               },
             ],
           },
@@ -276,11 +293,15 @@ const routes: RouteObject[] = [
   },
 
   // ── Formulario compartido por enlace ────────────────────────────────────
-  // El único enlace público que escribe: quien lo abre diligencia el plan
-  // Partners sin cuenta. No ve los registros cargados ni los tableros.
+  // Los únicos enlaces públicos que escriben: quien los abre diligencia el
+  // formulario de un plan sin cuenta. No ve los registros cargados ni los tableros.
   {
     path: 'formulario/:token',
     element: withSuspense(<FormularioPublico />),
+  },
+  {
+    path: 'formulario/belkin/:token',
+    element: withSuspense(<FormularioPublicoBelkin />),
   },
 
   { path: '*', element: <Navigate to="/" replace /> },

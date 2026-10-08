@@ -386,8 +386,14 @@ class CanalEnlace(models.TextChoices):
     HC = 'hc', 'Homecenter'
     FALABELLA = 'falabella', 'Falabella'
     TMK = 'tmk', 'Tmk Ecommerce Claro'
-    #: El único que escribe: quien lo abre diligencia el plan Partners.
+    #: Los que escriben: quien los abre diligencia el formulario de un plan.
     PARTNERS = 'partners', 'Plan Partners (formulario)'
+    BELKIN = 'belkin', 'Plan Recomiéndame Belkin (formulario)'
+
+
+#: Los enlaces que abren un formulario: van sin contraseña, solo reciben datos
+#: y nunca entran por la puerta del tablero.
+CANALES_FORMULARIO = (CanalEnlace.PARTNERS, CanalEnlace.BELKIN)
 
 
 class EnlacePublico(TimeStampedModel):
@@ -1208,3 +1214,204 @@ class MetaPartner(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.anio}-{self.mes:02d} · {self.id_punto_venta_id} · {self.marca}'
+
+
+# ── Plan Recomiéndame Belkin ───────────────────────────────────────────────
+# El formulario que antes vivía en Microsoft Forms. Allá el punto y el producto
+# llegaban pegados con una barra invertida («Cav Andino \ C159», «7020178 \
+# Spigen…»); aquí el código es la llave y el nombre va aparte.
+#
+# El registro no guarda ni la regional ni la categoría: las toma del punto y
+# del producto. Si en el catálogo un punto pasa de Zona Norte a Zona Sur, o un
+# producto de Case Apple a Lámina, todo lo ya cargado se mueve con él.
+
+
+class RegionalBelkin(TimeStampedModel):
+    """Regional del plan Belkin: agrupa los puntos de venta en el formulario."""
+
+    id_regional = models.AutoField('id de la regional', primary_key=True)
+    nombre = models.CharField('nombre', max_length=80, unique=True)
+    activa = models.BooleanField(
+        'activa', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_regionales_belkin'
+        verbose_name = 'regional del plan Belkin'
+        verbose_name_plural = 'regionales del plan Belkin'
+        ordering = ('nombre',)
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
+class PuntoVentaBelkin(TimeStampedModel):
+    """Punto de venta del plan. Su código es el centro de costos («C159»)."""
+
+    id_punto_venta = models.CharField('centro de costos', max_length=60, primary_key=True)
+    nombre_pdv = models.CharField('nombre del punto de venta', max_length=100)
+    id_regional = models.ForeignKey(
+        RegionalBelkin,
+        on_delete=models.PROTECT,
+        db_column='id_regional',
+        related_name='puntos_venta',
+        verbose_name='regional',
+    )
+    activo = models.BooleanField(
+        'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_puntos_venta_belkin'
+        verbose_name = 'punto de venta del plan Belkin'
+        verbose_name_plural = 'puntos de venta del plan Belkin'
+        ordering = ('nombre_pdv',)
+
+    def __str__(self) -> str:
+        return self.etiqueta
+
+    @property
+    def etiqueta(self) -> str:
+        """Como se leía en el formulario anterior: «Cav Andino \\ C159»."""
+        return f'{self.nombre_pdv} \\ {self.id_punto_venta}'
+
+
+class AsesorApple(TimeStampedModel):
+    """
+    Asesor Apple de un punto de venta.
+
+    En el formulario anterior el nombre se escribía a mano y el mismo asesor
+    llegaba de cinco maneras («Duvan riaño», «DUVAN RIAÑO», «duban riaño»…).
+    Con la tabla se elige de una lista: un punto puede tener varios.
+    """
+
+    id_asesor = models.AutoField('id del asesor', primary_key=True)
+    nombre = models.CharField('nombre y apellido', max_length=120)
+    id_punto_venta = models.ForeignKey(
+        PuntoVentaBelkin,
+        on_delete=models.PROTECT,
+        db_column='id_punto_venta',
+        related_name='asesores',
+        verbose_name='punto de venta',
+    )
+    activo = models.BooleanField(
+        'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'asesor_apple'
+        verbose_name = 'asesor Apple'
+        verbose_name_plural = 'asesores Apple'
+        ordering = ('nombre',)
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
+class CategoriaBelkin(TimeStampedModel):
+    """Categoría de producto: Case Apple, Lámina, Cable, Cargador…"""
+
+    id_categoria = models.AutoField('id de la categoría', primary_key=True)
+    nombre = models.CharField('nombre', max_length=60, unique=True)
+    activa = models.BooleanField(
+        'activa', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_categorias_belkin'
+        verbose_name = 'categoría del plan Belkin'
+        verbose_name_plural = 'categorías del plan Belkin'
+        ordering = ('nombre',)
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
+class ProductoBelkin(TimeStampedModel):
+    """Producto Belkin que se puede recomendar. El código es el del negocio."""
+
+    id_producto = models.CharField('código del producto', max_length=60, primary_key=True)
+    nombre_producto = models.CharField('nombre del producto', max_length=120)
+    id_categoria = models.ForeignKey(
+        CategoriaBelkin,
+        on_delete=models.PROTECT,
+        db_column='id_categoria',
+        related_name='productos',
+        verbose_name='categoría',
+    )
+    activo = models.BooleanField(
+        'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
+    )
+
+    class Meta:
+        db_table = 'bi_trade_productos_belkin'
+        verbose_name = 'producto del plan Belkin'
+        verbose_name_plural = 'productos del plan Belkin'
+        ordering = ('nombre_producto',)
+
+    def __str__(self) -> str:
+        return self.etiqueta
+
+    @property
+    def etiqueta(self) -> str:
+        """Como se leía en el formulario anterior: «7020178 \\ Spigen…»."""
+        return f'{self.id_producto} \\ {self.nombre_producto}'
+
+
+class RegistroBelkin(TimeStampedModel):
+    """Una recomendación de producto Belkin hecha por un asesor Apple."""
+
+    id_registro = models.AutoField('id del registro', primary_key=True)
+    id_punto_venta = models.ForeignKey(
+        PuntoVentaBelkin,
+        on_delete=models.PROTECT,
+        db_column='id_punto_venta',
+        related_name='registros',
+        verbose_name='punto de venta',
+    )
+    #: Opcional: el punto puede no tener asesores cargados todavía.
+    id_asesor = models.ForeignKey(
+        AsesorApple,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        db_column='id_asesor',
+        related_name='registros',
+        verbose_name='asesor Apple',
+    )
+    id_producto = models.ForeignKey(
+        ProductoBelkin,
+        on_delete=models.PROTECT,
+        db_column='id_producto',
+        related_name='registros',
+        verbose_name='producto recomendado',
+    )
+    fecha_recomendacion = models.DateField('fecha de la recomendación')
+    observacion = models.TextField('observación', blank=True, default='')
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='registros_belkin',
+        verbose_name='registrado por',
+    )
+    #: Por cuál enlace público entró, si no lo cargó alguien con cuenta.
+    enlace = models.ForeignKey(
+        'EnlacePublico',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_enlace',
+        related_name='registros_belkin',
+        verbose_name='enlace público',
+    )
+
+    class Meta:
+        db_table = 'bi_trade_registros_belkin'
+        verbose_name = 'registro del plan Belkin'
+        verbose_name_plural = 'registros del plan Belkin'
+        ordering = ('-fecha_recomendacion', '-id_registro')
+
+    def __str__(self) -> str:
+        return f'{self.fecha_recomendacion} · {self.id_punto_venta_id} · {self.id_producto_id}'

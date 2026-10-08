@@ -62,7 +62,7 @@ const CAMPOS = Object.keys(VACIO) as Array<keyof Campos>;
  * señal de avance dentro del formulario: quien diligencia ve de un vistazo
  * qué le falta sin tener que intentar guardar.
  */
-function Paso({
+export function Paso({
   numero,
   icono: Icono,
   titulo,

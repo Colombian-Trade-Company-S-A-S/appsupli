@@ -52,6 +52,7 @@ import { formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
 import { useAuth } from '@/core/auth';
 import { partnersTableroApi, type FiltrosPartners, type ResultadoMetas } from '../api';
 import { CampoSelect } from '../components/CampoSelect';
+import { LISTAS_PARTNERS, ORDEN_LISTAS_PARTNERS } from '../listasPartners';
 import { BadgeCumplimiento, BarraCumplimiento } from '../components/Cumplimiento';
 import {
   useBiTradeMutation,
@@ -137,6 +138,19 @@ export default function PlanPartnersPage() {
           Formulario
         </Button>
         {puedeAdministrar && <SubirMetas />}
+        {ORDEN_LISTAS_PARTNERS.map((lista) => {
+          const { titulo, icono: Icono, ruta } = LISTAS_PARTNERS[lista];
+          return (
+            <Button
+              key={lista}
+              variant="outline"
+              render={<Link to={`/inicio/bi-trade/plan-partners/listas/${ruta}`} />}
+            >
+              <Icono data-icon="inline-start" />
+              {titulo}
+            </Button>
+          );
+        })}
       </Encabezado>
 
       <Card className="py-4">

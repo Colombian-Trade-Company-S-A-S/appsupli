@@ -4320,6 +4320,24 @@ def test_las_listas_del_formulario_se_administran_desde_ahi(app_bi_trade, catalo
     assert cliente.delete('/api/bi-trade/partners/puntos-venta/C900').status_code == 204
 
 
+def test_mover_un_punto_de_regional_mueve_sus_registros(app_bi_trade, catalogo_partners):
+    """Como en Belkin: lo ya cargado se va con el punto a la nueva regional."""
+    norte, sur, producto = catalogo_partners
+    cliente = cliente_de(
+        crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    )
+    cliente.post('/api/bi-trade/partners/registros', _recomendacion(norte, producto), format='json')
+
+    respuesta = cliente.patch(
+        f'/api/bi-trade/partners/puntos-venta/{norte.pk}',
+        {'idRegional': sur.id_regional_id},
+        format='json',
+    )
+
+    assert respuesta.status_code == 200
+    assert RegistroPartner.objects.get().id_regional_id == sur.id_regional_id
+
+
 def test_administrar_las_listas_pide_permiso(app_bi_trade, catalogo_partners):
     promotor = crear_usuario('promotor@supli.tech', app_bi_trade)
     respuesta = cliente_de(promotor).post(

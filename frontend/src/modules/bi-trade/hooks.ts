@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, type Paginated } from '@/shared/api/http-client';
 import {
+  belkinApi,
   biTradeApi,
   partnersApi,
   partnersTableroApi,
@@ -11,6 +12,11 @@ import {
   type FiltrosDia,
   type FiltrosDashboard,
   type FiltrosPartners,
+  type AsesorApple,
+  type CategoriaBelkin,
+  type ProductoBelkin,
+  type PuntoVentaBelkin,
+  type RegionalBelkin,
 } from './api';
 import { useFuente, type FuenteDatos } from './fuente';
 
@@ -43,6 +49,10 @@ export const biTradeKeys = {
   partnersTablero: (filtros: FiltrosPartners) =>
     ['bi-trade', 'partners', 'tablero', filtros] as const,
   partnersPeriodos: () => ['bi-trade', 'partners', 'periodos'] as const,
+  belkinOpciones: () => ['bi-trade', 'belkin', 'opciones'] as const,
+  belkinRegistros: (filtros: Record<string, unknown>) =>
+    ['bi-trade', 'belkin', 'registros', filtros] as const,
+  belkinCatalogo: (lista: string) => ['bi-trade', 'belkin', 'catalogo', lista] as const,
 };
 
 /**
@@ -269,6 +279,8 @@ export const useProductosPartners = () =>
     queryFn: () => partnersApi.productos.list(),
   });
 
+export type ListaPartners = 'regionales' | 'puntosVenta' | 'productos';
+
 /**
  * El tablero del plan Partners.
  *
@@ -287,4 +299,43 @@ export const usePeriodosPartners = () =>
   useQuery({
     queryKey: biTradeKeys.partnersPeriodos(),
     queryFn: () => partnersTableroApi.metas.periodos(),
+  });
+
+// ── Plan Recomiéndame Belkin ───────────────────────────────────────────────
+
+/** Los desplegables del formulario del plan Belkin, solo con lo activo. */
+export const useOpcionesBelkin = () =>
+  useQuery({
+    queryKey: biTradeKeys.belkinOpciones(),
+    queryFn: () => belkinApi.opciones(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+/** Una página de los registros del plan, del más reciente al más viejo. */
+export const useRegistrosBelkin = (filtros: Record<string, unknown> = {}) =>
+  useQuery({
+    queryKey: biTradeKeys.belkinRegistros(filtros),
+    queryFn: () => belkinApi.registros.listPagina(filtros),
+    placeholderData: (anterior) => anterior,
+  });
+
+/** Qué trae cada catálogo del plan Belkin. */
+interface CatalogosBelkin {
+  regionales: RegionalBelkin;
+  puntosVenta: PuntoVentaBelkin;
+  asesores: AsesorApple;
+  categorias: CategoriaBelkin;
+  productos: ProductoBelkin;
+}
+
+export type ListaBelkin = keyof CatalogosBelkin;
+
+/**
+ * Un catálogo completo del plan, para administrarlo. A diferencia de
+ * `useOpcionesBelkin`, trae también lo desactivado.
+ */
+export const useCatalogoBelkin = <L extends ListaBelkin>(lista: L) =>
+  useQuery({
+    queryKey: biTradeKeys.belkinCatalogo(lista),
+    queryFn: () => belkinApi[lista].list() as Promise<Array<CatalogosBelkin[L]>>,
   });

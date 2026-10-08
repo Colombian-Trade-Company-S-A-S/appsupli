@@ -1,7 +1,15 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import publico, views, views_falabella, views_hc, views_partners, views_tmk
+from . import (
+    publico,
+    views,
+    views_belkin,
+    views_falabella,
+    views_hc,
+    views_partners,
+    views_tmk,
+)
 
 app_name = 'bi_trade'
 
@@ -55,11 +63,22 @@ router.register(
 router.register('partners/productos', _par.ProductoPartnerViewSet, basename='partners-productos')
 router.register('partners/registros', _par.RegistroPartnerViewSet, basename='partners-registros')
 router.register('partners/metas', _par.MetaPartnerViewSet, basename='partners-metas')
+# Plan Recomiéndame Belkin: el formulario y sus catálogos.
+_bel = views_belkin
+router.register('belkin/regionales', _bel.RegionalBelkinViewSet, basename='belkin-regionales')
+router.register(
+    'belkin/puntos-venta', _bel.PuntoVentaBelkinViewSet, basename='belkin-puntos-venta'
+)
+router.register('belkin/asesores', _bel.AsesorAppleViewSet, basename='belkin-asesores')
+router.register('belkin/categorias', _bel.CategoriaBelkinViewSet, basename='belkin-categorias')
+router.register('belkin/productos', _bel.ProductoBelkinViewSet, basename='belkin-productos')
+router.register('belkin/registros', _bel.RegistroBelkinViewSet, basename='belkin-registros')
 
 urlpatterns = [
     path('opciones', views.opciones, name='opciones'),
     path('partners/opciones', _par.opciones_partners, name='partners-opciones'),
     path('partners/dashboard', _par.dashboard_partners, name='partners-dashboard'),
+    path('belkin/opciones', _bel.opciones_belkin, name='belkin-opciones'),
     path('dashboard', views.dashboard, name='dashboard'),
     path('cumplimiento', views.cumplimiento, name='cumplimiento'),
     path('avance-mensual', views.avance_mensual, name='avance-mensual'),

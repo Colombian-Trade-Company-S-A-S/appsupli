@@ -8,7 +8,9 @@ from rest_framework.validators import UniqueTogetherValidator
 from .models import (
     PRECIO_MAXIMO,
     Acelerador,
+    AsesorApple,
     Campana,
+    CategoriaBelkin,
     CategoriaHc,
     EscalaTicket,
     Inventario,
@@ -23,20 +25,24 @@ from .models import (
     MetaComercialTmk,
     MetaPartner,
     Producto,
+    ProductoBelkin,
     ProductoFalabella,
     ProductoHc,
     ProductoPartner,
     ProductoTmk,
     PuntoVenta,
+    PuntoVentaBelkin,
     PuntoVentaFalabella,
     PuntoVentaHc,
     PuntoVentaPartner,
     PuntoVentaTmk,
     Regional,
+    RegionalBelkin,
     RegionalFalabella,
     RegionalHc,
     RegionalPartner,
     RegionalTmk,
+    RegistroBelkin,
     RegistroPartner,
     Venta,
     VentaFalabella,
@@ -780,3 +786,211 @@ class MetaPartnerSerializer(serializers.ModelSerializer):
 
 
 MARCAS_PARTNERS = [{'value': v, 'label': etiqueta} for v, etiqueta in MarcaPartner.choices]
+
+
+# ── Plan Recomiéndame Belkin ───────────────────────────────────────────────
+# Como en Partners, el código del punto y del producto va aparte del nombre y
+# `etiqueta` los junta para leerlos, aquí con la barra del formulario anterior.
+
+
+def _texto_requerido(valor: str, campo: str) -> str:
+    texto = ' '.join(valor.split())
+    if not texto:
+        raise serializers.ValidationError(f'{campo} no puede ir vacío.')
+    return texto
+
+
+def _nombre_unico(serializer, modelo, valor: str, que: str) -> str:
+    """Un nombre de catálogo sin repetir, sin importar mayúsculas."""
+    nombre = _texto_requerido(valor, 'El nombre')
+    repetido = modelo.objects.filter(nombre__iexact=nombre)
+    if serializer.instance:
+        repetido = repetido.exclude(pk=serializer.instance.pk)
+    if repetido.exists():
+        raise serializers.ValidationError(f'Ya existe {que} «{nombre}».')
+    return nombre
+
+
+def _codigo_nuevo(serializer, modelo, valor: str, que: str) -> str:
+    """La PK la escribe la persona: hay que cuidar los duplicados."""
+    codigo = _texto_requerido(valor, 'El código')
+    if serializer.instance is None and modelo.objects.filter(pk=codigo).exists():
+        raise serializers.ValidationError(f'Ya existe {que} con el código {codigo}.')
+    return codigo
+
+
+class RegionalBelkinSerializer(serializers.ModelSerializer):
+    puntos_count = Conteo('puntos_venta')
+
+    class Meta:
+        model = RegionalBelkin
+        fields = ('id_regional', 'nombre', 'activa', 'puntos_count')
+
+    def validate_nombre(self, value: str) -> str:
+        return _nombre_unico(self, RegionalBelkin, value, 'la regional')
+
+
+class PuntoVentaBelkinSerializer(serializers.ModelSerializer):
+    etiqueta = serializers.CharField(read_only=True)
+    regional = serializers.CharField(source='id_regional.nombre', read_only=True)
+    asesores_count = Conteo('asesores')
+    registros_count = Conteo('registros')
+
+    class Meta:
+        model = PuntoVentaBelkin
+        fields = (
+            'id_punto_venta',
+            'nombre_pdv',
+            'id_regional',
+            'regional',
+            'activo',
+            'etiqueta',
+            'asesores_count',
+            'registros_count',
+        )
+
+    def validate_id_punto_venta(self, value: str) -> str:
+        return _codigo_nuevo(self, PuntoVentaBelkin, value, 'un punto de venta')
+
+    def validate_nombre_pdv(self, value: str) -> str:
+        return _texto_requerido(value, 'El nombre')
+
+
+class AsesorAppleSerializer(serializers.ModelSerializer):
+    nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
+    punto_venta_etiqueta = serializers.CharField(source='id_punto_venta.etiqueta', read_only=True)
+    regional = serializers.CharField(source='id_punto_venta.id_regional.nombre', read_only=True)
+    registros_count = Conteo('registros')
+
+    class Meta:
+        model = AsesorApple
+        fields = (
+            'id_asesor',
+            'nombre',
+            'id_punto_venta',
+            'nombre_pdv',
+            'punto_venta_etiqueta',
+            'regional',
+            'activo',
+            'registros_count',
+        )
+
+    def validate(self, attrs: dict) -> dict:
+        """El mismo nombre no se repite en un punto: es justo lo que se quiere evitar."""
+        nombre = attrs.get('nombre', getattr(self.instance, 'nombre', ''))
+        punto = attrs.get('id_punto_venta') or getattr(self.instance, 'id_punto_venta', None)
+        nombre = _texto_requerido(nombre, 'El nombre')
+        repetido = AsesorApple.objects.filter(nombre__iexact=nombre, id_punto_venta=punto)
+        if self.instance:
+            repetido = repetido.exclude(pk=self.instance.pk)
+        if repetido.exists():
+            raise serializers.ValidationError(
+                {'nombre': f'«{nombre}» ya es asesor de {punto.nombre_pdv}.'}
+            )
+        attrs['nombre'] = nombre
+        return attrs
+
+
+class CategoriaBelkinSerializer(serializers.ModelSerializer):
+    productos_count = Conteo('productos')
+
+    class Meta:
+        model = CategoriaBelkin
+        fields = ('id_categoria', 'nombre', 'activa', 'productos_count')
+
+    def validate_nombre(self, value: str) -> str:
+        return _nombre_unico(self, CategoriaBelkin, value, 'la categoría')
+
+
+class ProductoBelkinSerializer(serializers.ModelSerializer):
+    etiqueta = serializers.CharField(read_only=True)
+    categoria = serializers.CharField(source='id_categoria.nombre', read_only=True)
+    registros_count = Conteo('registros')
+
+    class Meta:
+        model = ProductoBelkin
+        fields = (
+            'id_producto',
+            'nombre_producto',
+            'id_categoria',
+            'categoria',
+            'activo',
+            'etiqueta',
+            'registros_count',
+        )
+
+    def validate_id_producto(self, value: str) -> str:
+        return _codigo_nuevo(self, ProductoBelkin, value, 'un producto')
+
+    def validate_nombre_producto(self, value: str) -> str:
+        return _texto_requerido(value, 'El nombre')
+
+
+class RegistroBelkinSerializer(serializers.ModelSerializer):
+    # La regional y la categoría se leen del catálogo de hoy, no de cuando se
+    # guardó: si el punto o el producto cambian de grupo, el registro también.
+    id_regional = serializers.IntegerField(source='id_punto_venta.id_regional_id', read_only=True)
+    regional = serializers.CharField(source='id_punto_venta.id_regional.nombre', read_only=True)
+    nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
+    punto_venta_etiqueta = serializers.CharField(source='id_punto_venta.etiqueta', read_only=True)
+    asesor = serializers.CharField(source='id_asesor.nombre', read_only=True, default='')
+    id_categoria = serializers.IntegerField(source='id_producto.id_categoria_id', read_only=True)
+    categoria = serializers.CharField(source='id_producto.id_categoria.nombre', read_only=True)
+    nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
+    producto_etiqueta = serializers.CharField(source='id_producto.etiqueta', read_only=True)
+    origen = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RegistroBelkin
+        fields = (
+            'id_registro',
+            'id_regional',
+            'regional',
+            'id_punto_venta',
+            'nombre_pdv',
+            'punto_venta_etiqueta',
+            'id_asesor',
+            'asesor',
+            'id_categoria',
+            'categoria',
+            'id_producto',
+            'nombre_producto',
+            'producto_etiqueta',
+            'fecha_recomendacion',
+            'observacion',
+            'origen',
+            'created_at',
+        )
+
+    def get_origen(self, obj) -> str:
+        """Quién lo cargó: la persona con cuenta, o el enlace público."""
+        if obj.registrado_por_id:
+            return obj.registrado_por.full_name
+        if obj.enlace_id:
+            return f'Enlace · {obj.enlace.nombre}'
+        return ''
+
+    def validate_fecha_recomendacion(self, value):
+        if value > timezone.localdate():
+            raise serializers.ValidationError('La fecha no puede ser futura.')
+        return value
+
+    def validate_observacion(self, value: str) -> str:
+        return value.strip()
+
+    def validate(self, attrs: dict) -> dict:
+        """El asesor tiene que ser del punto elegido.
+
+        Si no se cruzan, lo más probable es que se haya cambiado el punto
+        después de elegir al asesor.
+        """
+        punto = attrs.get('id_punto_venta') or getattr(self.instance, 'id_punto_venta', None)
+        if 'id_asesor' in attrs:
+            asesor = attrs['id_asesor']
+        else:
+            asesor = getattr(self.instance, 'id_asesor', None)
+        if punto and asesor and asesor.id_punto_venta_id != punto.pk:
+            raise serializers.ValidationError(
+                {'id_asesor': f'«{asesor.nombre}» no es asesor de {punto.nombre_pdv}.'}
+            )
+        return attrs

@@ -1,5 +1,6 @@
 """
-El formulario del plan Partners, abierto por enlace.
+Los formularios de los planes —Partners y Recomiéndame Belkin—, abiertos por
+enlace.
 
 Vive aparte del tablero público a propósito, porque son dos cosas distintas:
 
@@ -10,7 +11,8 @@ Vive aparte del tablero público a propósito, porque son dos cosas distintas:
     nada que proteger del otro lado.
 
 Desde aquí una persona sin cuenta puede hacer exactamente dos cosas: pedir las
-listas del formulario y enviar una recomendación. No hay más rutas. Tampoco
+listas del formulario y enviar una recomendación. No hay más rutas. Cada plan
+tiene sus propias dos, y el token de un plan no abre el formulario del otro. Tampoco
 comparte puerta con el tablero: cada uno tiene su prefijo, su permiso y su
 propio módulo, para que un cambio allá no abra nada acá ni al revés.
 
@@ -36,29 +38,38 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
 from .models import CanalEnlace, EnlacePublico
-from .serializers import RegistroPartnerSerializer
+from .serializers import RegistroBelkinSerializer, RegistroPartnerSerializer
+from .views_belkin import catalogos_belkin
 from .views_partners import aviso_de_serial, catalogos_partners
 
 
-def enlace_del_formulario(token: str) -> EnlacePublico:
+def enlace_del_formulario(token: str, canal: str = CanalEnlace.PARTNERS) -> EnlacePublico:
     """
     El enlace del token, si existe, sigue vigente y es de los que diligencian.
 
-    Un token de tablero responde aquí igual que uno inventado: por esta puerta
-    no se abre nada que muestre datos.
+    Un token de tablero —o del formulario de otro plan— responde aquí igual
+    que uno inventado: por esta puerta no se abre nada que muestre datos.
     """
-    enlace = EnlacePublico.objects.filter(token=token, canal=CanalEnlace.PARTNERS).first()
+    enlace = EnlacePublico.objects.filter(token=token, canal=canal).first()
     if enlace is None or not enlace.vigente:
         raise exceptions.NotFound('Este formulario no existe o ya no está disponible.')
     return enlace
 
 
 class EsFormularioAbierto(BasePermission):
-    """La única puerta: que el token sea el de un formulario vigente."""
+    """La única puerta: que el token sea el de un formulario vigente del plan."""
+
+    canal = CanalEnlace.PARTNERS
 
     def has_permission(self, request, view) -> bool:
-        request.enlace_formulario = enlace_del_formulario(view.kwargs.get('token', ''))
+        request.enlace_formulario = enlace_del_formulario(
+            view.kwargs.get('token', ''), self.canal
+        )
         return True
+
+
+class EsFormularioBelkinAbierto(EsFormularioAbierto):
+    canal = CanalEnlace.BELKIN
 
 
 class EnviosDelFormulario(SimpleRateThrottle):
@@ -103,5 +114,40 @@ def registrar(request, token):
     )
     return Response(
         {**RegistroPartnerSerializer(registro).data, 'message': aviso_de_serial(registro)},
+        status=status.HTTP_201_CREATED,
+    )
+
+
+# ── Plan Recomiéndame Belkin ───────────────────────────────────────────────
+
+
+def _contar_envio(enlace: EnlacePublico) -> None:
+    """En un enlace de formulario «accesos» cuenta las recomendaciones recibidas."""
+    EnlacePublico.objects.filter(pk=enlace.pk).update(
+        accesos=F('accesos') + 1, ultimo_acceso=timezone.now()
+    )
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([EsFormularioBelkinAbierto])
+def opciones_belkin(request, token):
+    """Las listas del formulario: regionales, puntos, asesores, categorías y productos."""
+    return Response(catalogos_belkin())
+
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([EsFormularioBelkinAbierto])
+@throttle_classes([EnviosDelFormulario])
+def registrar_belkin(request, token):
+    """Guarda una recomendación. Es lo único que este enlace puede hacer."""
+    enlace = request.enlace_formulario
+    entrada = RegistroBelkinSerializer(data=request.data)
+    entrada.is_valid(raise_exception=True)
+    registro = entrada.save(enlace=enlace)
+    _contar_envio(enlace)
+    return Response(
+        {**RegistroBelkinSerializer(registro).data, 'message': 'Recomendación guardada.'},
         status=status.HTTP_201_CREATED,
     )

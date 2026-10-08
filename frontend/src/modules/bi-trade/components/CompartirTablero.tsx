@@ -41,6 +41,8 @@ import {
   enlacesApi,
   urlDelEnlace,
   urlDelFormulario,
+  urlDelFormularioBelkin,
+  esCanalFormulario,
   type CanalEnlace,
   type EnlaceConClave,
   type EnlacePublico,
@@ -129,6 +131,19 @@ export function CompartirFormulario() {
       titulo="Compartir el formulario"
       descripcion="Un enlace abierto: quien lo reciba diligencia sin cuenta y sin contraseña, para no tener que escribirla cada vez. Solo puede enviar recomendaciones; no ve lo cargado ni los tableros. Si se filtra, revócalo y comparte otro."
       urlDe={urlDelFormulario}
+      etiqueta="Formulario"
+    />
+  );
+}
+
+/** Lo mismo, para el formulario del plan Recomiéndame Belkin. Cada plan tiene sus enlaces. */
+export function CompartirFormularioBelkin() {
+  return (
+    <CompartirTablero
+      canal="belkin"
+      titulo="Compartir el formulario"
+      descripcion="Un enlace abierto: quien lo reciba diligencia sin cuenta y sin contraseña, para no tener que escribirla cada vez. Solo puede enviar recomendaciones; no ve lo cargado ni las listas. Si se filtra, revócalo y comparte otro."
+      urlDe={urlDelFormularioBelkin}
       etiqueta="Formulario"
     />
   );
@@ -456,7 +471,7 @@ function FilaEnlace({
   const [confirmarClave, setConfirmarClave] = useState(false);
   const [borrarAbierto, setBorrarAbierto] = useState(false);
   // El formulario no tiene contraseña, y sus «accesos» son envíos recibidos.
-  const abierto = enlace.canal === 'partners';
+  const abierto = esCanalFormulario(enlace.canal);
 
   const alternar = useMutation({
     mutationFn: (activo: boolean) => enlacesApi.update(enlace.idEnlace, { activo }),

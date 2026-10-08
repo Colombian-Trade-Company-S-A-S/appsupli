@@ -39,7 +39,7 @@ from rest_framework.throttling import SimpleRateThrottle
 
 from .api_permissions import CanManageData, HasBiTradeApp
 from .canales import CANALES, CLARO, Canal
-from .models import Campana, CanalEnlace, EnlacePublico
+from .models import CANALES_FORMULARIO, Campana, EnlacePublico
 from .views import _calcular_avance, _calcular_concurso, _calcular_dia, opciones_de
 
 #: Cuánto dura un acceso antes de volver a pedir la contraseña: una jornada.
@@ -88,7 +88,7 @@ def enlace_vigente(token: str) -> EnlacePublico:
     formulario tampoco entran por aquí: tienen su propio módulo y su propia
     puerta, y este lado nunca los abre.
     """
-    enlace = EnlacePublico.objects.filter(token=token).exclude(canal=CanalEnlace.PARTNERS).first()
+    enlace = EnlacePublico.objects.filter(token=token).exclude(canal__in=CANALES_FORMULARIO).first()
     if enlace is None or not enlace.vigente:
         raise exceptions.NotFound('Este enlace no existe o ya no está disponible.')
     return enlace
@@ -310,9 +310,9 @@ class EnlacePublicoViewSet(
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # El formulario del plan va abierto: se diligencia a diario y no
+        # El formulario de un plan va abierto: se diligencia a diario y no
         # muestra nada, así que no tiene contraseña que entregar.
-        abierto = serializer.validated_data.get('canal') == CanalEnlace.PARTNERS
+        abierto = serializer.validated_data.get('canal') in CANALES_FORMULARIO
         clave = '' if abierto else nueva_clave()
         enlace = serializer.save(
             token=nuevo_token(),
@@ -335,7 +335,7 @@ class EnlacePublicoViewSet(
         versión sube y los accesos abiertos con la clave vieja dejan de valer.
         """
         enlace = self.get_object()
-        if enlace.canal == CanalEnlace.PARTNERS:
+        if enlace.canal in CANALES_FORMULARIO:
             return Response(
                 {
                     'code': 'sin_clave',

@@ -9,9 +9,12 @@ import type {
   Concurso,
   CumplimientoDiario,
   Opciones,
+  OpcionesBelkin,
   OpcionesPartners,
   Producto,
   PuntoVenta,
+  RegistroBelkin,
+  RegistroBelkinPayload,
   RegistroPartner,
   RegistroPartnerPayload,
 } from '../api';
@@ -125,6 +128,22 @@ export const formularioPublico = {
   registrar: (token: string, payload: RegistroPartnerPayload) =>
     cliente
       .post<RegistroPartner>(`${rutaFormulario(token)}/registros`, payload)
+      .then((r) => r.data),
+};
+
+/** El formulario del plan Recomiéndame Belkin abierto por enlace: igual, en su propio tramo. */
+const rutaFormularioBelkin = (token: string) =>
+  `/publico/formulario/belkin/${encodeURIComponent(token)}`;
+
+export const formularioPublicoBelkin = {
+  opciones: (token: string) =>
+    cliente.get<OpcionesBelkin>(`${rutaFormularioBelkin(token)}/opciones`).then((r) => r.data),
+  registrar: (token: string, payload: RegistroBelkinPayload) =>
+    cliente
+      .post<RegistroBelkin & { message?: string }>(
+        `${rutaFormularioBelkin(token)}/registros`,
+        payload,
+      )
       .then((r) => r.data),
 };
 

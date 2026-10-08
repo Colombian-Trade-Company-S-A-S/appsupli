@@ -143,6 +143,18 @@ class PuntoVentaPartnerViewSet(viewsets.ModelViewSet):
     filterset_fields = ('id_regional', 'activo')
     pagination_class = None
 
+    @transaction.atomic
+    def perform_update(self, serializer):
+        """Si el punto cambia de regional, sus registros —también los viejos— se van con él.
+
+        El registro guarda la regional con la que se llenó; sin esto quedaría
+        contando para la zona anterior.
+        """
+        punto = serializer.save()
+        punto.registros.exclude(id_regional=punto.id_regional_id).update(
+            id_regional=punto.id_regional_id
+        )
+
     def destroy(self, request, *args, **kwargs):
         punto = self.get_object()
         bloqueo = _en_uso(punto.nombre_pdv, [('registro(s)', punto.registros.count())])

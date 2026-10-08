@@ -418,7 +418,9 @@ function MetaDialog({
 
   // Lo mismo que calcula el backend, para mostrarlo antes de guardar.
   const enDinero =
-    producto?.precioVentaColtrade == null ? null : datos.metaCantidad * producto.precioVentaColtrade;
+    producto?.precioVentaColtrade == null
+      ? null
+      : datos.metaCantidad * producto.precioVentaColtrade;
   const enPuntos = producto ? datos.metaCantidad * (producto.puntaje ?? 0) : 0;
 
   const onSubmit = (event: FormEvent) => {

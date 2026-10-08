@@ -10,10 +10,11 @@ export const PLANES = {
     titulo: 'Plan Recomiéndame Belkin',
     ruta: '/inicio/bi-trade/plan-recomiendame-belkin',
     icono: MegaphoneIcon,
-    enConstruccion: true,
-    descripcion: 'Este informe está en construcción. Muy pronto vas a poder verlo aquí.',
+    enConstruccion: false,
+    descripcion:
+      'El formulario de recomendaciones y las listas que lo alimentan: puntos, asesores y productos.',
     /** Ruta del formulario de carga, si el plan ya tiene uno. */
-    formulario: null,
+    formulario: '/inicio/bi-trade/plan-recomiendame-belkin/formulario',
   },
   partners: {
     titulo: 'Plan Partners',

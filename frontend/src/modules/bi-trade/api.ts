@@ -727,14 +727,24 @@ export const urlDelEnlace = (token: string) =>
 export const urlDelFormulario = (token: string) =>
   `${window.location.origin}/formulario/${encodeURIComponent(token)}`;
 
+/** La URL del formulario público del plan Recomiéndame Belkin. */
+export const urlDelFormularioBelkin = (token: string) =>
+  `${window.location.origin}/formulario/belkin/${encodeURIComponent(token)}`;
+
 /** Los canales del BI. Cada uno tiene sus propias tablas. */
 export type Canal = 'claro' | 'hc' | 'falabella' | 'tmk';
 
+/** Los planes con formulario abierto por enlace: los únicos enlaces que escriben. */
+export type CanalFormulario = 'partners' | 'belkin';
+
 /**
- * Qué abre un enlace público: un tablero de solo lectura, o el formulario del
- * plan Partners, que es el único que escribe.
+ * Qué abre un enlace público: un tablero de solo lectura, o el formulario de
+ * un plan.
  */
-export type CanalEnlace = Canal | 'partners';
+export type CanalEnlace = Canal | CanalFormulario;
+
+export const esCanalFormulario = (canal: CanalEnlace | undefined): canal is CanalFormulario =>
+  canal === 'partners' || canal === 'belkin';
 
 /**
  * La API de un canal aparte —Homecenter, Falabella o Tmk Ecommerce Claro—: los mismos recursos y
@@ -830,7 +840,7 @@ export const biTradeApiTmk = {
 
 // ── Plan Partners ──────────────────────────────────────────────────────────
 
-/** Una regional del plan. Es catálogo: se agregan y quitan desde el formulario. */
+/** Una regional del plan. Es catálogo: se administra desde la portada del plan. */
 export interface RegionalPartner {
   idRegional: number;
   nombre: string;
@@ -855,6 +865,8 @@ export interface PuntoVentaPartner {
 export interface ProductoPartner {
   idProducto: string;
   nombreProducto: string;
+  /** Con este precio se valora lo recomendado en el tablero. */
+  precio: number;
   activo: boolean;
   etiqueta: string;
   registrosCount: number;
@@ -903,7 +915,7 @@ export type PuntoVentaPartnerPayload = Pick<
 >;
 export type ProductoPartnerPayload = Pick<
   ProductoPartner,
-  'idProducto' | 'nombreProducto' | 'activo'
+  'idProducto' | 'nombreProducto' | 'precio' | 'activo'
 >;
 
 /** Los desplegables del formulario. Cada punto trae su regional para filtrarlos. */
@@ -922,6 +934,115 @@ export const partnersApi = {
     '/partners/puntos-venta',
   ),
   productos: recurso<ProductoPartner, Partial<ProductoPartnerPayload>>('/partners/productos'),
+};
+
+// ── Plan Recomiéndame Belkin ───────────────────────────────────────────────
+// Los catálogos se administran desde el panel del plan. El registro no guarda
+// la regional ni la categoría: las lee del punto y del producto, así que si
+// alguien mueve un punto de zona, lo ya cargado se mueve con él.
+
+export interface RegionalBelkin {
+  idRegional: number;
+  nombre: string;
+  activa: boolean;
+  puntosCount: number;
+}
+
+/** Un punto de venta: el código es el centro de costos («C159»). */
+export interface PuntoVentaBelkin {
+  idPuntoVenta: string;
+  nombrePdv: string;
+  idRegional: number;
+  regional: string;
+  activo: boolean;
+  /** «Cav Andino \ C159», como se leía en el formulario anterior. */
+  etiqueta: string;
+  asesoresCount: number;
+  registrosCount: number;
+}
+
+export interface AsesorApple {
+  idAsesor: number;
+  nombre: string;
+  idPuntoVenta: string;
+  nombrePdv: string;
+  puntoVentaEtiqueta: string;
+  regional: string;
+  activo: boolean;
+  registrosCount: number;
+}
+
+export interface CategoriaBelkin {
+  idCategoria: number;
+  nombre: string;
+  activa: boolean;
+  productosCount: number;
+}
+
+export interface ProductoBelkin {
+  idProducto: string;
+  nombreProducto: string;
+  idCategoria: number;
+  categoria: string;
+  activo: boolean;
+  /** «7020178 \ Spigen Iphone 12 / 12 Pro Case Crystal Flex». */
+  etiqueta: string;
+  registrosCount: number;
+}
+
+export interface RegistroBelkin {
+  idRegistro: number;
+  idRegional: number;
+  regional: string;
+  idPuntoVenta: string;
+  nombrePdv: string;
+  puntoVentaEtiqueta: string;
+  idAsesor: number | null;
+  asesor: string;
+  idCategoria: number;
+  categoria: string;
+  idProducto: string;
+  nombreProducto: string;
+  productoEtiqueta: string;
+  fechaRecomendacion: string;
+  observacion: string;
+  origen: string;
+  createdAt: string;
+}
+
+export type RegistroBelkinPayload = Pick<
+  RegistroBelkin,
+  'idPuntoVenta' | 'idAsesor' | 'idProducto' | 'fechaRecomendacion' | 'observacion'
+>;
+export type RegionalBelkinPayload = Pick<RegionalBelkin, 'nombre' | 'activa'>;
+export type PuntoVentaBelkinPayload = Pick<
+  PuntoVentaBelkin,
+  'idPuntoVenta' | 'nombrePdv' | 'idRegional' | 'activo'
+>;
+export type AsesorApplePayload = Pick<AsesorApple, 'nombre' | 'idPuntoVenta' | 'activo'>;
+export type CategoriaBelkinPayload = Pick<CategoriaBelkin, 'nombre' | 'activa'>;
+export type ProductoBelkinPayload = Pick<
+  ProductoBelkin,
+  'idProducto' | 'nombreProducto' | 'idCategoria' | 'activo'
+>;
+
+/** Los desplegables del formulario: cada uno trae con qué se filtra. */
+export interface OpcionesBelkin {
+  regionales: Array<{ value: number; label: string }>;
+  puntosVenta: Array<{ value: string; label: string; idRegional: number }>;
+  asesores: Array<{ value: number; label: string; idPuntoVenta: string }>;
+  categorias: Array<{ value: number; label: string }>;
+  productos: Array<{ value: string; label: string; idCategoria: number }>;
+}
+
+export const belkinApi = {
+  opciones: () => api.get<OpcionesBelkin>(`${RUTA}/belkin/opciones`),
+  registros: recurso<RegistroBelkin, Partial<RegistroBelkinPayload>>('/belkin/registros'),
+  regionales: recurso<RegionalBelkin, Partial<RegionalBelkinPayload>>('/belkin/regionales'),
+  puntosVenta: recurso<PuntoVentaBelkin, Partial<PuntoVentaBelkinPayload>>('/belkin/puntos-venta'),
+  asesores: recurso<AsesorApple, Partial<AsesorApplePayload>>('/belkin/asesores'),
+  categorias: recurso<CategoriaBelkin, Partial<CategoriaBelkinPayload>>('/belkin/categorias'),
+  productos: recurso<ProductoBelkin, Partial<ProductoBelkinPayload>>('/belkin/productos'),
 };
 
 // ── Plan Partners · metas y tablero ────────────────────────────────────────
