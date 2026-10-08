@@ -443,3 +443,18 @@ def test_el_jefe_emparejado_por_correo_queda_asignado_aunque_venga_despues():
     cliente._empleados.reverse()
     todo(cliente)
     assert User.objects.get(odoo_id=2).manager == juan
+
+
+def test_eliminar_borra_las_areas_que_no_son_de_odoo():
+    Area.objects.create(name='Logistics')
+    Area.objects.create(name='Tech')  # Misma área que en Odoo: se conserva y queda marcada.
+    registro = todo(OdooFalso(), eliminar=True)
+    assert set(Area.objects.values_list('name', flat=True)) == {'SALES', 'Tech'}
+    assert Area.objects.filter(odoo=False).count() == 0
+    assert registro.resumen['areas_eliminadas'] == 1
+
+
+def test_sin_eliminar_las_areas_ajenas_se_quedan():
+    Area.objects.create(name='Logistics')
+    todo(OdooFalso())
+    assert Area.objects.filter(name='Logistics').exists()

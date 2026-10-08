@@ -13,7 +13,8 @@ Las tres opciones son independientes:
                   se conserva su histórico.
   · eliminar    — quien no aparece en Odoo, ni activo ni archivado, se borra
                   con sus registros (objetivos, retos, valoraciones). Nunca a
-                  un admin ni a quien corre la sincronización.
+                  un admin ni a quien corre la sincronización. También se
+                  borran las áreas que no salen del árbol de Odoo.
 
 Con `simular` se calcula todo igual y al final se deshace: es la vista previa.
 """
@@ -109,6 +110,7 @@ class Sincronizador:
                 # Un Odoo vacío o mal configurado no puede vaciar appsupli.
                 raise OdooError('Odoo no devolvió empleados activos: no se elimina a nadie.')
             self._eliminar_ausentes()
+            self._eliminar_areas_ajenas()
 
     # ── Departamentos ────────────────────────────────────────────────────
     def _sincronizar_departamentos(self, filas: list[dict]) -> None:
@@ -131,6 +133,14 @@ class Sincronizador:
 
         self.con_hijos = {_id(f['parent_id']) for f in filas if f['active'] and f['parent_id']}
         self.resumen['departamentos'] = len(filas)
+
+        # Todas las áreas del árbol, tengan o no personas: son las de Odoo.
+        self.areas_odoo: set[int] = set()
+        for fila in filas:
+            if fila['active']:
+                _, area = self._ubicacion(self.departamentos[fila['id']])
+                if area is not None:
+                    self.areas_odoo.add(area.pk)
 
     def _ubicacion(self, dep: Departamento | None) -> tuple[str, Area | None]:
         """Dirección y área de un departamento, según dónde está en el árbol."""
@@ -396,6 +406,13 @@ class Sincronizador:
             self._excepcion('eliminado', fila, f'{usuario.email or "Sin correo"}: no está en Odoo.')
             usuario.delete()
             self.resumen['eliminados'] += 1
+
+    def _eliminar_areas_ajenas(self) -> None:
+        """Las áreas que no salen de Odoo sobran: quien las tenía queda con la de Odoo."""
+        for area in Area.objects.exclude(pk__in=self.areas_odoo).order_by('name'):
+            self._excepcion('area_eliminada', {'id': None, 'name': area.name}, 'El área no está en Odoo.')
+            area.delete()
+            self.resumen['areas_eliminadas'] += 1
 
     # ── Calidad de datos ─────────────────────────────────────────────────
     def _revisar_calidad(self, fila: dict) -> None:

@@ -83,7 +83,7 @@ const OPCIONES: {
     clave: 'eliminar',
     titulo: 'Eliminar a quien no está en Odoo',
     ayuda:
-      'Borra, con todos sus registros (objetivos, retos, valoraciones), a quien no aparece en Odoo ni activo ni archivado. No se puede deshacer. Nunca borra a un admin ni a ti.',
+      'Borra, con todos sus registros (objetivos, retos, valoraciones), a quien no aparece en Odoo ni activo ni archivado, y las áreas que no salen de Odoo. No se puede deshacer. Nunca borra a un admin ni a ti.',
   },
 ];
 
@@ -93,6 +93,7 @@ const CIFRAS: { clave: string; titulo: string }[] = [
   { clave: 'sinCambios', titulo: 'Sin cambios' },
   { clave: 'desactivados', titulo: 'Desactivados' },
   { clave: 'eliminados', titulo: 'Eliminados' },
+  { clave: 'areasEliminadas', titulo: 'Áreas eliminadas' },
   { clave: 'nuevosSinCrear', titulo: 'Nuevos sin crear' },
   { clave: 'existentesSinActualizar', titulo: 'Sin actualizar' },
   { clave: 'bajasSinDesactivar', titulo: 'Bajas sin desactivar' },
@@ -111,6 +112,7 @@ const TIPOS_EXCEPCION: Record<string, string> = {
   admin_de_baja: 'Admin archivado en Odoo',
   eliminado: 'Eliminados: no están en Odoo',
   conservado_sin_odoo: 'Admins que no están en Odoo (se conservan)',
+  area_eliminada: 'Áreas eliminadas: no están en Odoo',
 };
 
 /** Integración con Odoo: solo lectura. Odoo → base de appsupli. */
