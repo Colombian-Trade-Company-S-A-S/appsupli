@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircleIcon, ArrowLeftIcon, MailIcon } from 'lucide-react';
+import { AlertCircleIcon, MailIcon } from 'lucide-react';
 import { irAMicrosoft, useAuth } from '@/core/auth';
 import { authApi } from '@/core/auth/auth.api';
 import {
@@ -65,24 +64,20 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1.5">
         <h1 className="text-3xl font-semibold tracking-tight">Bienvenido a appsupli</h1>
         <p className="text-sm text-muted-foreground">
-          Accede con tu cuenta corporativa y descubre las herramientas que Supli tiene disponibles
-          para ti.
+          Entra con tu cuenta corporativa @supli.tech.
         </p>
       </div>
 
       {conMicrosoft && (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
           <Button size="lg" onClick={entrarConMicrosoft} disabled={yendo}>
             {yendo ? <Spinner data-icon="inline-start" /> : <LogoMicrosoft />}
             Ingresar con Microsoft
           </Button>
-          <p className="text-center text-xs text-muted-foreground">
-            Usa tu cuenta corporativa @supli.tech.
-          </p>
           {errorMicrosoft && (
             <Alert variant="destructive">
               <AlertCircleIcon />
@@ -172,17 +167,6 @@ export default function LoginPage() {
           </FieldGroup>
         </form>
       )}
-
-      <div className="flex flex-col gap-4">
-        <Separator />
-        <Link
-          to="/"
-          className="flex items-center gap-1.5 self-start text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeftIcon className="size-4" />
-          Volver al inicio
-        </Link>
-      </div>
     </div>
   );
 }

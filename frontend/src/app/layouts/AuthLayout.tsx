@@ -1,5 +1,5 @@
 import { Link, Outlet } from 'react-router-dom';
-import { BarChart3Icon, LayoutGridIcon, TrophyIcon } from 'lucide-react';
+import { ArrowLeftIcon, BarChart3Icon, LayoutGridIcon, TrophyIcon } from 'lucide-react';
 import { useForceTheme } from '@/shared/hooks';
 import { Cuadricula, Marca } from './Marca';
 
@@ -28,13 +28,16 @@ const HERRAMIENTAS = [
  * El formulario va a la izquierda; a la derecha, en pantallas grandes, un
  * panel con el degradado de marca que cuenta qué hay detrás. En celular el panel
  * se oculta: ahí lo único que importa es entrar.
+ *
+ * Ocupa exactamente la pantalla (`h-dvh`): nada de scroll para entrar. Solo en
+ * una pantalla muy baja la columna del formulario se desplaza por dentro.
  */
 export function AuthLayout() {
   useForceTheme('dark');
 
   return (
-    <div className="grid min-h-full lg:grid-cols-[1fr_1.1fr]">
-      <div className="flex flex-col gap-6 p-6 md:p-10">
+    <div className="grid h-dvh overflow-hidden lg:grid-cols-[1fr_1.1fr]">
+      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-6 py-5 md:px-10 md:py-7">
         <Link to="/" aria-label="Ir al inicio" className="self-start">
           <Marca />
         </Link>
@@ -45,12 +48,19 @@ export function AuthLayout() {
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          © {new Date().getFullYear()} Supli. Uso interno.
-        </p>
+        <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
+          <Link
+            to="/"
+            className="flex items-center gap-1.5 transition-colors hover:text-foreground"
+          >
+            <ArrowLeftIcon className="size-3.5" />
+            Volver al inicio
+          </Link>
+          <span>© {new Date().getFullYear()} Supli. Uso interno.</span>
+        </div>
       </div>
 
-      <aside className="relative isolate hidden flex-col justify-between gap-10 overflow-hidden bg-brand-gradient p-12 text-white lg:flex">
+      <aside className="relative isolate hidden min-h-0 flex-col justify-between gap-6 overflow-hidden bg-brand-gradient p-10 text-white lg:flex">
         <Cuadricula invertida />
         <div
           aria-hidden
@@ -61,7 +71,7 @@ export function AuthLayout() {
           El ecosistema digital de Supli OS
         </span>
 
-        <div className="flex max-w-lg flex-col gap-8">
+        <div className="flex max-w-lg flex-col gap-6">
           <div className="flex flex-col gap-3">
             <h2 className="text-3xl font-semibold tracking-tight text-balance">
               Un ecosistema digital
@@ -74,7 +84,7 @@ export function AuthLayout() {
             </p>
           </div>
 
-          <ul className="flex flex-col gap-4">
+          <ul className="flex flex-col gap-3">
             {HERRAMIENTAS.map(({ icono: Icono, titulo, corto }) => (
               <li key={titulo} className="flex items-center gap-4">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/15">
