@@ -172,6 +172,17 @@ SPECTACULAR_SETTINGS = {
     ],
 }
 
+# ── Ingreso con Microsoft (Entra ID) ─────────────────────────────────────────
+# No son secretos: el navegador los usa igual. Sin client secret, con PKCE.
+MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='2ff22c76-1647-48cc-81ae-36b57a4a192b')
+MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='06ed2626-9f44-4faf-a85d-89ac03203664')
+# Con Microsoft funcionando, la contraseña se apaga (False) para todos menos
+# las cuentas de respaldo, por si el SSO falla.
+LOGIN_CONTRASENA_ACTIVO = config('LOGIN_CONTRASENA_ACTIVO', default=True, cast=bool)
+LOGIN_CONTRASENA_RESPALDO = [
+    c.strip().lower() for c in config('LOGIN_CONTRASENA_RESPALDO', default='', cast=Csv()) if c.strip()
+]
+
 # ── Odoo ───────────────────────────────────────────────────────────────────
 # Solo se lee de Odoo. Sin estas variables, el botón de estado lo dice y la
 # sincronización no arranca; el resto de la plataforma no depende de Odoo.

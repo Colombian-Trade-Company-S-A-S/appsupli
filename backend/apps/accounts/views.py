@@ -1,10 +1,13 @@
 """Endpoints de sesión."""
+from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .microsoft import TokenMicrosoftInvalido, correo_del_token, validar_id_token
+from .models import User
 from .serializers import (
     ChangePasswordSerializer,
     DecisionInstalacionSerializer,
@@ -12,6 +15,7 @@ from .serializers import (
     PreferencesSerializer,
     UserSerializer,
     VerifyPasswordSerializer,
+    sesion_para,
 )
 
 
@@ -27,6 +31,59 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.validated_data['user'].registrar_inicio_de_sesion()
         return Response(serializer.to_representation(serializer.validated_data))
+
+
+class IngresoView(APIView):
+    """GET /api/auth/ingreso → cómo se entra: Microsoft y si la contraseña sigue abierta."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def get(self, request):
+        microsoft = None
+        if settings.MICROSOFT_TENANT_ID and settings.MICROSOFT_CLIENT_ID:
+            microsoft = {
+                'tenant_id': settings.MICROSOFT_TENANT_ID,
+                'client_id': settings.MICROSOFT_CLIENT_ID,
+            }
+        return Response({'microsoft': microsoft, 'contrasena': settings.LOGIN_CONTRASENA_ACTIVO})
+
+
+class MicrosoftLoginView(APIView):
+    """
+    POST /api/auth/microsoft {idToken} → {accessToken, refreshToken, user}
+
+    Entra quien tenga en appsupli —es decir, en Odoo— el mismo correo que su
+    cuenta de Microsoft. No se crean cuentas aquí: si no está, no entra.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def post(self, request):
+        id_token = request.data.get('id_token') or ''
+        if not id_token:
+            return Response({'message': 'Falta el token de Microsoft.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            datos = validar_id_token(id_token)
+        except TokenMicrosoftInvalido as error:
+            return Response({'message': str(error)}, status=status.HTTP_401_UNAUTHORIZED)
+
+        correo = correo_del_token(datos)
+        usuario = User.objects.filter(email__iexact=correo).first() if correo else None
+        if usuario is None:
+            return Response(
+                {'message': f'{correo or "Tu cuenta"} no está habilitada en appsupli. '
+                            'Tu correo de Microsoft debe ser el mismo que tienes en Odoo.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not usuario.is_active:
+            return Response(
+                {'message': 'Tu cuenta está desactivada. Contacta al administrador.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        usuario.registrar_inicio_de_sesion()
+        return Response(sesion_para(usuario))
 
 
 class MeView(APIView):

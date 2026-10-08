@@ -11,6 +11,7 @@ import { RequireAuth } from './RequireAuth';
 
 const LandingPage = lazy(() => import('@/app/pages/LandingPage'));
 const LoginPage = lazy(() => import('@/app/pages/LoginPage'));
+const MicrosoftCallbackPage = lazy(() => import('@/app/pages/MicrosoftCallbackPage'));
 const HomePage = lazy(() => import('@/app/pages/app/HomePage'));
 const ProfilePage = lazy(() => import('@/app/pages/app/ProfilePage'));
 const AdminPage = lazy(() => import('@/modules/admin/pages/AdminPage'));
@@ -91,7 +92,11 @@ const routes: RouteObject[] = [
     children: [
       {
         element: <AuthLayout />,
-        children: [{ path: 'login', element: withSuspense(<LoginPage />) }],
+        children: [
+          { path: 'login', element: withSuspense(<LoginPage />) },
+          // La URL de retorno registrada en Microsoft Entra.
+          { path: 'auth/microsoft', element: withSuspense(<MicrosoftCallbackPage />) },
+        ],
       },
     ],
   },

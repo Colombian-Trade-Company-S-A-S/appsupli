@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { AlertCircleIcon, ArrowLeftIcon, MailIcon } from 'lucide-react';
-import { useAuth } from '@/core/auth';
+import { irAMicrosoft, useAuth } from '@/core/auth';
+import { authApi } from '@/core/auth/auth.api';
 import {
   Alert,
   AlertDescription,
@@ -24,6 +26,29 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [touched, setTouched] = useState(false);
   const [olvido, setOlvido] = useState(false);
+  const [respaldo, setRespaldo] = useState(false);
+  const [yendo, setYendo] = useState(false);
+  const [errorMicrosoft, setErrorMicrosoft] = useState<string | null>(null);
+
+  const { data: ingreso, isError: sinConfig } = useQuery({
+    queryKey: ['auth', 'ingreso'],
+    queryFn: authApi.ingreso,
+    staleTime: Infinity,
+  });
+  // Si no se pudo saber cómo se entra, se deja la contraseña: mejor que nada.
+  const conMicrosoft = !!ingreso?.microsoft;
+  const conContrasena = sinConfig || !ingreso || ingreso.contrasena || respaldo;
+
+  const entrarConMicrosoft = async () => {
+    setYendo(true);
+    setErrorMicrosoft(null);
+    try {
+      await irAMicrosoft();
+    } catch (e) {
+      setYendo(false);
+      setErrorMicrosoft(e instanceof Error ? e.message : 'No se pudo abrir Microsoft.');
+    }
+  };
 
   const emailError = touched && !email ? 'El correo es obligatorio' : undefined;
   const passwordError = touched && !password ? 'La contraseña es obligatoria' : undefined;
@@ -49,68 +74,104 @@ export default function LoginPage() {
         </p>
       </div>
 
-      <form onSubmit={onSubmit} noValidate>
-        <FieldGroup>
-          <Field data-invalid={!!emailError || undefined}>
-            <FieldLabel htmlFor="email">Correo corporativo</FieldLabel>
-            <InputGroup>
-              <InputGroupAddon>
-                <MailIcon />
-              </InputGroupAddon>
-              <InputGroupInput
-                id="email"
-                type="email"
-                autoComplete="email"
-                autoFocus
-                placeholder="nombre@empresa.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                aria-invalid={!!emailError || undefined}
-              />
-            </InputGroup>
-            {emailError && <FieldError>{emailError}</FieldError>}
-          </Field>
-
-          <Field data-invalid={!!passwordError || undefined}>
-            <FieldLabel htmlFor="password">Contraseña</FieldLabel>
-            <PasswordInput
-              id="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              aria-invalid={!!passwordError || undefined}
-            />
-            {passwordError && <FieldError>{passwordError}</FieldError>}
-          </Field>
-
-          {error && (
+      {conMicrosoft && (
+        <div className="flex flex-col gap-3">
+          <Button size="lg" onClick={entrarConMicrosoft} disabled={yendo}>
+            {yendo ? <Spinner data-icon="inline-start" /> : <LogoMicrosoft />}
+            Ingresar con Microsoft
+          </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            Usa tu cuenta corporativa @supli.tech.
+          </p>
+          {errorMicrosoft && (
             <Alert variant="destructive">
               <AlertCircleIcon />
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>{errorMicrosoft}</AlertDescription>
             </Alert>
           )}
-
-          <Field>
-            <Button type="submit" size="lg" disabled={isSubmitting}>
-              {isSubmitting && <Spinner data-icon="inline-start" />}
-              {isSubmitting ? 'Iniciando sesión…' : 'Iniciar sesión'}
-            </Button>
+          {!ingreso?.contrasena && !respaldo && (
             <button
               type="button"
-              onClick={() => setOlvido((v) => !v)}
-              className="self-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => setRespaldo(true)}
+              className="self-center text-xs text-muted-foreground transition-colors hover:text-foreground"
             >
-              ¿Olvidaste tu contraseña?
+              Ingreso de respaldo del administrador
             </button>
-            {olvido && (
-              <p className="text-center text-sm text-muted-foreground">
-                Solicita el restablecimiento de tu contraseña con el administrador de appsupli.
-              </p>
+          )}
+        </div>
+      )}
+
+      {conMicrosoft && conContrasena && (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <Separator className="flex-1" />o con contraseña
+          <Separator className="flex-1" />
+        </div>
+      )}
+
+      {conContrasena && (
+        <form onSubmit={onSubmit} noValidate>
+          <FieldGroup>
+            <Field data-invalid={!!emailError || undefined}>
+              <FieldLabel htmlFor="email">Correo corporativo</FieldLabel>
+              <InputGroup>
+                <InputGroupAddon>
+                  <MailIcon />
+                </InputGroupAddon>
+                <InputGroupInput
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  autoFocus={!conMicrosoft}
+                  placeholder="nombre@empresa.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  aria-invalid={!!emailError || undefined}
+                />
+              </InputGroup>
+              {emailError && <FieldError>{emailError}</FieldError>}
+            </Field>
+
+            <Field data-invalid={!!passwordError || undefined}>
+              <FieldLabel htmlFor="password">Contraseña</FieldLabel>
+              <PasswordInput
+                id="password"
+                autoComplete="current-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-invalid={!!passwordError || undefined}
+              />
+              {passwordError && <FieldError>{passwordError}</FieldError>}
+            </Field>
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircleIcon />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
-          </Field>
-        </FieldGroup>
-      </form>
+
+            <Field>
+              <Button type="submit" size="lg" disabled={isSubmitting}>
+                {isSubmitting && <Spinner data-icon="inline-start" />}
+                {isSubmitting ? 'Iniciando sesión…' : 'Iniciar sesión'}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setOlvido((v) => !v)}
+                className="self-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
+              {olvido && (
+                <p className="text-center text-sm text-muted-foreground">
+                  Solicita el restablecimiento de tu contraseña con el administrador de appsupli.
+                </p>
+              )}
+            </Field>
+          </FieldGroup>
+        </form>
+      )}
 
       <div className="flex flex-col gap-4">
         <Separator />
@@ -123,5 +184,17 @@ export default function LoginPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+/** El logo de Microsoft, como lo pide su guía de marca para el botón de ingreso. */
+function LogoMicrosoft() {
+  return (
+    <svg data-icon="inline-start" viewBox="0 0 21 21" aria-hidden="true">
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
   );
 }

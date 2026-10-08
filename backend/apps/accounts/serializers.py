@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -5,6 +8,26 @@ from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Application, User
+
+logger = logging.getLogger(__name__)
+
+
+def sesion_para(user: User) -> dict:
+    """La sesión de appsupli, entre por contraseña o por Microsoft."""
+    refresh = RefreshToken.for_user(user)
+    return {
+        'access_token': str(refresh.access_token),
+        'refresh_token': str(refresh),
+        'user': UserSerializer(user).data,
+    }
+
+
+def contrasena_permitida(email: str) -> bool:
+    """
+    Con Microsoft activo, la contraseña se apaga para todos menos las cuentas de
+    respaldo: si el SSO falla, alguien tiene que poder entrar a arreglarlo.
+    """
+    return settings.LOGIN_CONTRASENA_ACTIVO or email.lower() in settings.LOGIN_CONTRASENA_RESPALDO
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
@@ -105,6 +128,10 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, style={'input_type': 'password'})
 
     def validate(self, attrs):
+        if not contrasena_permitida(attrs['email']):
+            raise serializers.ValidationError(
+                {'detail': 'El ingreso es con tu cuenta de Microsoft de Supli.'}
+            )
         user = authenticate(
             request=self.context.get('request'),
             username=attrs['email'].lower(),
@@ -116,17 +143,14 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'detail': 'Tu cuenta está desactivada. Contacta al administrador.'}
             )
+        if not settings.LOGIN_CONTRASENA_ACTIVO:
+            # La puerta de respaldo queda registrada cada vez que se usa.
+            logger.warning('Ingreso de respaldo con contraseña: %s', user.email)
         attrs['user'] = user
         return attrs
 
     def to_representation(self, instance):
-        user: User = instance['user']
-        refresh = RefreshToken.for_user(user)
-        return {
-            'access_token': str(refresh.access_token),
-            'refresh_token': str(refresh),
-            'user': UserSerializer(user).data,
-        }
+        return sesion_para(instance['user'])
 
 
 class ChangePasswordSerializer(serializers.Serializer):

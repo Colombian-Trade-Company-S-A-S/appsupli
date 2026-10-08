@@ -3,7 +3,8 @@ import { tokenStorage } from '@/core/session/tokenStorage';
 import { setUnauthorizedHandler } from '@/shared/api/http-client';
 import { useAppearanceStore } from '@/shared/hooks';
 import { authApi } from './auth.api';
-import type { LoginCredentials, User } from './types';
+import { olvidarCuentaMicrosoft } from './microsoft';
+import type { LoginCredentials, LoginResponse, User } from './types';
 
 type Status = 'idle' | 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -12,6 +13,8 @@ interface AuthState {
   status: Status;
   error: string | null;
   login: (credentials: LoginCredentials) => Promise<void>;
+  /** Termina el ingreso con el id_token que devolvió Microsoft. */
+  loginMicrosoft: (idToken: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Rehidrata la sesión al arrancar la app. */
   bootstrap: () => Promise<void>;
@@ -26,23 +29,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   status: 'idle',
   error: null,
 
-  async login(credentials) {
-    set({ status: 'loading', error: null });
-    try {
-      const { accessToken, refreshToken, user } = await authApi.login(credentials);
-      tokenStorage.set(accessToken, refreshToken);
-      aplicarApariencia(user);
-      set({ user, status: 'authenticated', error: null });
-    } catch (error) {
-      tokenStorage.clear();
-      set({
-        user: null,
-        status: 'unauthenticated',
-        error: error instanceof Error ? error.message : 'Error al iniciar sesión',
-      });
-      throw error;
-    }
-  },
+  login: (credentials) => iniciarSesion(() => authApi.login(credentials)),
+
+  loginMicrosoft: (idToken) => iniciarSesion(() => authApi.microsoft(idToken)),
 
   async logout() {
     try {
@@ -51,6 +40,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Cerrar sesión localmente aunque falle el backend.
     } finally {
       tokenStorage.clear();
+      void olvidarCuentaMicrosoft();
       set({ user: null, status: 'unauthenticated', error: null });
     }
   },
@@ -81,6 +71,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return user.isAdmin || user.permissions.includes(permission);
   },
 }));
+
+/** Igual entre por contraseña o por Microsoft: guarda la sesión o deja el error. */
+async function iniciarSesion(pedir: () => Promise<LoginResponse>) {
+  useAuthStore.setState({ status: 'loading', error: null });
+  try {
+    const { accessToken, refreshToken, user } = await pedir();
+    tokenStorage.set(accessToken, refreshToken);
+    aplicarApariencia(user);
+    useAuthStore.setState({ user, status: 'authenticated', error: null });
+  } catch (error) {
+    tokenStorage.clear();
+    useAuthStore.setState({
+      user: null,
+      status: 'unauthenticated',
+      error: error instanceof Error ? error.message : 'Error al iniciar sesión',
+    });
+    throw error;
+  }
+}
 
 /** Lleva la apariencia guardada en la cuenta al store de UI. */
 function aplicarApariencia(user: User) {

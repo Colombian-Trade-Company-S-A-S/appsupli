@@ -62,6 +62,13 @@ export interface LoginCredentials {
   password: string;
 }
 
+/** Cómo se entra a appsupli. Lo decide el backend. */
+export interface ConfigIngreso {
+  microsoft: { tenantId: string; clientId: string } | null;
+  /** `false`: la contraseña solo queda para la cuenta de respaldo. */
+  contrasena: boolean;
+}
+
 export interface LoginResponse {
   accessToken: string;
   refreshToken: string;

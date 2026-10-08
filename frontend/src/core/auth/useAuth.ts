@@ -19,6 +19,7 @@ export function useAuth() {
     /** El login está en curso. */
     isSubmitting: status === 'loading',
     login: useAuthStore((s) => s.login),
+    loginMicrosoft: useAuthStore((s) => s.loginMicrosoft),
     logout: useAuthStore((s) => s.logout),
     can: useAuthStore((s) => s.can),
     setUser: useAuthStore((s) => s.setUser),

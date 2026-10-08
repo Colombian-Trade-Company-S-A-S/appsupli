@@ -3,8 +3,10 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
     ChangePasswordView,
+    IngresoView,
     InstalacionAppView,
     LoginView,
+    MicrosoftLoginView,
     LogoutView,
     MeView,
     PreferencesView,
@@ -15,6 +17,8 @@ app_name = 'auth'
 
 urlpatterns = [
     path('login', LoginView.as_view(), name='login'),
+    path('ingreso', IngresoView.as_view(), name='ingreso'),
+    path('microsoft', MicrosoftLoginView.as_view(), name='microsoft'),
     path('me', MeView.as_view(), name='me'),
     path('preferences', PreferencesView.as_view(), name='preferences'),
     path('instalacion-app', InstalacionAppView.as_view(), name='instalacion-app'),
