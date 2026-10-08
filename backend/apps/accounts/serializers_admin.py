@@ -27,7 +27,7 @@ class AreaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Area
-        fields = ('id', 'name', 'description', 'is_active', 'user_count')
+        fields = ('id', 'name', 'description', 'is_active', 'odoo', 'user_count')
 
 
 class PermissionSerializer(serializers.ModelSerializer):
@@ -82,7 +82,15 @@ class RoleSerializer(serializers.ModelSerializer):
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
-    """Usuario visto desde Administración: datos + accesos, todo editable."""
+    """
+    Usuario visto desde Administración.
+
+    Lo que describe a la persona en la organización —área, cargo, jefe,
+    dirección, regional, cédula— viene de Odoo y aquí es de solo lectura. A
+    quien viene de Odoo tampoco se le cambia el nombre ni el correo. Desde
+    Administración se manejan los accesos: aplicaciones, roles, permisos,
+    contraseña, si está activo y si es admin.
+    """
 
     full_name = serializers.CharField(read_only=True)
     is_admin = serializers.BooleanField(read_only=True)
@@ -111,6 +119,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         ],
     )
     puede_iniciar_sesion = serializers.BooleanField(read_only=True)
+    departamento_nombre = serializers.CharField(source='departamento', read_only=True, default='')
 
     class Meta:
         model = User
@@ -131,6 +140,10 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'regional',
             'punto_venta',
             'pais',
+            'cedula',
+            'odoo_id',
+            'departamento_nombre',
+            'sincronizado_odoo_at',
             'manager',
             'manager_name',
             'is_active',
@@ -144,7 +157,25 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'extra_permissions',
             'password',
         )
-        read_only_fields = ('last_login_at',)
+        # Lo de Odoo lo escribe la sincronización, no el formulario.
+        read_only_fields = (
+            'last_login_at', 'odoo_id', 'sincronizado_odoo_at', 'cedula', 'area', 'position',
+            'manager', 'direccion', 'organizacion', 'regional', 'punto_venta', 'pais',
+        )
+
+    #: Lo que manda Odoo de la persona misma; solo se edita en quien no viene de allá.
+    CAMPOS_PERSONALES_ODOO = ('first_name', 'last_name', 'email')
+
+    def validate_kind(self, value):
+        """
+        Desde aquí solo se decide quién es admin. Líder o colaborador lo define
+        Odoo: líder es quien tiene personas a cargo.
+        """
+        if value == User.Kind.ADMIN:
+            return value
+        if self.instance is not None and self.instance.team.exists():
+            return User.Kind.LEADER
+        return User.Kind.COLLABORATOR
 
     def validate_email(self, value):
         """Vacío se guarda como nulo: dos vacíos chocarían contra el índice único."""
@@ -174,6 +205,9 @@ class AdminUserSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
+        if instance.odoo_id:
+            for campo in self.CAMPOS_PERSONALES_ODOO:
+                validated_data.pop(campo, None)
         password = validated_data.pop('password', '')
         user = super().update(instance, validated_data)
         if password:

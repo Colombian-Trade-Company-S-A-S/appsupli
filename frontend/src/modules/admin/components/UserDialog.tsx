@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { adminApi, type AdminUser, type AdminUserPayload, type UserKind } from '../api';
-import { useAdminMutation, useApplications, useAreas, useRoles } from '../hooks';
+import { adminApi, type AdminUser, type AdminUserPayload } from '../api';
+import { useAdminMutation, useApplications, useRoles } from '../hooks';
 import { AYUDA_APPS, AYUDA_ROLES, ayudaDe, type Ayuda } from '../ayudas';
 import { AyudaAcceso } from './AyudaAcceso';
+import { formatoFechaHora } from '@/shared/lib/formato';
 import {
   Button,
   Checkbox,
@@ -18,30 +19,16 @@ import {
   FieldLabel,
   Input,
   PasswordInput,
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Separator,
   Spinner,
   Switch,
 } from '@/shared/components/ui';
-
-const TIPOS: Array<{ value: UserKind; label: string }> = [
-  { value: 'colaborador', label: 'Colaborador' },
-  { value: 'lider', label: 'Líder' },
-  { value: 'admin', label: 'Admin (acceso total)' },
-];
 
 const VACIO: AdminUserPayload = {
   email: '',
   username: '',
   firstName: '',
   lastName: '',
-  area: null,
-  position: '',
   kind: 'colaborador',
   phone: '',
   isActive: true,
@@ -59,9 +46,10 @@ interface UserDialogProps {
 
 export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) {
   const editando = !!usuario;
+  // Nombre y correo de quien viene de Odoo se cambian allá, no aquí.
+  const deOdoo = !!usuario?.odooId;
   const [datos, setDatos] = useState<AdminUserPayload>(VACIO);
 
-  const { data: areas = [] } = useAreas();
   const { data: apps = [] } = useApplications();
   const { data: roles = [] } = useRoles();
 
@@ -80,8 +68,6 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
             username: usuario.username,
             firstName: usuario.firstName,
             lastName: usuario.lastName,
-            area: usuario.area,
-            position: usuario.position,
             kind: usuario.kind,
             phone: usuario.phone,
             isActive: usuario.isActive,
@@ -120,10 +106,12 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
           <DialogTitle>{editando ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle>
           <DialogDescription>
             {editando
-              ? 'Actualiza sus datos y define a qué aplicaciones entra.'
-              : 'Crea la cuenta y asígnale sus accesos.'}
+              ? 'Define a qué aplicaciones entra. Su información de la organización viene de Odoo.'
+              : 'Solo para cuentas que no están en Odoo (servicio, soporte). Las personas de la compañía llegan con la sincronización.'}
           </DialogDescription>
         </DialogHeader>
+
+        {usuario && <DatosOdoo usuario={usuario} />}
 
         <form onSubmit={onSubmit} id="user-form" noValidate>
           <FieldGroup>
@@ -132,6 +120,7 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
                 <FieldLabel htmlFor="firstName">Nombres</FieldLabel>
                 <Input
                   id="firstName"
+                  disabled={deOdoo}
                   value={datos.firstName ?? ''}
                   onChange={(e) => set('firstName', e.target.value)}
                   required
@@ -141,6 +130,7 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
                 <FieldLabel htmlFor="lastName">Apellidos</FieldLabel>
                 <Input
                   id="lastName"
+                  disabled={deOdoo}
                   value={datos.lastName ?? ''}
                   onChange={(e) => set('lastName', e.target.value)}
                 />
@@ -150,6 +140,7 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
                 <Input
                   id="email"
                   type="email"
+                  disabled={deOdoo}
                   value={datos.email ?? ''}
                   onChange={(e) => set('email', e.target.value)}
                   required
@@ -166,59 +157,6 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
               </Field>
 
               <Field>
-                <FieldLabel htmlFor="area">Área</FieldLabel>
-                <Select
-                  items={areas.map((a) => ({ value: String(a.id), label: a.name }))}
-                  value={datos.area ? String(datos.area) : ''}
-                  onValueChange={(v) => set('area', v ? Number(v) : null)}
-                >
-                  <SelectTrigger id="area">
-                    <SelectValue placeholder="Sin área" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {areas.map((area) => (
-                        <SelectItem key={area.id} value={String(area.id)}>
-                          {area.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="position">Cargo</FieldLabel>
-                <Input
-                  id="position"
-                  value={datos.position ?? ''}
-                  onChange={(e) => set('position', e.target.value)}
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="kind">Tipo de usuario</FieldLabel>
-                <Select
-                  items={TIPOS.map((t) => ({ value: t.value, label: t.label }))}
-                  value={datos.kind ?? 'colaborador'}
-                  onValueChange={(v) => set('kind', v as UserKind)}
-                >
-                  <SelectTrigger id="kind">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {TIPOS.map((tipo) => (
-                        <SelectItem key={tipo.value} value={tipo.value}>
-                          {tipo.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
                 <FieldLabel htmlFor="phone">Teléfono</FieldLabel>
                 <Input
                   id="phone"
@@ -227,6 +165,19 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
                 />
               </Field>
             </div>
+
+            <Field orientation="horizontal">
+              <Switch
+                id="isAdmin"
+                checked={datos.kind === 'admin'}
+                onCheckedChange={(v) =>
+                  // Al quitarle el admin, el backend decide si es líder o
+                  // colaborador según tenga personas a cargo en Odoo.
+                  set('kind', v ? 'admin' : 'colaborador')
+                }
+              />
+              <FieldLabel htmlFor="isAdmin">Administrador de la plataforma (acceso total)</FieldLabel>
+            </Field>
 
             <Field orientation="horizontal">
               <Switch
@@ -294,6 +245,44 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Lo que manda Odoo de esta persona. Aquí solo se muestra. */
+function DatosOdoo({ usuario }: { usuario: AdminUser }) {
+  if (!usuario.odooId) {
+    return (
+      <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+        Esta cuenta no viene de Odoo: no tiene área, cargo ni jefe asignados.
+      </p>
+    );
+  }
+  const filas: [string, string][] = [
+    ['Cargo', usuario.position],
+    ['Área', usuario.areaName],
+    ['Dirección', usuario.direccion],
+    ['Jefe directo', usuario.managerName],
+    ['Tipo', usuario.kind === 'lider' ? 'Líder' : usuario.kind === 'admin' ? 'Admin' : 'Colaborador'],
+    ['Regional', usuario.regional],
+    ['Cédula', usuario.cedula],
+    ['Departamento en Odoo', usuario.departamentoNombre],
+  ];
+  return (
+    <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3">
+      <h3 className="text-sm font-medium">Datos de Odoo</h3>
+      <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+        {filas.map(([titulo, valor]) => (
+          <div key={titulo} className="flex gap-2">
+            <dt className="shrink-0 text-muted-foreground">{titulo}:</dt>
+            <dd className="font-medium">{valor || '—'}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-xs text-muted-foreground">
+        Se cambian en Odoo y llegan con la siguiente sincronización
+        {usuario.sincronizadoOdooAt ? ` (última: ${formatoFechaHora(usuario.sincronizadoOdooAt)})` : ''}.
+      </p>
+    </div>
   );
 }
 

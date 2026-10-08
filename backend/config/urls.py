@@ -7,6 +7,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     # ── API ────────────────────────────────────────────────────────────────
     path('api/auth/', include('apps.accounts.urls')),
+    path('api/admin/odoo/', include('apps.odoo.urls')),
     path('api/admin/', include('apps.accounts.urls_admin')),
     path('api/valoracion/', include('apps.valoracion.urls')),
     path('api/performance/', include('apps.performance.urls')),

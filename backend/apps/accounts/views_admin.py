@@ -27,7 +27,10 @@ class AdminViewSet(viewsets.ModelViewSet):
 _CONTEO_USUARIOS = Count('users', distinct=True)
 
 
-class AreaViewSet(AdminViewSet):
+class AreaViewSet(viewsets.ReadOnlyModelViewSet):
+    """Solo lectura: las áreas vienen de Odoo con la sincronización."""
+
+    permission_classes = [IsPlatformAdmin]
     queryset = Area.objects.annotate(conteo_usuarios=_CONTEO_USUARIOS).order_by('name')
     serializer_class = AreaSerializer
     search_fields = ('name',)
@@ -66,7 +69,7 @@ class RoleViewSet(AdminViewSet):
 class UserViewSet(AdminViewSet):
     # `extra_permissions` también va precargado: el serializer lo devuelve y,
     # sin esto, cada usuario del listado (hasta 200) era una consulta más.
-    queryset = User.objects.select_related('area', 'manager').prefetch_related(
+    queryset = User.objects.select_related('area', 'manager', 'departamento__padre__padre').prefetch_related(
         'applications', 'roles', 'extra_permissions'
     )
     serializer_class = AdminUserSerializer

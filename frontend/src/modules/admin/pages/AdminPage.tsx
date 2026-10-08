@@ -1,11 +1,12 @@
-import { BuildingIcon, KeyRoundIcon, LayoutGridIcon, UsersIcon } from 'lucide-react';
+import { BuildingIcon, DatabaseIcon, KeyRoundIcon, LayoutGridIcon, UsersIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui';
 import { ApplicationsTab } from '../components/ApplicationsTab';
 import { AreasTab } from '../components/AreasTab';
+import { OdooTab } from '../components/OdooTab';
 import { RolesTab } from '../components/RolesTab';
 import { UsersTab } from '../components/UsersTab';
 
-/** Módulo de Administración: usuarios, áreas, aplicaciones y roles. */
+/** Módulo de Administración: usuarios, áreas, aplicaciones, roles y la integración con Odoo. */
 export default function AdminPage() {
   return (
     <div className="flex flex-col gap-6">
@@ -34,6 +35,10 @@ export default function AdminPage() {
             <KeyRoundIcon data-icon="inline-start" />
             Roles
           </TabsTrigger>
+          <TabsTrigger value="odoo">
+            <DatabaseIcon data-icon="inline-start" />
+            Odoo
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -47,6 +52,9 @@ export default function AdminPage() {
         </TabsContent>
         <TabsContent value="roles">
           <RolesTab />
+        </TabsContent>
+        <TabsContent value="odoo">
+          <OdooTab />
         </TabsContent>
       </Tabs>
     </div>

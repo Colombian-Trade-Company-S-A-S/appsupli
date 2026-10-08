@@ -26,6 +26,10 @@ class Area(TimeStampedModel):
     name = models.CharField('nombre', max_length=100, unique=True)
     description = models.TextField('descripción', blank=True)
     is_active = models.BooleanField('activa', default=True)
+    odoo = models.BooleanField(
+        'viene de Odoo', default=False,
+        help_text='La marca la sincronización. Las áreas solo se crean y cambian desde Odoo.',
+    )
 
     class Meta:
         verbose_name = 'área'
@@ -34,6 +38,46 @@ class Area(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class Departamento(TimeStampedModel):
+    """
+    Departamento tal como está en Odoo, con su padre para reconstruir el árbol.
+
+    La raíz de una rama con hijos es la dirección; el segundo nivel, el área; la
+    hoja, el equipo. Una raíz sin hijos (TECH, PEOPLE…) es un área que no cuelga
+    de ninguna dirección. No se parte `complete_name` por «/»: hay nombres que
+    lo llevan dentro.
+    """
+
+    odoo_id = models.PositiveIntegerField('id en Odoo', unique=True)
+    nombre = models.CharField('nombre', max_length=200)
+    padre = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='hijos',
+        verbose_name='departamento padre',
+    )
+    activo = models.BooleanField('activo', default=True)
+
+    class Meta:
+        verbose_name = 'departamento'
+        verbose_name_plural = 'departamentos'
+        ordering = ('nombre',)
+
+    def __str__(self) -> str:
+        return ' / '.join(d.nombre for d in self.ruta())
+
+    def ruta(self) -> list['Departamento']:
+        """De la raíz a este departamento. Corta si Odoo trajera un ciclo."""
+        cadena, actual, vistos = [], self, set()
+        while actual and actual.pk not in vistos:
+            vistos.add(actual.pk)
+            cadena.append(actual)
+            actual = actual.padre
+        return cadena[::-1]
 
 
 class Application(TimeStampedModel):
@@ -182,6 +226,24 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         'país', max_length=80, blank=True,
         help_text='Colombia, Perú… Lo mantiene Odoo cuando entre la integración.',
     )
+
+    # ── Odoo: la copia local de lo que dice Recursos Humanos ──────────────
+    # La sincronización solo lee de Odoo y escribe aquí. Si Odoo se cae, la
+    # plataforma sigue con la última copia.
+    odoo_id = models.PositiveIntegerField(
+        'id en Odoo', unique=True, null=True, blank=True,
+        help_text='Vacío para quien no viene de Odoo (cuentas de servicio, admin).',
+    )
+    cedula = models.CharField('cédula', max_length=30, blank=True)
+    departamento = models.ForeignKey(
+        Departamento,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='personas',
+        verbose_name='departamento',
+    )
+    sincronizado_odoo_at = models.DateTimeField('última sincronización con Odoo', null=True, blank=True)
 
     # ── Apariencia: viaja con la cuenta, no con el navegador ──────────────
     theme = models.CharField('tema', max_length=10, choices=Theme.choices, default=Theme.DARK)

@@ -10,6 +10,8 @@ export const adminKeys = {
   applications: () => ['admin', 'applications'] as const,
   roles: () => ['admin', 'roles'] as const,
   permissions: () => ['admin', 'permissions'] as const,
+  sincronizaciones: () => ['admin', 'odoo', 'sincronizaciones'] as const,
+  accesosPendientes: () => ['admin', 'odoo', 'accesos'] as const,
 };
 
 export function useAdminUsers(filtros: Record<string, unknown>) {
@@ -34,7 +36,19 @@ export const useRoles = () =>
 export const usePermissions = () =>
   useQuery({ queryKey: adminKeys.permissions(), queryFn: () => adminApi.permissions.list() });
 
-const mensajeDeError = (error: unknown) => {
+export const useSincronizacionesOdoo = () =>
+  useQuery({
+    queryKey: adminKeys.sincronizaciones(),
+    queryFn: () => adminApi.odoo.sincronizaciones(),
+  });
+
+export const useAccesosPendientes = () =>
+  useQuery({
+    queryKey: adminKeys.accesosPendientes(),
+    queryFn: () => adminApi.odoo.accesosPendientes(),
+  });
+
+export const mensajeDeError = (error: unknown) => {
   if (error instanceof ApiError) {
     const porCampo = error.errors && Object.values(error.errors)[0]?.[0];
     return porCampo ?? error.message;

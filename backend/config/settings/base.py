@@ -37,6 +37,7 @@ LOCAL_APPS = [
     'apps.bi_trade',
     'apps.performance',
     'apps.challenge',
+    'apps.odoo',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -170,6 +171,19 @@ SPECTACULAR_SETTINGS = {
         'djangorestframework_camel_case.util.camelize_serializer_fields',
     ],
 }
+
+# ── Odoo ───────────────────────────────────────────────────────────────────
+# Solo se lee de Odoo. Sin estas variables, el botón de estado lo dice y la
+# sincronización no arranca; el resto de la plataforma no depende de Odoo.
+ODOO_URL = config('ODOO_URL', default='')
+ODOO_DB = config('ODOO_DB', default='')
+ODOO_USER = config('ODOO_USER', default='')
+ODOO_SECRET = config('ODOO_SECRET', default='')
+ODOO_TIMEOUT = config('ODOO_TIMEOUT', default=30, cast=int)
+# Enlace de ingreso que va en el Excel de accesos.
+FRONTEND_URL = config('FRONTEND_URL', default='https://appsupli.onrender.com')
+# El correo de Odoo solo se copia si es de este dominio: es el de ingreso.
+ODOO_DOMINIO_INGRESO = config('ODOO_DOMINIO_INGRESO', default='supli.tech')
 
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
