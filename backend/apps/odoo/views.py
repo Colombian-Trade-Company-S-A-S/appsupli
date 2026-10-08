@@ -1,6 +1,4 @@
 """Odoo en Administración: probar la conexión, sincronizar y ver la bitácora."""
-from dataclasses import asdict
-
 from django.http import HttpResponse
 
 from rest_framework.decorators import api_view, permission_classes
@@ -23,8 +21,19 @@ def _ultima():
 @api_view(['GET'])
 @permission_classes([IsPlatformAdmin])
 def estado(request):
-    """GET /api/admin/odoo/estado — prueba la conexión con Odoo en este momento."""
-    return Response({**asdict(OdooClient().estado()), 'ultima_sincronizacion': _ultima()})
+    """
+    GET /api/admin/odoo/estado — prueba la conexión con Odoo en este momento.
+
+    Solo dice si responde. La instancia, la base y la cuenta de integración son
+    confidenciales: se quedan en el servidor.
+    """
+    estado = OdooClient().estado()
+    return Response({
+        'configurado': estado.configurado,
+        'conectado': estado.conectado,
+        'mensaje': estado.mensaje,
+        'ultima_sincronizacion': _ultima(),
+    })
 
 
 @api_view(['POST'])

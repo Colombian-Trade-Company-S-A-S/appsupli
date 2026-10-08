@@ -256,9 +256,11 @@ def test_estado_api(monkeypatch):
     )
     datos = cliente_admin().get('/api/admin/odoo/estado').json()
     assert datos['conectado'] is True
-    assert datos['empleadosActivos'] == 62
     assert datos['ultimaSincronizacion'] is None
-    assert 'secreto' not in str(datos).lower()
+    # Lo confidencial no sale del servidor.
+    texto = str(datos)
+    for dato in ('x.odoo.com', "'x'", "'u'", '18.0', 'url', 'base', 'usuario'):
+        assert dato not in texto
 
 
 def test_sincronizar_por_api(monkeypatch):

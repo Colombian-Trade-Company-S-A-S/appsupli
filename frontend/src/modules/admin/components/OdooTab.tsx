@@ -64,26 +64,23 @@ const OPCIONES: {
   {
     clave: 'crear',
     titulo: 'Crear nuevos',
-    ayuda:
-      'Los empleados activos de Odoo que todavía no existen en appsupli. Entran sin clave y sin aplicaciones asignadas.',
+    ayuda: 'Empleados activos de Odoo que aún no están en appsupli.',
   },
   {
     clave: 'actualizar',
     titulo: 'Actualizar información',
-    ayuda:
-      'Nombre, cargo, cédula, departamento, área, dirección, regional y jefe de quienes ya están. Un dato vacío en Odoo no borra el de acá.',
+    ayuda: 'Nombre, cargo, área, jefe y demás datos de quienes ya están.',
   },
   {
     clave: 'desactivar',
     titulo: 'Desactivar bajas',
-    ayuda:
-      'Quien está archivado en Odoo queda inactivo. No se borra: se conserva su histórico. Los admins no se desactivan solos.',
+    ayuda: 'Quien está archivado en Odoo queda inactivo, con su histórico.',
   },
   {
     clave: 'eliminar',
     titulo: 'Eliminar a quien no está en Odoo',
     ayuda:
-      'Borra, con todos sus registros (objetivos, retos, valoraciones), a quien no aparece en Odoo ni activo ni archivado, y las áreas que no salen de Odoo. No se puede deshacer. Nunca borra a un admin ni a ti.',
+      'Borra con sus registros a quien no está en Odoo, y las áreas que no son de Odoo. No se deshace; nunca toca a un admin.',
   },
 ];
 
@@ -263,31 +260,13 @@ const textoOpciones = (s: SincronizacionOdoo) =>
     .join(', ');
 
 function TarjetaEstado({ estado }: { estado: EstadoOdoo }) {
-  const filas: [string, string][] = [
-    ['Instancia', estado.url || '—'],
-    ['Base de datos', estado.base || '—'],
-    ['Usuario', estado.usuario || '—'],
-    ['Versión', estado.version || '—'],
-    ['Tiempo de respuesta', estado.latenciaMs != null ? `${estado.latenciaMs} ms` : '—'],
-    ['Empleados activos', estado.empleadosActivos != null ? String(estado.empleadosActivos) : '—'],
-  ];
   return (
     <Alert variant={estado.conectado ? 'default' : 'destructive'}>
       {estado.conectado ? <CircleCheckIcon /> : <CircleXIcon />}
       <AlertTitle>
         {estado.conectado ? 'La API de Odoo responde' : 'Sin conexión con Odoo'}
       </AlertTitle>
-      <AlertDescription>
-        <p>{estado.mensaje}</p>
-        <dl className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
-          {filas.map(([titulo, valor]) => (
-            <div key={titulo} className="flex gap-2">
-              <dt className="text-muted-foreground">{titulo}:</dt>
-              <dd className="break-all font-medium text-foreground">{valor}</dd>
-            </div>
-          ))}
-        </dl>
-      </AlertDescription>
+      <AlertDescription>{estado.mensaje}</AlertDescription>
     </Alert>
   );
 }
@@ -404,16 +383,15 @@ function DialogoSincronizar({
 
   return (
     <Dialog open={abierto} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Sincronizar con Odoo</DialogTitle>
           <DialogDescription>
-            Se lee de Odoo y se guarda en appsupli. Nunca se escribe en Odoo. Usa la vista previa
-            para ver qué cambiaría antes de guardar.
+            Solo se lee de Odoo. Haz la vista previa para ver qué cambiaría antes de guardar.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           {OPCIONES.map((o) => (
             <label
               key={o.clave}

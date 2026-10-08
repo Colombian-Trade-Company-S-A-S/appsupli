@@ -95,15 +95,10 @@ export type AdminUserPayload = Partial<
 > & { password?: string };
 
 // ── Odoo ───────────────────────────────────────────────────────────────────
+/** Solo si Odoo responde: los datos de la instancia no salen del servidor. */
 export interface EstadoOdoo {
   configurado: boolean;
   conectado: boolean;
-  url: string;
-  base: string;
-  usuario: string;
-  version: string;
-  latenciaMs: number | null;
-  empleadosActivos: number | null;
   mensaje: string;
   ultimaSincronizacion: SincronizacionOdoo | null;
 }
