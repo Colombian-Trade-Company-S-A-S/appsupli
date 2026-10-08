@@ -17,6 +17,7 @@ Las tres opciones son independientes:
 
 Con `simular` se calcula todo igual y al final se deshace: es la vista previa.
 """
+import unicodedata
 from collections import Counter
 
 from django.conf import settings
@@ -73,6 +74,15 @@ def _correo(valor) -> str:
 
 def _cedula(valor) -> str:
     return str(valor or '').strip()
+
+
+def clave_nombre(nombre: str) -> frozenset[str]:
+    """
+    El nombre como conjunto de palabras, sin tildes ni mayúsculas: «Alejandra
+    Blanco Álvarez» y «BLANCO ALVAREZ ALEJANDRA» son la misma persona.
+    """
+    plano = unicodedata.normalize('NFKD', nombre or '').encode('ascii', 'ignore').decode().lower()
+    return frozenset(plano.split())
 
 
 class Sincronizador:
@@ -158,6 +168,8 @@ class Sincronizador:
         self.cedulas_odoo = Counter(_cedula(f['identification_id']) for f in activos if f['identification_id'])
         self.correos_odoo = Counter(_correo(f['work_email']) for f in activos if f['work_email'])
         self.con_personas = {_id(f['parent_id']) for f in activos if f['parent_id']}
+        # Para emparejar por nombre: solo cuenta si hay una única ficha con él.
+        self.nombres_odoo = Counter(clave_nombre(f['name']) for f in filas)
 
         usuarios = list(User.objects.all())
         self.por_odoo = {u.odoo_id: u for u in usuarios if u.odoo_id}
@@ -166,6 +178,17 @@ class Sincronizador:
         for u in usuarios:
             if u.cedula:
                 self.por_cedula.setdefault(u.cedula, []).append(u)
+        self.por_nombre: dict[frozenset, list[User]] = {}
+        for u in usuarios:
+            self.por_nombre.setdefault(clave_nombre(u.full_name), []).append(u)
+        # Nombre incompleto acá (sin segundo nombre o apellido): las fichas de
+        # Odoo cuyo nombre contiene todas sus palabras.
+        claves_odoo = [(f['id'], clave_nombre(f['name'])) for f in filas]
+        self.contenido_en: dict[int, list[int]] = {
+            u.pk: [i for i, clave in claves_odoo if clave_u <= clave]
+            for u in usuarios
+            if len(clave_u := clave_nombre(u.full_name)) >= 2
+        }
         self.usernames = {u.username for u in usuarios}
         self.reclamados: set[int] = set()
         # Todos los que tienen ficha en Odoo, activa o archivada: no se eliminan.
@@ -179,6 +202,8 @@ class Sincronizador:
             usuario = self._emparejar(fila)
             if usuario is not None:
                 self.reclamados.add(usuario.pk)
+                # Ya, no en la segunda vuelta: su equipo lo busca por id de Odoo.
+                self.por_odoo[fila['id']] = usuario
                 if not usuario.is_active:
                     self._excepcion('inactivo_en_appsupli', fila, 'Activo en Odoo pero inactivo en appsupli.')
                 if self.actualizar:
@@ -203,7 +228,10 @@ class Sincronizador:
             self._dar_de_baja(fila)
 
     def _emparejar(self, fila: dict) -> User | None:
-        """Por id de Odoo; si no, por correo; si no, por cédula, solo si no hay ambigüedad."""
+        """
+        Por id de Odoo; si no, por correo; si no, por cédula; si no, por nombre
+        completo. Los tres últimos, solo si no hay ambigüedad.
+        """
         usuario = self.por_odoo.get(fila['id'])
         if usuario is not None:
             return usuario
@@ -220,7 +248,31 @@ class Sincronizador:
             candidatos = [u for u in self.por_cedula.get(cedula, []) if libre(u)]
             if len(candidatos) == 1:
                 return candidatos[0]
-        return None
+        return self._por_nombre(fila, libre)
+
+    def _por_nombre(self, fila: dict, libre) -> User | None:
+        """
+        El último recurso: asesores que acá tienen un correo personal y en Odoo
+        ninguno. Emparejarlos les conserva la cuenta y el ingreso.
+        """
+        clave = clave_nombre(fila['name'])
+        if len(clave) >= 2 and self.nombres_odoo[clave] == 1:
+            candidatos = [u for u in self.por_nombre.get(clave, []) if libre(u)]
+            if len(candidatos) == 1:
+                return candidatos[0]
+        # Acá el nombre está incompleto: vale si solo esta ficha de Odoo lo contiene.
+        candidatos = [
+            u for u in self._usuarios_libres(libre) if self.contenido_en.get(u.pk) == [fila['id']]
+        ]
+        return candidatos[0] if len(candidatos) == 1 else None
+
+    def _usuarios_libres(self, libre):
+        vistos = {}
+        for lista in self.por_nombre.values():
+            for u in lista:
+                if libre(u):
+                    vistos[u.pk] = u
+        return vistos.values()
 
     def _crear(self, fila: dict) -> User:
         nombres, apellidos = separar_nombre(fila['name'])
@@ -305,6 +357,8 @@ class Sincronizador:
             candidato = self.por_correo.get(correo) if correo else None
             if candidato is not None and candidato.odoo_id is None and candidato.pk not in self.reclamados:
                 usuario = candidato
+            else:
+                usuario = self._por_nombre(fila, lambda u: u.odoo_id is None and u.pk not in self.reclamados)
         if usuario is not None:
             self.en_odoo.add(usuario.pk)
         # Si otra ficha activa de Odoo ya reclamó a esta persona, sigue activa.

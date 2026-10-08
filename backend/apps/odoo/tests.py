@@ -397,3 +397,49 @@ def test_un_odoo_vacio_no_vacia_appsupli():
     registro = todo(OdooFalso(empleados=[]), eliminar=True)
     assert registro.estado == 'error'
     assert User.objects.filter(username='viejo').exists()
+
+
+def test_empareja_por_nombre_y_conserva_el_correo_personal():
+    asesor = User.objects.create_user(
+        email='eberto123@gmail.com', username='eberto', first_name='Eberto de Jesus',
+        last_name='Acuna Rodriguez', password='clave-123456',
+    )
+    registro = todo(OdooFalso(), eliminar=True)
+    asesor.refresh_from_db()
+    assert asesor.odoo_id == 3
+    assert asesor.email == 'eberto123@gmail.com'
+    assert asesor.check_password('clave-123456')
+    assert registro.resumen.get('eliminados', 0) == 0
+    assert User.objects.filter(odoo_id__isnull=False).count() == 4
+
+
+def test_no_empareja_por_nombre_si_es_ambiguo():
+    cliente = OdooFalso(empleados=[
+        empleado(1, 'PEREZ GOMEZ ANA', cedula='1'),
+        empleado(2, 'PEREZ GOMEZ ANA', cedula='2'),
+    ])
+    ana = User.objects.create(username='ana', first_name='Ana', last_name='Perez Gomez')
+    todo(cliente)
+    ana.refresh_from_db()
+    assert ana.odoo_id is None
+
+
+def test_empareja_si_el_nombre_de_aca_esta_incompleto():
+    alejandro = User.objects.create(username='alejo', first_name='Alejandro', last_name='Trujillo', email='a@gmail.com')
+    cliente = OdooFalso()
+    cliente._empleados.append(empleado(7, 'ECHEVERRY TRUJILLO ALEJANDRO', cedula='700', jefe=2, depto=22))
+    registro = todo(cliente, eliminar=True)
+    alejandro.refresh_from_db()
+    assert alejandro.odoo_id == 7
+    assert registro.resumen.get('eliminados', 0) == 0
+
+
+def test_el_jefe_emparejado_por_correo_queda_asignado_aunque_venga_despues():
+    # El jefe ya existía (sin odoo_id) y en Odoo viene después de su equipo.
+    juan = User.objects.create_user(
+        email='jordonez@supli.tech', username='juan', first_name='Juan', password='clave-123456'
+    )
+    cliente = OdooFalso()
+    cliente._empleados.reverse()
+    todo(cliente)
+    assert User.objects.get(odoo_id=2).manager == juan
