@@ -23,7 +23,6 @@ class Migration(migrations.Migration):
                 ('crear', models.BooleanField(default=False, verbose_name='crear nuevos')),
                 ('actualizar', models.BooleanField(default=False, verbose_name='actualizar información')),
                 ('desactivar', models.BooleanField(default=False, verbose_name='desactivar bajas')),
-                ('eliminar', models.BooleanField(default=False, verbose_name='eliminar a quien no está en Odoo')),
                 ('simulacion', models.BooleanField(default=False, help_text='Se calculó lo que cambiaría, sin guardar nada.', verbose_name='vista previa')),
                 ('estado', models.CharField(choices=[('ok', 'Correcta'), ('error', 'Con error')], default='ok', max_length=10, verbose_name='estado')),
                 ('resumen', models.JSONField(blank=True, default=dict, verbose_name='resumen')),

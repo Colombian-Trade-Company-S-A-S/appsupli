@@ -12,11 +12,6 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AddField(
-            model_name='area',
-            name='odoo',
-            field=models.BooleanField(default=False, help_text='La marca la sincronización. Las áreas solo se crean y cambian desde Odoo.', verbose_name='viene de Odoo'),
-        ),
-        migrations.AddField(
             model_name='user',
             name='cedula',
             field=models.CharField(blank=True, max_length=30, verbose_name='cédula'),
