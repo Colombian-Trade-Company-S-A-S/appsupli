@@ -19,6 +19,7 @@ export interface Persona {
   cargo: string;
   area: string;
   jefe: string;
+  jefeId: number | null;
   direccion: string;
   organizacion: string;
   regional: string;
@@ -81,6 +82,11 @@ export interface Resultado {
   validadoPorNombre: string;
   fechaValidacion: string | null;
   observacion: string;
+  /** El comentario del jefe sobre lo cargado (aparte de la observación del colaborador). */
+  feedback: string;
+  feedbackPor: number | null;
+  feedbackPorNombre: string;
+  feedbackFecha: string | null;
   evidencias: Evidencia[];
 }
 
@@ -163,6 +169,8 @@ export interface Acumulado {
   brechas: number;
   cortes: CortesSemaforo;
   colaboradores: CumplimientoPersona[];
+  /** De quién son los resultados: la compañía (People/admin) o el equipo a cargo. */
+  alcance: 'compania' | 'equipo';
   capacidades: Capacidades;
 }
 
@@ -175,7 +183,10 @@ export interface OpcionesPerformance {
   periodos: PeriodoDisponible[];
   tiposMedicion: Opcion[];
   unidades: Opcion[];
+  /** Las personas a cargo directo: con quienes se trabaja uno por uno. */
   equipo: Persona[];
+  /** Toda la compañía; solo la trae quien puede definirle a cualquiera (People). */
+  compania: Persona[];
   maximoObjetivos: number;
   ponderacionCompleta: number;
   criteriosCualitativos: number;
@@ -304,8 +315,13 @@ export const performanceApi = {
     api.put<Resultado>(`${RUTA}/objetivos/${objetivo}/resultado`, payload),
   validarResultado: (objetivo: number, estado: EstadoValidacion, observacion = '') =>
     api.post<Resultado>(`${RUTA}/objetivos/${objetivo}/validar`, { estado, observacion }),
-  acumulado: (corte: { tipo: TipoCorte; anio?: number; indice?: number }) =>
-    api.get<Acumulado>(`${RUTA}/acumulado`, corte as Record<string, unknown>),
+  darFeedback: (objetivo: number, feedback: string) =>
+    api.post<Resultado>(`${RUTA}/objetivos/${objetivo}/feedback`, { feedback }),
+  acumulado: (corte: { tipo: TipoCorte; anio?: number; indice?: number }, top = false) =>
+    api.get<Acumulado>(`${RUTA}/acumulado`, {
+      ...corte,
+      ...(top ? { alcance: 'top' } : {}),
+    } as Record<string, unknown>),
   descargarPlantilla: () =>
     descargarArchivo(`${RUTA}/objetivos/plantilla`, 'plantilla-objetivos.xlsx'),
   /** Sube el .xlsx de la plantilla con los objetivos de una persona. */

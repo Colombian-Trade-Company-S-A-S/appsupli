@@ -20,6 +20,10 @@ from .models import (
     MetaComercialFalabella,
     MetaComercialHc,
     MetaComercialTmk,
+    PrecioProducto,
+    PrecioProductoFalabella,
+    PrecioProductoHc,
+    PrecioProductoTmk,
     Producto,
     ProductoFalabella,
     ProductoHc,
@@ -47,11 +51,16 @@ class Canal:
     venta: type[models.Model]
     inventario: type[models.Model]
     meta: type[models.Model]
+    #: Los precios Coltrade por periodo de sus productos (ver `precios`).
+    precio: type[models.Model]
     #: Los catálogos fijos de sus formularios (regionales, materiales).
     opciones: dict
     #: Si mide en puntos. Solo Claro: los canales aparte van en dinero y
     #: unidades: sus productos no tienen puntaje y nada suyo habla de puntos.
     con_puntos: bool = True
+    #: Si solo cuenta lo que tiene meta: al importar ventas y en el tablero, solo
+    #: entra un producto con meta ese mes en ese punto de venta. Solo Claro.
+    solo_con_meta: bool = False
 
 
 CLARO = Canal(
@@ -63,7 +72,9 @@ CLARO = Canal(
     venta=Venta,
     inventario=Inventario,
     meta=MetaComercial,
+    precio=PrecioProducto,
     opciones=OPCIONES,
+    solo_con_meta=True,
 )
 
 HC = Canal(
@@ -75,6 +86,7 @@ HC = Canal(
     venta=VentaHc,
     inventario=InventarioHc,
     meta=MetaComercialHc,
+    precio=PrecioProductoHc,
     opciones=OPCIONES_HC,
     con_puntos=False,
 )
@@ -88,6 +100,7 @@ FALABELLA = Canal(
     venta=VentaFalabella,
     inventario=InventarioFalabella,
     meta=MetaComercialFalabella,
+    precio=PrecioProductoFalabella,
     opciones=OPCIONES_FALABELLA,
     con_puntos=False,
 )
@@ -101,6 +114,7 @@ TMK = Canal(
     venta=VentaTmk,
     inventario=InventarioTmk,
     meta=MetaComercialTmk,
+    precio=PrecioProductoTmk,
     opciones=OPCIONES_TMK,
     con_puntos=False,
 )

@@ -21,6 +21,7 @@ const BiTradeHomePage = lazy(() => import('@/modules/bi-trade/pages/BiTradeHomeP
 const ClaroDashboardPage = lazy(() => import('@/modules/bi-trade/pages/ClaroDashboardPage'));
 const VentasPage = lazy(() => import('@/modules/bi-trade/pages/VentasPage'));
 const ProductosPage = lazy(() => import('@/modules/bi-trade/pages/ProductosPage'));
+const PreciosPage = lazy(() => import('@/modules/bi-trade/pages/PreciosPage'));
 const PuntosVentaPage = lazy(() => import('@/modules/bi-trade/pages/PuntosVentaPage'));
 const InventarioPage = lazy(() => import('@/modules/bi-trade/pages/InventarioPage'));
 const MetasPage = lazy(() => import('@/modules/bi-trade/pages/MetasPage'));
@@ -128,6 +129,7 @@ const routes: RouteObject[] = [
               { path: 'bi-trade/claro', element: withSuspense(<ClaroDashboardPage />) },
               { path: 'bi-trade/claro/ventas', element: withSuspense(<VentasPage />) },
               { path: 'bi-trade/claro/productos', element: withSuspense(<ProductosPage />) },
+              { path: 'bi-trade/claro/precios', element: withSuspense(<PreciosPage />) },
               {
                 path: 'bi-trade/claro/puntos-venta',
                 element: withSuspense(<PuntosVentaPage />),
@@ -145,6 +147,7 @@ const routes: RouteObject[] = [
                   { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
                   { path: 'ventas', element: withSuspense(<VentasPage />) },
                   { path: 'productos', element: withSuspense(<ProductosPage />) },
+                  { path: 'precios', element: withSuspense(<PreciosPage />) },
                   { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
                   { path: 'metas', element: withSuspense(<MetasPage />) },
@@ -158,6 +161,7 @@ const routes: RouteObject[] = [
                   { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
                   { path: 'ventas', element: withSuspense(<VentasPage />) },
                   { path: 'productos', element: withSuspense(<ProductosPage />) },
+                  { path: 'precios', element: withSuspense(<PreciosPage />) },
                   { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
                   { path: 'metas', element: withSuspense(<MetasPage />) },
@@ -171,6 +175,7 @@ const routes: RouteObject[] = [
                   { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
                   { path: 'ventas', element: withSuspense(<VentasPage />) },
                   { path: 'productos', element: withSuspense(<ProductosPage />) },
+                  { path: 'precios', element: withSuspense(<PreciosPage />) },
                   { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
                   { path: 'metas', element: withSuspense(<MetasPage />) },

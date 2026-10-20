@@ -1,4 +1,7 @@
 """Serializers de BI Trade Marketing."""
+import unicodedata
+
+from django.db.models import Q
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
@@ -18,6 +21,7 @@ from .models import (
     InventarioFalabella,
     InventarioHc,
     InventarioTmk,
+    Marca,
     MarcaPartner,
     Materiales,
     MetaComercial,
@@ -25,6 +29,10 @@ from .models import (
     MetaComercialHc,
     MetaComercialTmk,
     MetaPartner,
+    PrecioProducto,
+    PrecioProductoFalabella,
+    PrecioProductoHc,
+    PrecioProductoTmk,
     Producto,
     ProductoBelkin,
     ProductoFalabella,
@@ -84,6 +92,62 @@ class ModeloBiTrade(serializers.ModelSerializer):
     serializer_related_field = RelacionPrecargada
 
 
+def clave_de_marca(nombre: str) -> str:
+    """«BELKIN », «Bélkin» → «belkin»: sin tildes, mayúsculas ni espacios de sobra."""
+    plano = unicodedata.normalize('NFD', ' '.join(str(nombre).split()))
+    return plano.encode('ascii', 'ignore').decode().casefold()
+
+
+#: Llave del contexto donde queda el catálogo de marcas ya leído.
+MARCAS_POR_CLAVE = 'marcas_por_clave'
+
+
+@extend_schema_field(OpenApiTypes.STR)
+class CampoMarca(serializers.RelatedField):
+    """
+    La marca de un producto: el nombre de una marca del catálogo.
+
+    Se acepta sin importar mayúsculas, tildes ni espacios —«BELKIN» es
+    «Belkin»—, así un Excel escrito a mano cruza igual. Lo que no está en la
+    lista se rechaza: para eso existe la lista. El catálogo se lee una vez por
+    solicitud, no una por fila: al importar mil productos son una consulta.
+    """
+
+    default_error_messages = {
+        'no_existe': '«{nombre}» no está en la lista de marcas. Créala primero o elige una.',
+        'tipo': 'La marca debe ser un texto.',
+    }
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault('queryset', Marca.objects.all())
+        super().__init__(**kwargs)
+
+    def use_pk_only_optimization(self) -> bool:
+        # Lo guardado en el producto ya es el nombre: no hace falta leer la marca.
+        return True
+
+    def run_validation(self, data=serializers.empty):
+        # Solo espacios es lo mismo que vacío: «sin marca», si el canal lo admite.
+        if isinstance(data, str) and not data.strip():
+            data = ''
+        return super().run_validation(data)
+
+    def to_representation(self, value) -> str:
+        return value.pk
+
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail('tipo')
+        catalogo = self.context.get(MARCAS_POR_CLAVE)
+        if catalogo is None:
+            catalogo = {clave_de_marca(m.nombre): m for m in self.get_queryset()}
+            self.context[MARCAS_POR_CLAVE] = catalogo
+        marca = catalogo.get(clave_de_marca(data))
+        if marca is None:
+            self.fail('no_existe', nombre=' '.join(data.split()))
+        return marca
+
+
 @extend_schema_field(OpenApiTypes.INT)
 class Conteo(serializers.Field):
     """
@@ -105,18 +169,17 @@ class Conteo(serializers.Field):
         return getattr(instancia, self.relacion).count()
 
 
+#: Lo que tiene un punto de venta en cualquier canal.
+CAMPOS_PUNTO_VENTA = ('id_punto_venta', 'nombre_pdv', 'regional', 'materiales')
+
+
 class PuntoVentaSerializer(ModeloBiTrade):
     ventas_count = Conteo('ventas')
 
     class Meta:
         model = PuntoVenta
-        fields = (
-            'id_punto_venta',
-            'nombre_pdv',
-            'regional',
-            'materiales',
-            'ventas_count',
-        )
+        # `asesor_pdv` es solo de Claro: los canales aparte no lo tienen.
+        fields = (*CAMPOS_PUNTO_VENTA, 'asesor_pdv', 'ventas_count')
 
     def validate_id_punto_venta(self, value: str) -> str:
         """La PK la escribe la persona, así que hay que cuidar los duplicados."""
@@ -137,7 +200,12 @@ class PuntoVentaSerializer(ModeloBiTrade):
 
 
 class ProductoSerializer(ModeloBiTrade):
+    marca = CampoMarca()
     ventas_count = Conteo('ventas')
+    precios_count = Conteo('precios')
+    #: El precio Coltrade de hoy: el del periodo vigente o, si no hay, el del
+    #: producto. El listado lo trae anotado.
+    precio_hoy = serializers.SerializerMethodField()
 
     class Meta:
         model = Producto
@@ -149,7 +217,14 @@ class ProductoSerializer(ModeloBiTrade):
             'precio_venta_coltrade',
             'puntaje',
             'ventas_count',
+            'precios_count',
+            'precio_hoy',
         )
+
+    def get_precio_hoy(self, producto) -> int | None:
+        if 'precio_hoy' in producto.__dict__:
+            return producto.precio_hoy
+        return producto.precio_en(timezone.localdate())
 
     def validate_id_producto(self, value: str) -> str:
         codigo = value.strip()
@@ -166,12 +241,11 @@ class ProductoSerializer(ModeloBiTrade):
 
 class VentaSerializer(ModeloBiTrade):
     nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
-    marca = serializers.CharField(source='id_producto.marca', read_only=True)
+    marca = serializers.CharField(source='id_producto.marca_id', read_only=True, default='')
     nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
     regional = serializers.CharField(source='id_punto_venta.regional', read_only=True, default='')
-    precio_venta_coltrade = serializers.IntegerField(
-        source='id_producto.precio_venta_coltrade', read_only=True
-    )
+    #: El precio del día de la venta, y el total a ese precio.
+    precio_venta_coltrade = serializers.IntegerField(source='precio_aplicado', read_only=True)
     total_coltrade = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -200,7 +274,7 @@ class _ParProductoPunto(ModeloBiTrade):
     """Campos comunes de todo lo que cuelga de un producto y un punto de venta."""
 
     nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
-    marca = serializers.CharField(source='id_producto.marca', read_only=True)
+    marca = serializers.CharField(source='id_producto.marca_id', read_only=True, default='')
     nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
     regional = serializers.CharField(source='id_punto_venta.regional', read_only=True, default='')
 
@@ -234,13 +308,11 @@ class InventarioSerializer(_ParProductoPunto):
 
 
 class MetaSerializer(_ParProductoPunto):
-    # Calculados, no guardados: salen de las unidades por el precio y el
-    # puntaje del producto, como el total de una venta.
+    # Calculados, no guardados: salen de las unidades por el precio del mes y
+    # el puntaje del producto, como el total de una venta.
     meta_dinero = serializers.IntegerField(read_only=True)
     meta_puntos = serializers.IntegerField(read_only=True)
-    precio_venta_coltrade = serializers.IntegerField(
-        source='id_producto.precio_venta_coltrade', read_only=True
-    )
+    precio_venta_coltrade = serializers.IntegerField(source='precio_de_meta', read_only=True)
     puntaje = serializers.IntegerField(
         source='id_producto.puntaje', read_only=True, default=0
     )
@@ -410,7 +482,7 @@ def _sin_puntos(campos: tuple) -> tuple:
 class PuntoVentaHcSerializer(PuntoVentaSerializer):
     class Meta(PuntoVentaSerializer.Meta):
         model = PuntoVentaHc
-        fields = (*PuntoVentaSerializer.Meta.fields[:-1], 'categoria', 'ventas_count')
+        fields = (*CAMPOS_PUNTO_VENTA, 'categoria', 'ventas_count')
 
     def to_internal_value(self, data):
         # La categoría se escribe «a» o «A»: vale la mayúscula. Vacía es «sin dato».
@@ -430,8 +502,11 @@ class ProductoHcSerializer(ProductoSerializer):
         required=False,
     )
 
+    # El catálogo de Homecenter llega incompleto: la marca puede faltar.
+    marca = CampoMarca(required=False, allow_null=True)
+
     #: Opcionales: un texto vacío se guarda como «sin dato» (NULL), no como "".
-    OPCIONALES_TEXTO = ('ean', 'sku_coltrade', 'marca')
+    OPCIONALES_TEXTO = ('ean', 'sku_coltrade')
 
     class Meta(ProductoSerializer.Meta):
         model = ProductoHc
@@ -498,6 +573,7 @@ OPCIONES_FALABELLA = {
 class PuntoVentaFalabellaSerializer(PuntoVentaSerializer):
     class Meta(PuntoVentaSerializer.Meta):
         model = PuntoVentaFalabella
+        fields = (*CAMPOS_PUNTO_VENTA, 'ventas_count')
 
 
 class ProductoFalabellaSerializer(ProductoSerializer):
@@ -560,6 +636,7 @@ OPCIONES_TMK = {
 class PuntoVentaTmkSerializer(PuntoVentaSerializer):
     class Meta(PuntoVentaSerializer.Meta):
         model = PuntoVentaTmk
+        fields = (*CAMPOS_PUNTO_VENTA, 'ventas_count')
 
 
 class ProductoTmkSerializer(ProductoSerializer):
@@ -606,6 +683,118 @@ class MetaTmkSerializer(MetaSerializer):
                 message=MetaSerializer.Meta.validators[0].message,
             )
         ]
+
+
+
+# ── Precios por periodo ────────────────────────────────────────────────────
+
+
+def periodo_que_se_cruza(modelo, producto, desde, hasta, excluir=None):
+    """El periodo del mismo producto que se pisa con [desde, hasta], si hay uno."""
+    cruces = modelo.objects.filter(
+        Q(hasta__isnull=True) | Q(hasta__gte=desde), id_producto=producto
+    )
+    if hasta is not None:
+        cruces = cruces.filter(desde__lte=hasta)
+    if excluir is not None:
+        cruces = cruces.exclude(pk=excluir.pk)
+    return cruces.order_by('desde').first()
+
+
+def describir_periodo(periodo) -> str:
+    hasta = periodo.hasta.isoformat() if periodo.hasta else 'en adelante'
+    return f'{periodo.desde.isoformat()} a {hasta} ({periodo.precio_venta_coltrade:,})'.replace(
+        ',', '.'
+    )
+
+
+class PrecioSerializer(ModeloBiTrade):
+    """
+    Un precio Coltrade entre dos fechas. Sin `hasta`, sigue vigente.
+
+    Los periodos de un producto no se pueden pisar: un día tendría dos
+    precios. Al importar un archivo la revisión se hace una sola vez al final,
+    con todas las filas (ver `PrecioViewSet`), no una consulta por fila.
+    """
+
+    nombre_producto = serializers.CharField(source='id_producto.nombre_producto', read_only=True)
+    precio_venta_coltrade = serializers.IntegerField(min_value=0, max_value=PRECIO_MAXIMO)
+
+    class Meta:
+        model = PrecioProducto
+        fields = (
+            'id_precio',
+            'id_producto',
+            'nombre_producto',
+            'desde',
+            'hasta',
+            'precio_venta_coltrade',
+        )
+
+    def validate(self, attrs: dict) -> dict:
+        producto = attrs.get('id_producto') or getattr(self.instance, 'id_producto', None)
+        desde = attrs.get('desde') or getattr(self.instance, 'desde', None)
+        hasta = attrs['hasta'] if 'hasta' in attrs else getattr(self.instance, 'hasta', None)
+        if hasta is not None and desde is not None and hasta < desde:
+            raise serializers.ValidationError(
+                {'hasta': 'El periodo no puede terminar antes de empezar.'}
+            )
+        if producto is not None and desde is not None and not self.context.get(UNICIDAD_RESUELTA):
+            cruce = periodo_que_se_cruza(
+                self.Meta.model, producto, desde, hasta, excluir=self.instance
+            )
+            if cruce is not None:
+                raise serializers.ValidationError(
+                    {
+                        'desde': (
+                            f'Se cruza con el precio de {describir_periodo(cruce)}. '
+                            'Ajusta las fechas de uno de los dos: '
+                            'un día no puede tener dos precios.'
+                        )
+                    }
+                )
+        return attrs
+
+
+class PrecioHcSerializer(PrecioSerializer):
+    class Meta(PrecioSerializer.Meta):
+        model = PrecioProductoHc
+
+
+class PrecioFalabellaSerializer(PrecioSerializer):
+    class Meta(PrecioSerializer.Meta):
+        model = PrecioProductoFalabella
+
+
+class PrecioTmkSerializer(PrecioSerializer):
+    class Meta(PrecioSerializer.Meta):
+        model = PrecioProductoTmk
+
+
+# ── Marcas ─────────────────────────────────────────────────────────────────
+
+
+class MarcaSerializer(serializers.ModelSerializer):
+    #: Cuántos productos la usan, en los cuatro canales.
+    productos_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = Marca
+        fields = ('id_marca', 'nombre', 'productos_count')
+
+    def validate_nombre(self, value: str) -> str:
+        """Sin repetir, ni siquiera con otras mayúsculas o tildes: es lo que se quiere evitar."""
+        nombre = ' '.join(value.split())
+        if not nombre:
+            raise serializers.ValidationError('El nombre no puede ir vacío.')
+        clave = clave_de_marca(nombre)
+        otras = Marca.objects.exclude(pk=getattr(self.instance, 'pk', None))
+        repetida = next((m for m in otras if clave_de_marca(m.nombre) == clave), None)
+        if repetida is not None:
+            raise serializers.ValidationError(
+                f'Ya existe la marca «{repetida.nombre}». Si son la misma, fusiónalas.'
+            )
+        return nombre
 
 
 # ── Plan Partners ──────────────────────────────────────────────────────────

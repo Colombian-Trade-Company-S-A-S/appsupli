@@ -27,7 +27,6 @@ from .models import (
     PuntoVentaTmk,
     RegionalTmk,
     VentaTmk,
-    anotaciones_meta,
 )
 from .serializers import (
     InventarioTmkSerializer,
@@ -113,6 +112,7 @@ class PuntoVentaTmkViewSet(_PlantillaTmk, PuntoVentaViewSet):
 
 
 class ProductoTmkViewSet(_PlantillaTmk, ProductoViewSet):
+    canal = TMK
     queryset = ProductoTmk.objects.annotate(conteo_ventas=Count('ventas')).order_by(
         'nombre_producto'
     )
@@ -123,7 +123,8 @@ class ProductoTmkViewSet(_PlantillaTmk, ProductoViewSet):
         Columna('id_producto_tmk', ayuda='Código del producto. Máximo 60 caracteres.',
                 ejemplo='TMKP-001'),
         Columna('nombre_producto', ayuda='Máximo 60 caracteres.', ejemplo='Audífonos JBL Tune'),
-        Columna('marca', ayuda='Máximo 60 caracteres.', ejemplo='JBL'),
+        Columna('marca', ayuda='Una marca de la lista de marcas. Da igual mayúsculas o tildes.',
+                ejemplo='JBL'),
         Columna('precio_venta_tmk', tipo='entero',
                 ayuda='Precio en Tmk Ecommerce Claro. Hasta 100.000.000.', ejemplo='299900'),
         Columna('precio_venta_coltrade', tipo='entero',
@@ -136,6 +137,7 @@ class ProductoTmkViewSet(_PlantillaTmk, ProductoViewSet):
 
 
 class VentaTmkViewSet(_PlantillaTmk, VentaViewSet):
+    canal = TMK
     queryset = VentaTmk.objects.select_related('id_producto', 'id_punto_venta').order_by(
         '-fecha_venta', '-id_venta'
     )
@@ -155,6 +157,7 @@ class VentaTmkViewSet(_PlantillaTmk, VentaViewSet):
 
 
 class InventarioTmkViewSet(_PlantillaTmk, InventarioViewSet):
+    canal = TMK
     queryset = InventarioTmk.objects.select_related(
         'id_producto', 'id_punto_venta'
     ).order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
@@ -172,10 +175,9 @@ class InventarioTmkViewSet(_PlantillaTmk, InventarioViewSet):
 
 
 class MetaTmkViewSet(_PlantillaTmk, MetaViewSet):
-    queryset = (
-        MetaComercialTmk.objects.select_related('id_producto', 'id_punto_venta')
-        .annotate(**anotaciones_meta(con_puntos=False))
-        .order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
+    canal = TMK
+    queryset = MetaComercialTmk.objects.select_related('id_producto', 'id_punto_venta').order_by(
+        'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
     )
     serializer_class = MetaTmkSerializer
     filterset_class = MetaTmkFilter

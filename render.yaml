@@ -2,9 +2,9 @@
 # sitio estático. En Render: New → Blueprint → este repositorio.
 #
 # La base de datos ya existe (supli_tech, en Oregon), así que no se crea aquí.
-# DATABASE_URL se pega a mano la primera vez (sync: false) con la «Internal
-# Database URL» de la base: solo funciona dentro de Render, que es donde corre
-# el backend, y no necesita SSL.
+# Las DB_* se pegan a mano la primera vez (sync: false) con los datos de la
+# base. Dentro de Render se usa el host interno (sin SSL: DB_SSLMODE=prefer);
+# DB_SCHEMA es el schema donde viven las tablas (se crea con crear_schema).
 #
 # Si Render le asigna otro dominio a alguno de los dos servicios (por ejemplo
 # porque el nombre ya está tomado), hay que corregir CORS_ALLOWED_ORIGINS,
@@ -21,8 +21,20 @@ services:
     dockerContext: ./backend
     healthCheckPath: /api/health
     envVars:
-      - key: DATABASE_URL
+      - key: DB_HOST
         sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_SSLMODE
+        value: prefer
+      - key: DB_SCHEMA
+        value: app_supli
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ALLOWED_ORIGINS

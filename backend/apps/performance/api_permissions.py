@@ -93,26 +93,39 @@ def puede_ver(user, colaborador) -> bool:
 
 def puede_cargar_resultado(user, objetivo) -> bool:
     """
-    Quién carga lo ejecutado: el responsable del objetivo, su jefe o People.
+    Quién carga lo ejecutado: el colaborador, su jefe o People.
 
-    El responsable es el colaborador salvo que se haya puesto a otra persona,
-    que es el caso de los asesores y promotores: ahí lo carga su Trade Leader.
+    Lo normal es que el colaborador suba su resultado y su evidencia, y que el
+    jefe los apruebe. El jefe también puede cargarlos por él (si está
+    incapacitado, por ejemplo). Si se designó otro responsable —asesores y
+    promotores, que carga su Trade Leader—, esa persona también puede.
     """
     if puede_definir_a_cualquiera(user):
         return True
-    responsable_id = objetivo.responsable_resultado_id or objetivo.colaborador_id
-    return user.id == responsable_id or es_jefe_de(user, objetivo.colaborador)
+    return (
+        user.id == objetivo.colaborador_id
+        or user.id == objetivo.responsable_resultado_id
+        or es_jefe_de(user, objetivo.colaborador)
+    )
 
 
 def puede_validar_resultado(user, objetivo) -> bool:
     """
     Quién da por bueno el resultado: el jefe del colaborador o People.
 
-    Nadie valida lo que él mismo cargó: el paso existe para que otra persona
-    mire la evidencia.
+    Nadie valida lo que él mismo cargó, salvo el jefe directo: como el
+    responsable del resultado es el jefe por defecto, es él quien lo carga y
+    quien lo da por bueno. People, si lo cargó, no se lo valida a sí mismo.
     """
-    if getattr(objetivo, 'resultado', None) and objetivo.resultado.cargado_por_id == user.id:
+    es_jefe = es_jefe_de(user, objetivo.colaborador)
+    resultado = getattr(objetivo, 'resultado', None)
+    if resultado and resultado.cargado_por_id == user.id and not es_jefe:
         return False
+    return puede_definir_a_cualquiera(user) or es_jefe
+
+
+def puede_dar_feedback(user, objetivo) -> bool:
+    """El jefe del colaborador o People pueden comentar lo cargado."""
     return puede_definir_a_cualquiera(user) or es_jefe_de(user, objetivo.colaborador)
 
 

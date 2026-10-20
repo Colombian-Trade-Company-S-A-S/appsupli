@@ -11,6 +11,8 @@ export interface PuntoVenta {
   materiales: MaterialesPdv | null;
   /** Solo Homecenter. */
   categoria?: CategoriaHc | null;
+  /** Solo Claro: si el punto tiene asesor. */
+  asesorPdv?: boolean;
   ventasCount: number;
 }
 
@@ -20,12 +22,47 @@ export interface Producto {
   ean?: string | null;
   skuColtrade?: string | null;
   nombreProducto: string;
-  /** En Homecenter la marca y los precios pueden faltar. */
+  /** El nombre de una marca del catálogo. En Homecenter puede faltar. */
   marca: string | null;
   precioVentaClaro: number | null;
+  /**
+   * El precio Coltrade base: el que vale los días que ningún precio por
+   * periodo cubre. En Homecenter puede faltar.
+   */
   precioVentaColtrade: number | null;
   puntaje: number | null;
   ventasCount: number;
+  /** El precio Coltrade de hoy: el del periodo vigente o, si no hay, el base. */
+  precioHoy: number | null;
+  /** Cuántos precios por periodo tiene registrados. */
+  preciosCount: number;
+}
+
+/**
+ * El precio Coltrade de un producto entre dos fechas. Sin `hasta`, sigue
+ * vigente. Las ventas valen el precio de su día; las metas, el promedio del
+ * mes por días hábiles.
+ */
+export interface PrecioPeriodo {
+  idPrecio: number;
+  idProducto: string;
+  nombreProducto: string;
+  desde: string;
+  hasta: string | null;
+  precioVentaColtrade: number;
+}
+
+export type PrecioPeriodoPayload = Pick<
+  PrecioPeriodo,
+  'idProducto' | 'desde' | 'hasta' | 'precioVentaColtrade'
+>;
+
+/** Una marca del catálogo: una sola lista para los cuatro canales. */
+export interface Marca {
+  idMarca: number;
+  nombre: string;
+  /** Cuántos productos la usan, en todos los canales. */
+  productosCount: number;
 }
 
 export interface Venta {
@@ -130,7 +167,11 @@ export interface FilaAvance {
   importe: number;
   cantidad: number;
   inventario: number;
+  /** El stock a precio Coltrade de hoy. */
+  inventarioValor: number;
   cumplimiento: number;
+  /** Hasta dónde llegaría el cumplimiento si vendiera todo el stock. */
+  cumplimientoAlcanzable: number;
 }
 
 export interface AvanceMensual {
@@ -157,6 +198,17 @@ export interface AvanceMensual {
   serie: DiaAvance[];
   porRegional: FilaAvance[];
   porPuntoVenta: FilaAvance[];
+  /**
+   * Los puntos que ofrece el filtro. En Claro, solo los que tienen meta ese
+   * mes: lo demás no se mide en el tablero.
+   */
+  puntosVenta: PuntoDelTablero[];
+}
+
+/** Un punto de venta del filtro de los tableros. */
+export interface PuntoDelTablero {
+  idPuntoVenta: string;
+  nombrePdv: string;
 }
 
 /** Una fila de cualquiera de los cortes del tablero. */
@@ -291,6 +343,8 @@ export interface ResultadoInforme {
     fueraDelMes: number;
     sinProducto: number;
     sinPuntoVenta: number;
+    /** Solo Claro: ventas de un producto sin meta ese mes en ese punto. */
+    sinMeta: number;
     omitidasPorDia: number;
     diasCargados: string[];
     diasRespetados: string[];
@@ -404,6 +458,8 @@ export interface CumplimientoDiario {
   porPuntoVenta: FilaDia[];
   porMarca: FilaDia[];
   porProducto: FilaDia[];
+  /** Los puntos del filtro: en Claro, solo los que tienen meta ese mes. */
+  puntosVenta: PuntoDelTablero[];
 }
 
 /** Los cortes por los que se puede desglosar el día. */
@@ -596,7 +652,27 @@ const recurso = <T, P>(ruta: string) => ({
 });
 
 export type PuntoVentaPayload = Omit<PuntoVenta, 'ventasCount'>;
-export type ProductoPayload = Omit<Producto, 'ventasCount'>;
+export type ProductoPayload = Omit<Producto, 'ventasCount' | 'precioHoy' | 'preciosCount'>;
+
+/**
+ * Los precios por periodo de un canal: su CRUD y Excel, más la pregunta de
+ * qué precio se aplicaría (`vigente`), para mostrar el total antes de guardar.
+ */
+const recursoPrecios = (ruta: string) => ({
+  ...recurso<PrecioPeriodo, Partial<PrecioPeriodoPayload>>(ruta),
+  /** Con `mes`, el precio del mes de esa fecha (el de una meta); sin él, el del día. */
+  vigente: (params: { producto: string; fecha: string; mes?: 1 }) =>
+    api.get<{ precio: number | null; precioBase: number | null }>(`${RUTA}${ruta}/vigente`, params),
+});
+
+/** El catálogo de marcas. Renombrar o fusionar cambia todos los productos que la usan. */
+export const marcasApi = {
+  ...recurso<Marca, { nombre: string }>('/marcas'),
+  fusionar: (id: number, destino: string) =>
+    api.post<{ movidos: number; message: string }>(`${RUTA}/marcas/${id}/fusionar`, {
+      destino,
+    }),
+};
 export type VentaPayload = Pick<
   Venta,
   'idProducto' | 'idPuntoVenta' | 'fechaVenta' | 'cantidadVendida'
@@ -687,6 +763,7 @@ export const biTradeApi = {
   campanas: recurso<Campana, Partial<CampanaPayload>>('/campanas'),
   puntosVenta: recurso<PuntoVenta, Partial<PuntoVentaPayload>>('/puntos-venta'),
   productos: recurso<Producto, Partial<ProductoPayload>>('/productos'),
+  precios: recursoPrecios('/precios'),
   ventas: recurso<Venta, Partial<VentaPayload>>('/ventas'),
   inventario: recurso<Inventario, Partial<InventarioPayload>>('/inventario'),
   metas: recurso<MetaComercial, Partial<MetaPayload>>('/metas'),
@@ -794,6 +871,7 @@ const apiDeCanal = (tramo: Exclude<Canal, 'claro'>) => ({
     ),
   puntosVenta: recurso<PuntoVenta, Partial<PuntoVentaPayload>>(`/${tramo}/puntos-venta`),
   productos: recurso<Producto, Partial<ProductoPayload>>(`/${tramo}/productos`),
+  precios: recursoPrecios(`/${tramo}/precios`),
   ventas: recurso<Venta, Partial<VentaPayload>>(`/${tramo}/ventas`),
   inventario: recurso<Inventario, Partial<InventarioPayload>>(`/${tramo}/inventario`),
   metas: recurso<MetaComercial, Partial<MetaPayload>>(`/${tramo}/metas`),

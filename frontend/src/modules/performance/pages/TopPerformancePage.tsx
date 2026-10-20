@@ -94,7 +94,8 @@ export default function TopPerformancePage() {
     anio: hoy.getFullYear(),
     indice: hoy.getMonth() + 1,
   });
-  const { data, isLoading } = useAcumulado(corte);
+  // El ranking es de toda la compañía, lo vea quien lo vea.
+  const { data, isLoading } = useAcumulado(corte, true);
 
   if (!opciones) return <EsqueletoPagina forma="tablero" label="Abriendo el Top Performance…" />;
 

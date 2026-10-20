@@ -16,13 +16,7 @@ import {
 import { Encabezado, Kpi } from '@/shared/components/layout';
 import { formatoMoneda, formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
 import type { CorteDia } from '../api';
-import {
-  useCumplimientoDiario,
-  useDescarga,
-  useOpciones,
-  useProductos,
-  usePuntosVenta,
-} from '../hooks';
+import { useCumplimientoDiario, useDescarga, useOpciones, useProductos } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { useFuente } from '../fuente';
 import { HojasBi } from '../components/HojasBi';
@@ -57,7 +51,8 @@ export default function CumplimientoDiarioPage() {
   const { data, isLoading, isFetching } = useCumplimientoDiario(consulta);
   const { data: opciones } = useOpciones();
   const { data: productos = [] } = useProductos();
-  const { data: puntos = [] } = usePuntosVenta();
+  // Los del mes del día que se mira: en Claro, solo los que tienen meta.
+  const puntos = data?.puntosVenta ?? [];
 
   const exportar = useDescarga(() => fuente.exportarDia(consulta), 'Día descargado en Excel');
 

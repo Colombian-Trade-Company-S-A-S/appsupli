@@ -25,7 +25,6 @@ from .models import (
     PuntoVentaFalabella,
     RegionalFalabella,
     VentaFalabella,
-    anotaciones_meta,
 )
 from .serializers import (
     InventarioFalabellaSerializer,
@@ -112,6 +111,7 @@ class PuntoVentaFalabellaViewSet(_PlantillaFalabella, PuntoVentaViewSet):
 
 
 class ProductoFalabellaViewSet(_PlantillaFalabella, ProductoViewSet):
+    canal = FALABELLA
     queryset = ProductoFalabella.objects.annotate(conteo_ventas=Count('ventas')).order_by(
         'nombre_producto'
     )
@@ -122,7 +122,8 @@ class ProductoFalabellaViewSet(_PlantillaFalabella, ProductoViewSet):
         Columna('id_producto_falabella', ayuda='Código del producto. Máximo 60 caracteres.',
                 ejemplo='FALP-001'),
         Columna('nombre_producto', ayuda='Máximo 60 caracteres.', ejemplo='Audífonos JBL Tune'),
-        Columna('marca', ayuda='Máximo 60 caracteres.', ejemplo='JBL'),
+        Columna('marca', ayuda='Una marca de la lista de marcas. Da igual mayúsculas o tildes.',
+                ejemplo='JBL'),
         Columna('precio_venta_falabella', tipo='entero',
                 ayuda='Precio en Falabella. Hasta 100.000.000.', ejemplo='299900'),
         Columna('precio_venta_coltrade', tipo='entero',
@@ -135,6 +136,7 @@ class ProductoFalabellaViewSet(_PlantillaFalabella, ProductoViewSet):
 
 
 class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
+    canal = FALABELLA
     queryset = VentaFalabella.objects.select_related('id_producto', 'id_punto_venta').order_by(
         '-fecha_venta', '-id_venta'
     )
@@ -154,6 +156,7 @@ class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
 
 
 class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
+    canal = FALABELLA
     queryset = InventarioFalabella.objects.select_related(
         'id_producto', 'id_punto_venta'
     ).order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
@@ -171,11 +174,10 @@ class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
 
 
 class MetaFalabellaViewSet(_PlantillaFalabella, MetaViewSet):
-    queryset = (
-        MetaComercialFalabella.objects.select_related('id_producto', 'id_punto_venta')
-        .annotate(**anotaciones_meta(con_puntos=False))
-        .order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
-    )
+    canal = FALABELLA
+    queryset = MetaComercialFalabella.objects.select_related(
+        'id_producto', 'id_punto_venta'
+    ).order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
     serializer_class = MetaFalabellaSerializer
     filterset_class = MetaFalabellaFilter
     nombre_plural = 'las metas Falabella'

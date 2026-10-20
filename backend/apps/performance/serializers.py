@@ -35,6 +35,7 @@ class PersonaSerializer(serializers.ModelSerializer):
     cargo = serializers.CharField(source='position', read_only=True)
     area = serializers.CharField(source='area.name', default='', read_only=True)
     jefe = serializers.CharField(source='manager.full_name', default='', read_only=True)
+    jefe_id = serializers.IntegerField(source='manager_id', read_only=True)
 
     class Meta:
         model = User
@@ -44,6 +45,7 @@ class PersonaSerializer(serializers.ModelSerializer):
             'cargo',
             'area',
             'jefe',
+            'jefe_id',
             'direccion',
             'organizacion',
             'regional',
@@ -85,6 +87,9 @@ class ResultadoSerializer(serializers.ModelSerializer):
     estado_validacion_label = serializers.CharField(
         source='get_estado_validacion_display', read_only=True
     )
+    feedback_por_nombre = serializers.CharField(
+        source='feedback_por.full_name', default='', read_only=True
+    )
     semaforo = serializers.SerializerMethodField()
 
     class Meta:
@@ -104,6 +109,10 @@ class ResultadoSerializer(serializers.ModelSerializer):
             'validado_por_nombre',
             'fecha_validacion',
             'observacion',
+            'feedback',
+            'feedback_por',
+            'feedback_por_nombre',
+            'feedback_fecha',
             'evidencias',
         )
         read_only_fields = (
@@ -115,6 +124,9 @@ class ResultadoSerializer(serializers.ModelSerializer):
             'estado_validacion',
             'validado_por',
             'fecha_validacion',
+            'feedback',
+            'feedback_por',
+            'feedback_fecha',
         )
 
     def get_semaforo(self, obj) -> str | None:

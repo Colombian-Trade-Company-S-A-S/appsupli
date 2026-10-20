@@ -1,8 +1,8 @@
 """
 Entorno local: DEBUG y CORS abierto al dev server de Vite.
 
-La base es la de DATABASE_URL en `.env` (el Postgres de Render); sin esa
-variable, el SQLite local.
+La base es la de las variables DB_* en `.env` (el Postgres de Render); sin
+ellas, el SQLite local.
 """
 from .base import *  # noqa: F403
 

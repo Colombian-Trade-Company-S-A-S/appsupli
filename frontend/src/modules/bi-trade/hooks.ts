@@ -4,6 +4,7 @@ import { ApiError, type Paginated } from '@/shared/api/http-client';
 import {
   belkinApi,
   biTradeApi,
+  marcasApi,
   partnersApi,
   partnersTableroApi,
   type FiltrosAvance,
@@ -30,6 +31,10 @@ export const biTradeKeys = {
     ['bi-trade', 'puntos-venta', filtros ?? {}] as const,
   productos: (filtros?: Record<string, unknown>) =>
     ['bi-trade', 'productos', filtros ?? {}] as const,
+  precios: (filtros?: Record<string, unknown>) => ['bi-trade', 'precios', filtros ?? {}] as const,
+  precioVigente: (producto: string, fecha: string, mes: boolean) =>
+    ['bi-trade', 'precio-vigente', producto, fecha, mes] as const,
+  marcas: () => ['bi-trade', 'marcas'] as const,
   ventas: (filtros?: Record<string, unknown>) => ['bi-trade', 'ventas', filtros ?? {}] as const,
   inventario: (filtros?: Record<string, unknown>) =>
     ['bi-trade', 'inventario', filtros ?? {}] as const,
@@ -133,6 +138,39 @@ export function useProductos(filtros: Record<string, unknown> = {}) {
   return useQuery({
     queryKey: llave(fuente, biTradeKeys.productos(filtros)),
     queryFn: () => fuente.productos(filtros),
+  });
+}
+
+/** El catálogo de marcas: el mismo para todos los canales. */
+export const useMarcas = () =>
+  useQuery({
+    queryKey: biTradeKeys.marcas(),
+    queryFn: () => marcasApi.list(),
+  });
+
+/** Los precios por periodo del canal en el que se está. */
+export function usePrecios(filtros: Record<string, unknown> = {}) {
+  const fuente = useFuente();
+  const recursos = fuente.recursos ?? biTradeApi;
+  return useQuery({
+    queryKey: llave(fuente, biTradeKeys.precios(filtros)),
+    queryFn: () => recursos.precios.list(filtros),
+  });
+}
+
+/**
+ * El precio que se aplicaría a una venta (de ese día) o a una meta (`mes`:
+ * el promedio de su mes). Lo calcula el backend con la misma regla de los
+ * tableros; sin producto o sin fecha no se pregunta.
+ */
+export function usePrecioVigente(idProducto: string, fecha: string, mes = false) {
+  const fuente = useFuente();
+  const recursos = fuente.recursos ?? biTradeApi;
+  return useQuery({
+    queryKey: llave(fuente, biTradeKeys.precioVigente(idProducto, fecha, mes)),
+    queryFn: () =>
+      recursos.precios.vigente({ producto: idProducto, fecha, ...(mes ? { mes: 1 } : {}) }),
+    enabled: !!idProducto && /^\d{4}-\d{2}-\d{2}$/.test(fecha),
   });
 }
 

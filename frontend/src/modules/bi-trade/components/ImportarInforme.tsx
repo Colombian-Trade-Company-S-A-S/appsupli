@@ -24,7 +24,7 @@ import {
 } from '@/shared/components/ui';
 import { formatoNumero } from '@/shared/lib/formato';
 import type { ModoImportacion, ResultadoInforme } from '../api';
-import type { FuenteDatos } from '../fuente';
+import { useFuente, type FuenteDatos } from '../fuente';
 import { useBiTradeMutation } from '../hooks';
 import { aValorMes, desdeValorMes, mesActual, nombreDelMes, type Mes } from './SelectorMes';
 
@@ -43,6 +43,7 @@ export function ImportarInforme({
 }: {
   importar: NonNullable<FuenteDatos['importarInforme']>;
 }) {
+  const { canal } = useFuente();
   const [abierto, setAbierto] = useState(false);
   const [mes, setMes] = useState<Mes>(mesActual);
   const [modo, setModo] = useState<ModoImportacion>('completar');
@@ -74,6 +75,8 @@ export function ImportarInforme({
             <DialogDescription>
               El archivo del ERP, con su hoja «base». De ahí salen las ventas (CMv 601) y el
               inventario (CMv 1); el resto de los movimientos se ignora.
+              {canal === 'claro' &&
+                ' Solo entran las ventas de productos con meta ese mes en ese punto de venta, y las de los productos del plan Recomiéndame Belkin: sube primero las metas del mes.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -215,6 +218,12 @@ function ResumenImportacion({
             )}
             {ventas.sinProducto > 0 && (
               <Renglon etiqueta="Omitidos: producto no está en la app" valor={ventas.sinProducto} />
+            )}
+            {ventas.sinMeta > 0 && (
+              <Renglon
+                etiqueta="Omitidos: sin meta ese mes en ese punto de venta"
+                valor={ventas.sinMeta}
+              />
             )}
             {ventas.sinPuntoVenta > 0 && (
               <Renglon

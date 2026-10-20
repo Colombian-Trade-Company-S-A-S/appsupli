@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { InfoIcon, LinkIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import {
   Button,
+  Checkbox,
   Field,
   FieldDescription,
   FieldLabel,
@@ -22,7 +23,7 @@ interface Soporte {
 function comoSeCarga(objetivo: Objetivo) {
   switch (objetivo.tipoMedicion) {
     case 'binario':
-      return { etiqueta: '¿Se cumplió?', ayuda: '1 si se cumplió, 0 si no.', max: 1, paso: '1' };
+      return { etiqueta: '¿Se cumplió?', ayuda: '', max: 1, paso: '1' };
     case 'cualitativa':
       return {
         etiqueta: 'Criterios cumplidos',
@@ -66,6 +67,9 @@ export function FormularioResultado({
   const [soportes, setSoportes] = useState<Soporte[]>([{ nombre: '', linkSoporte: '' }]);
   const cargar = useCargarResultado();
   const como = comoSeCarga(objetivo);
+  // El binario no se digita: es una casilla. Sin marcar es 0, no «vacío».
+  const esBinario = objetivo.tipoMedicion === 'binario';
+  const cumplido = Number(valor) === 1;
 
   useEffect(() => {
     const resultado = objetivo.resultado;
@@ -89,7 +93,7 @@ export function FormularioResultado({
     try {
       const resultado = await cargar.mutateAsync({
         objetivo: objetivo.id,
-        resultadoEjecutado: valor,
+        resultadoEjecutado: esBinario ? (cumplido ? '1' : '0') : valor,
         observacion,
         evidencias: soportes
           .filter((fila) => fila.linkSoporte.trim())
@@ -112,20 +116,36 @@ export function FormularioResultado({
         </p>
       </div>
 
-      <Field className="min-w-0">
-        <FieldLabel htmlFor="res-valor">{como.etiqueta}</FieldLabel>
-        <Input
-          id="res-valor"
-          type="number"
-          min="0"
-          max={como.max}
-          step={como.paso}
-          value={valor}
-          onChange={(e) => setValor(e.target.value)}
-          required
-        />
-        <FieldDescription>{como.ayuda}</FieldDescription>
-      </Field>
+      {esBinario ? (
+        <Field className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="res-valor"
+              checked={cumplido}
+              onCheckedChange={(marcado) => setValor(marcado ? '1' : '0')}
+            />
+            <FieldLabel htmlFor="res-valor">Se cumplió</FieldLabel>
+          </div>
+          <FieldDescription>
+            Marcado cuenta como cumplido (100%); sin marcar, como no cumplido (0%).
+          </FieldDescription>
+        </Field>
+      ) : (
+        <Field className="min-w-0">
+          <FieldLabel htmlFor="res-valor">{como.etiqueta}</FieldLabel>
+          <Input
+            id="res-valor"
+            type="number"
+            min="0"
+            max={como.max}
+            step={como.paso}
+            value={valor}
+            onChange={(e) => setValor(e.target.value)}
+            required
+          />
+          <FieldDescription>{como.ayuda}</FieldDescription>
+        </Field>
+      )}
 
       <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -193,6 +213,15 @@ export function FormularioResultado({
           Agregar otro enlace
         </Button>
       </fieldset>
+
+      {objetivo.resultado?.feedback && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+          <p className="text-xs font-medium text-muted-foreground">
+            Feedback{objetivo.resultado.feedbackPorNombre && ` de ${objetivo.resultado.feedbackPorNombre}`}
+          </p>
+          <p className="text-pretty whitespace-pre-line">{objetivo.resultado.feedback}</p>
+        </div>
+      )}
 
       <Field className="min-w-0">
         <FieldLabel htmlFor="res-observacion">Observación (opcional)</FieldLabel>

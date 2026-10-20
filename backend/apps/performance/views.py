@@ -27,8 +27,10 @@ from .api_permissions import (
     CanManagePeriodos,
     HasPerformanceApp,
     capacidades,
+    es_lider,
     puede_cargar_resultado,
     puede_definir,
+    puede_dar_feedback,
     puede_definir_a_cualquiera,
     puede_validar_resultado,
     puede_ver,
@@ -359,7 +361,16 @@ def activar_periodo(request, periodo):
 @permission_classes(ACCESO)
 def opciones(request):
     """Todo lo que el formulario necesita para pintarse de una sola vez."""
-    equipo = _equipo_de(request.user).select_related('area', 'manager').order_by('first_name')
+    # `equipo` son las personas a cargo directo: con quien se trabaja uno por
+    # uno. People además puede definirle a cualquiera, pero eso no llena el
+    # desplegable por defecto: lo pide con `compania`.
+    a_cargo = request.user.team.filter(is_active=True)
+    equipo = a_cargo.select_related('area', 'manager').order_by('first_name')
+    compania = (
+        _equipo_de(request.user).select_related('area', 'manager').order_by('first_name')
+        if puede_definir_a_cualquiera(request.user)
+        else []
+    )
     return Response(
         {
             'periodos': _periodos_disponibles(),
@@ -368,6 +379,7 @@ def opciones(request):
             ],
             'unidades': [{'value': valor, 'label': etiqueta} for valor, etiqueta in Unidad.choices],
             'equipo': PersonaSerializer(equipo, many=True).data,
+            'compania': PersonaSerializer(compania, many=True).data,
             'maximo_objetivos': MAXIMO_OBJETIVOS,
             'ponderacion_completa': PONDERACION_COMPLETA,
             'criterios_cualitativos': CRITERIOS_CUALITATIVOS,
@@ -444,15 +456,13 @@ def cargar_resultado(request, pk):
     """
     Carga o corrige lo ejecutado de un objetivo, con sus evidencias.
 
-    Lo hace el responsable del resultado —el colaborador, o el Trade Leader
-    cuando se trata de un asesor—, su jefe o People. El mes tiene que haber
+    Lo hace el colaborador; su jefe o People también pueden hacerlo por él, y
+    el Trade Leader cuando se trata de un asesor. El mes tiene que haber
     empezado: no se carga el resultado de un mes que todavía no ocurre.
     """
     objetivo = _objetivo_visible(request, pk)
     if not puede_cargar_resultado(request.user, objetivo):
-        raise PermissionDenied(
-            'El resultado lo carga el responsable del objetivo, su jefe o People.'
-        )
+        raise PermissionDenied('El resultado lo carga el colaborador, su jefe o People.')
     if primer_dia(timezone.localdate()) < objetivo.periodo:
         raise ValidationError(
             f'{etiqueta_mes(objetivo.periodo)} todavía no empieza: no hay resultado que cargar.'
@@ -523,6 +533,11 @@ def validar_resultado(request, pk):
     if resultado is None:
         raise ValidationError('Este objetivo todavía no tiene resultado cargado.')
     if not puede_validar_resultado(request.user, objetivo):
+        if resultado.cargado_por_id == request.user.id:
+            raise PermissionDenied(
+                'No puedes validar un resultado que cargaste tú: lo valida otra persona '
+                '(el jefe del colaborador o People).'
+            )
         raise PermissionDenied('La validación la hace el jefe del colaborador o People.')
 
     estado = (request.data.get('estado') or '').strip()
@@ -537,17 +552,46 @@ def validar_resultado(request, pk):
     resultado.estado_validacion = estado
     resultado.validado_por = request.user
     resultado.fecha_validacion = timezone.now()
+    campos = ['estado_validacion', 'validado_por', 'fecha_validacion', 'updated_at']
     if observacion:
-        resultado.observacion = observacion
-    resultado.save(
-        update_fields=[
-            'estado_validacion',
-            'validado_por',
-            'fecha_validacion',
-            'observacion',
-            'updated_at',
-        ]
-    )
+        # El comentario es del jefe: va al feedback, sin pisar la observación
+        # de quien cargó el resultado.
+        _poner_feedback(resultado, request.user, observacion)
+        campos += ['feedback', 'feedback_por', 'feedback_fecha']
+    resultado.save(update_fields=campos)
+    return Response(ResultadoSerializer(resultado).data)
+
+
+def _poner_feedback(resultado, autor, texto: str) -> None:
+    resultado.feedback = texto
+    resultado.feedback_por = autor
+    resultado.feedback_fecha = timezone.now()
+
+
+@api_view(['POST'])
+@permission_classes(ACCESO)
+def dar_feedback(request, pk):
+    """
+    El jefe (o People) deja un comentario sobre lo que cargó el colaborador.
+
+    Es independiente de aprobar o devolver: sirve para orientar sin cambiar el
+    estado. Reemplaza el comentario anterior; un texto vacío lo borra.
+    """
+    objetivo = _objetivo_visible(request, pk)
+    resultado = getattr(objetivo, 'resultado', None)
+    if resultado is None:
+        raise ValidationError('Este objetivo todavía no tiene resultado cargado.')
+    if not puede_dar_feedback(request.user, objetivo):
+        raise PermissionDenied('El feedback lo deja el jefe del colaborador o People.')
+
+    texto = (request.data.get('feedback') or '').strip()
+    if len(texto) > 2000:
+        raise ValidationError({'feedback': 'Máximo 2000 caracteres.'})
+    if texto:
+        _poner_feedback(resultado, request.user, texto)
+    else:
+        resultado.feedback, resultado.feedback_por, resultado.feedback_fecha = '', None, None
+    resultado.save(update_fields=['feedback', 'feedback_por', 'feedback_fecha', 'updated_at'])
     return Response(ResultadoSerializer(resultado).data)
 
 
@@ -659,6 +703,24 @@ def _cumplimiento_por_persona(personas, meses) -> list[dict]:
     )
 
 
+def _alcance_del_tablero(user):
+    """
+    De quién ve los resultados esta persona en el tablero.
+
+    People y admin, la compañía; un líder, sus personas a cargo. Un colaborador
+    sin nadie a cargo no tiene tablero (su resultado lo ve en «Mis objetivos»):
+    se le niega. Devuelve `(alcance, queryset)`.
+    """
+    if puede_ver_todo(user):
+        return 'compania', User.objects.filter(is_active=True)
+    if es_lider(user):
+        return 'equipo', user.team.filter(is_active=True)
+    raise PermissionDenied(
+        'El semáforo es para líderes, People y administradores. '
+        'Tu resultado lo ves en «Mis objetivos».'
+    )
+
+
 @api_view(['GET'])
 @permission_classes(ACCESO)
 def acumulado(request):
@@ -682,12 +744,22 @@ def acumulado(request):
 
     desde, hasta = rango(tipo, anio, indice)
     meses = meses_del_rango(desde, hasta)
-    equipo = list(_equipo_de(request.user).only('id', 'first_name', 'last_name', 'position'))
-    if not puede_ver_todo(request.user) and request.user not in equipo:
-        equipo = [request.user, *equipo]
+    # El Top Performance lo ve todo el mundo; el tablero, solo lo que a cada
+    # quien le corresponde.
+    es_top = request.query_params.get('alcance') == 'top'
+    if es_top:
+        alcance = 'compania'
+        personas = User.objects.filter(is_active=True)
+    else:
+        alcance, personas = _alcance_del_tablero(request.user)
+    equipo = list(personas.only('id', 'first_name', 'last_name', 'position'))
 
     filas = _cumplimiento_por_persona(equipo, meses)
     con_dato = [fila for fila in filas if fila['cumplimiento'] is not None]
+    if es_top:
+        # Un ranking solo lleva a quien ya tiene resultado: no se revela a
+        # quien no, ni cuántos objetivos tiene.
+        filas = con_dato
     promedio = (
         round(sum(fila['cumplimiento'] for fila in con_dato) / len(con_dato), 2)
         if con_dato
@@ -709,6 +781,7 @@ def acumulado(request):
             'brechas': sum(1 for fila in con_dato if fila['semaforo'] == Semaforo.ROJO),
             'cortes': cortes_semaforo(),
             'colaboradores': filas,
+            'alcance': alcance,
             'capacidades': capacidades(request.user),
         }
     )

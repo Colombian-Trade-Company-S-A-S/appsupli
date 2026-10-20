@@ -23,5 +23,6 @@ urlpatterns = [
     path('periodos/<str:periodo>/edicion', views.habilitar_edicion, name='periodo-edicion'),
     path('objetivos/<int:pk>/resultado', views.cargar_resultado, name='objetivo-resultado'),
     path('objetivos/<int:pk>/validar', views.validar_resultado, name='objetivo-validar'),
+    path('objetivos/<int:pk>/feedback', views.dar_feedback, name='objetivo-feedback'),
     *router.urls,
 ]

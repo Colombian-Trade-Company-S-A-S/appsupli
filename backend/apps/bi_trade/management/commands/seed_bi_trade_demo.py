@@ -16,6 +16,7 @@ from django.db.models import Q
 
 from apps.bi_trade.models import (
     Inventario,
+    Marca,
     Materiales,
     MetaComercial,
     Producto,
@@ -97,7 +98,7 @@ class Command(BaseCommand):
                 id_producto=codigo,
                 defaults={
                     'nombre_producto': nombre,
-                    'marca': marca,
+                    'marca': Marca.objects.get_or_create(nombre=marca)[0],
                     'precio_venta_claro': claro,
                     'precio_venta_coltrade': coltrade,
                     'puntaje': puntaje,

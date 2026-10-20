@@ -25,6 +25,7 @@ from apps.bi_trade.models import (
     InventarioFalabella,
     InventarioHc,
     InventarioTmk,
+    Marca,
     MarcaPartner,
     Materiales,
     MetaComercial,
@@ -56,6 +57,31 @@ from apps.bi_trade.models import (
 from apps.bi_trade.tickets import calcular_tickets, participa
 
 pytestmark = pytest.mark.django_db
+
+
+def marca(nombre: str) -> Marca:
+    """La marca del catálogo: los productos la eligen, no la escriben."""
+    return Marca.objects.get_or_create(nombre=nombre)[0]
+
+
+def con_metas(*meses: tuple[int, int]) -> None:
+    """
+    Una meta de cada producto en cada punto, para los meses dados.
+
+    Claro solo carga ventas de productos con meta ese mes en ese punto: las
+    pruebas de la mecánica del importador necesitan que todo tenga meta.
+    """
+    MetaComercial.objects.bulk_create(
+        MetaComercial(
+            id_producto=producto,
+            id_punto_venta=punto,
+            fecha_meta=date(anio, mes, 1),
+            meta_cantidad=1,
+        )
+        for producto in Producto.objects.all()
+        for punto in PuntoVenta.objects.all()
+        for anio, mes in meses
+    )
 
 
 @pytest.fixture
@@ -108,7 +134,7 @@ def catalogo():
     caro = Producto.objects.create(
         id_producto='SKU-1',
         nombre_producto='iPhone 15',
-        marca='Apple',
+        marca=marca('Apple'),
         precio_venta_claro=5_000_000,
         precio_venta_coltrade=4_000_000,
         puntaje=99,
@@ -116,7 +142,7 @@ def catalogo():
     barato = Producto.objects.create(
         id_producto='SKU-2',
         nombre_producto='Redmi Note 13',
-        marca='Xiaomi',
+        marca=marca('Xiaomi'),
         precio_venta_claro=900_000,
         precio_venta_coltrade=800_000,
     )
@@ -156,6 +182,7 @@ def test_sin_la_app_no_se_entra(app_bi_trade):
 
 
 def test_consultar_solo_pide_la_app_pero_escribir_pide_permiso(app_bi_trade, catalogo):
+    marca('Motorola')
     lector = crear_usuario('lector@supli.tech', app_bi_trade)
     editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
 
@@ -563,7 +590,7 @@ def test_eliminar_todos_no_choca_con_el_detalle_de_un_registro(app_bi_trade, cat
     Producto.objects.create(
         id_producto='eliminar-todos',
         nombre_producto='Producto con nombre traicionero',
-        marca='Test',
+        marca=marca('Test'),
         precio_venta_claro=1000,
         precio_venta_coltrade=900,
     )
@@ -637,6 +664,7 @@ def test_descargar_la_plantilla_exige_permiso(app_bi_trade):
 
 
 def test_importar_productos_crea_y_luego_actualiza(app_bi_trade):
+    marca('Nokia')
     editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
     cliente = cliente_de(editor)
     encabezados = (
@@ -654,7 +682,7 @@ def test_importar_productos_crea_y_luego_actualiza(app_bi_trade):
     )
     assert respuesta.status_code == 200
     assert respuesta.data['created'] == 1
-    assert Producto.objects.get(pk='SKU-9').marca == 'Nokia'
+    assert Producto.objects.get(pk='SKU-9').marca_id == 'Nokia'
 
     # El mismo código no duplica: actualiza.
     archivo = _archivo_xlsx(
@@ -712,6 +740,7 @@ def test_importar_avisa_si_falta_una_columna(app_bi_trade):
 
 
 def test_importar_ventas_lee_las_fechas(app_bi_trade, catalogo):
+    con_metas((2026, 3))
     pdv, _sur, producto, _barato = catalogo
     editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
     archivo = _archivo_xlsx(
@@ -1555,6 +1584,7 @@ def editor(app_bi_trade):
 
 
 def test_cada_fila_del_informe_es_una_unidad(editor, catalogo):
+    con_metas((2026, 3))
     """El ERP lista serie por serie, así que la cantidad sale de contar filas."""
     respuesta = _importar(
         editor,
@@ -1575,6 +1605,7 @@ def test_cada_fila_del_informe_es_una_unidad(editor, catalogo):
 
 
 def test_solo_el_601_es_venta_y_el_601a_no(editor, catalogo):
+    con_metas((2026, 3))
     """`601A` también dice «Venta» en el informe, pero es de otro periodo."""
     respuesta = _importar(
         editor,
@@ -1622,6 +1653,7 @@ def test_el_cmv_1_es_inventario_y_reemplaza_lo_que_habia(editor, catalogo):
 
 
 def test_completar_respeta_los_dias_que_ya_tienen_ventas(editor, catalogo):
+    con_metas((2026, 3))
     """El caso de todos los días: la base va al 17 y el archivo trae hasta el 23."""
     norte, _sur, caro, _barato = catalogo
     for dia in range(1, 18):
@@ -1643,6 +1675,7 @@ def test_completar_respeta_los_dias_que_ya_tienen_ventas(editor, catalogo):
 
 
 def test_completar_llena_los_huecos_del_medio(editor, catalogo):
+    con_metas((2026, 3))
     """Si falta el 9 y del 24 al 31, se llenan sin tocar el resto."""
     norte, _sur, caro, _barato = catalogo
     cargados = [*range(1, 9), *range(10, 24)]
@@ -1664,6 +1697,7 @@ def test_completar_llena_los_huecos_del_medio(editor, catalogo):
 
 
 def test_sobrescribir_borra_el_mes_y_deja_solo_el_archivo(editor, catalogo):
+    con_metas((2026, 3))
     norte, _sur, caro, _barato = catalogo
     for dia in range(1, 32):
         Venta.objects.create(
@@ -1685,6 +1719,7 @@ def test_sobrescribir_borra_el_mes_y_deja_solo_el_archivo(editor, catalogo):
 
 
 def test_sobrescribir_solo_toca_el_mes_elegido(editor, catalogo):
+    con_metas((2026, 3))
     norte, _sur, caro, _barato = catalogo
     Venta.objects.create(
         id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 2, 10), cantidad_vendida=1
@@ -1703,6 +1738,7 @@ def test_sobrescribir_solo_toca_el_mes_elegido(editor, catalogo):
 
 
 def test_las_ventas_de_otro_mes_no_entran(editor, catalogo):
+    con_metas((2026, 3))
     """Se importa el mes elegido, no lo que traiga el archivo."""
     datos = _importar(
         editor,
@@ -1720,6 +1756,7 @@ def test_las_ventas_de_otro_mes_no_entran(editor, catalogo):
 
 
 def test_no_se_carga_lo_que_no_existe_en_la_app(editor, catalogo):
+    con_metas((2026, 3))
     """El informe no crea catálogo: si el código no está, la fila se omite."""
     datos = _importar(
         editor,
@@ -1747,12 +1784,13 @@ def test_los_codigos_numericos_cruzan_con_los_de_la_base(app_bi_trade, editor):
     Producto.objects.create(
         id_producto='7023988',
         nombre_producto='Torre de sonido',
-        marca='Aiwa',
+        marca=marca('Aiwa'),
         precio_venta_claro=1_603_900,
         precio_venta_coltrade=1_347_815,
     )
 
     # `Material` llega como entero y `CMv` también, tal como los da el ERP.
+    con_metas((2026, 3))
     datos = _importar(editor, [(7023988, 'C230', 601, date(2026, 3, 4))]).json()
 
     assert datos['ventas']['creadas'] == 1
@@ -1853,6 +1891,7 @@ def test_importar_el_informe_rechaza_un_archivo_que_no_es_xlsx(editor, catalogo)
 
 
 def test_importar_dos_veces_en_completar_no_duplica(editor, catalogo):
+    con_metas((2026, 3))
     filas = [('SKU-1', 'PDV-001', '601', date(2026, 3, 4))]
     _importar(editor, filas)
     datos = _importar(editor, filas).json()['ventas']
@@ -2445,7 +2484,8 @@ def test_un_mes_sin_metas_no_divide_por_cero(app_bi_trade, catalogo):
 
     assert datos['metaDinero'] == 0
     assert datos['cumplimientoDinero'] == 0.0
-    assert datos['realDinero'] == 8_000_000
+    # En Claro, una venta sin meta ese mes en ese punto no cuenta en el tablero.
+    assert datos['realDinero'] == 0
 
 
 def test_una_fecha_ilegible_cae_en_hoy(app_bi_trade, marzo_para_el_dia):
@@ -2883,14 +2923,14 @@ def catalogo_hc():
     torre = ProductoHc.objects.create(
         id_producto='HCP-001',
         nombre_producto='Torre de sonido',
-        marca='Aiwa',
+        marca=marca('Aiwa'),
         precio_venta_hc=1_200_000,
         precio_venta_coltrade=1_000_000,
     )
     bombillo = ProductoHc.objects.create(
         id_producto='HCP-002',
         nombre_producto='Bombillo inteligente',
-        marca='Sylvania',
+        marca=marca('Sylvania'),
         precio_venta_hc=40_000,
         precio_venta_coltrade=30_000,
     )
@@ -2942,6 +2982,7 @@ def test_las_tablas_y_llaves_de_hc_terminan_en_hc():
 
 def test_claro_y_hc_no_se_mezclan(app_bi_trade, catalogo, catalogo_hc):
     norte, _sur, caro, _barato = catalogo
+    con_metas((2026, 3))
     tienda, _centro, torre, _bombillo = catalogo_hc
     Venta.objects.create(
         id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 3, 4), cantidad_vendida=1
@@ -2988,6 +3029,7 @@ def test_el_cumplimiento_diario_de_hc(app_bi_trade, catalogo_hc):
 
 
 def test_los_crud_de_hc_escriben_en_sus_tablas(app_bi_trade):
+    marca('Black+Decker')
     editor = _editor(app_bi_trade)
     punto = editor.post(
         '/api/bi-trade/hc/puntos-venta',
@@ -3306,6 +3348,7 @@ def test_un_querie_de_ventas_que_no_cruza_no_guarda_nada(app_bi_trade, catalogo_
 
 
 def test_importar_productos_hc_con_ean_y_campos_vacios(app_bi_trade):
+    marca('Aiwa')
     encabezados = [
         'id_producto_hc',
         'ean',
@@ -3512,7 +3555,7 @@ def catalogo_falabella():
     audifonos = ProductoFalabella.objects.create(
         id_producto='FALP-001',
         nombre_producto='Audífonos JBL',
-        marca='JBL',
+        marca=marca('JBL'),
         precio_venta_falabella=300_000,
         precio_venta_coltrade=250_000,
     )
@@ -3585,6 +3628,7 @@ def test_la_cuota_y_el_dia_de_falabella(app_bi_trade, catalogo_falabella):
 
 
 def test_los_crud_de_falabella_escriben_en_sus_tablas(app_bi_trade):
+    marca('JBL')
     editor = _editor(app_bi_trade)
     assert editor.post(
         '/api/bi-trade/falabella/puntos-venta',
@@ -3766,7 +3810,7 @@ def catalogo_tmk():
     audifonos = ProductoTmk.objects.create(
         id_producto='TMKP-001',
         nombre_producto='Audífonos JBL',
-        marca='JBL',
+        marca=marca('JBL'),
         precio_venta_tmk=300_000,
         precio_venta_coltrade=250_000,
     )
@@ -3839,6 +3883,7 @@ def test_la_cuota_y_el_dia_de_tmk(app_bi_trade, catalogo_tmk):
 
 
 def test_los_crud_de_tmk_escriben_en_sus_tablas(app_bi_trade):
+    marca('JBL')
     editor = _editor(app_bi_trade)
     assert editor.post(
         '/api/bi-trade/tmk/puntos-venta',
@@ -4662,7 +4707,7 @@ def _catalogo_grande(puntos=6, productos=10):
         Producto(
             id_producto=f'SKU-{n}',
             nombre_producto=f'Producto {n}',
-            marca='Samsung',
+            marca=marca('Samsung'),
             precio_venta_claro=1000,
             precio_venta_coltrade=900,
             puntaje=10,
@@ -4728,6 +4773,7 @@ def test_importar_puntos_de_venta_no_hace_una_consulta_por_fila(app_bi_trade):
 
 def test_importar_ventas_no_hace_una_consulta_por_fila(app_bi_trade):
     _catalogo_grande()
+    con_metas((2026, 10))
     editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
     cliente = cliente_de(editor)
     encabezados = ('id_producto', 'id_punto_venta', 'fecha_venta', 'cantidad_vendida')
@@ -4846,3 +4892,173 @@ def test_importar_metas_partners_no_hace_una_consulta_por_fila(app_bi_trade, cat
     assert respuesta.json()['updated'] == 2 * len(marcas)
     metas = {str(valor) for valor in MetaPartner.objects.values_list('meta_unidades', flat=True)}
     assert metas == {'3.00'}
+
+
+# ── Claro solo carga ventas de productos con meta ──────────────────────────
+
+
+def _producto_del_plan_belkin(codigo):
+    from apps.bi_trade.models import CategoriaBelkin, ProductoBelkin
+
+    categoria, _ = CategoriaBelkin.objects.get_or_create(nombre='Cargador')
+    ProductoBelkin.objects.create(
+        id_producto=codigo, nombre_producto='Cargador', id_categoria=categoria
+    )
+
+
+def test_el_informe_de_claro_solo_carga_ventas_con_meta_en_ese_punto(editor, catalogo):
+    norte, sur, caro, _barato = catalogo
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_meta=date(2026, 3, 1), meta_cantidad=5
+    )
+    # La meta de abril no le sirve a marzo: se mira mes por mes.
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=sur, fecha_meta=date(2026, 4, 1), meta_cantidad=5
+    )
+    _producto_del_plan_belkin('SKU-2')
+
+    datos = _importar(
+        editor,
+        [
+            ('SKU-1', 'PDV-001', '601', date(2026, 3, 4)),  # con meta en ese punto
+            ('SKU-1', 'PDV-002', '601', date(2026, 3, 4)),  # sin meta en marzo en ese punto
+            ('SKU-2', 'PDV-002', '601', date(2026, 3, 5)),  # del plan Belkin: entra siempre
+        ],
+    ).json()
+
+    assert (datos['ventas']['creadas'], datos['ventas']['sinMeta']) == (2, 1)
+    assert 'no tiene meta ese mes en ese punto' in datos['message']
+    assert set(Venta.objects.values_list('id_producto', 'id_punto_venta')) == {
+        ('SKU-1', 'PDV-001'),
+        ('SKU-2', 'PDV-002'),
+    }
+
+
+def test_el_excel_de_ventas_de_claro_solo_carga_las_que_tienen_meta_ese_mes(
+    app_bi_trade, catalogo
+):
+    norte, _sur, caro, _barato = catalogo
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_meta=date(2026, 11, 1), meta_cantidad=5
+    )
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    archivo = _archivo_xlsx(
+        ('id_producto', 'id_punto_venta', 'fecha_venta', 'cantidad_vendida'),
+        [
+            ('SKU-1', 'PDV-001', date(2026, 10, 20), 1),  # octubre no tiene meta
+            ('SKU-1', 'PDV-001', date(2026, 11, 3), 2),
+            ('SKU-2', 'PDV-001', date(2026, 11, 3), 4),  # SKU-2 no tiene meta
+        ],
+    )
+
+    respuesta = cliente_de(editor).post(
+        '/api/bi-trade/ventas/importar', {'archivo': archivo}, format='multipart'
+    )
+
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['created'] == 1
+    assert '2 venta(s) no entraron' in respuesta.json()['message']
+    assert list(Venta.objects.values_list('fecha_venta', 'cantidad_vendida')) == [
+        (date(2026, 11, 3), 2)
+    ]
+
+
+def test_los_canales_aparte_cargan_las_ventas_aunque_no_tengan_meta(app_bi_trade, catalogo_hc):
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    producto = ProductoHc.objects.first()
+    punto = PuntoVentaHc.objects.first()
+    archivo = _archivo_xlsx(
+        ('id_producto_hc', 'id_punto_venta_hc', 'fecha_venta', 'cantidad_vendida'),
+        [(producto.pk, punto.pk, date(2026, 3, 4), 1)],
+    )
+
+    respuesta = cliente_de(editor).post(
+        '/api/bi-trade/hc/ventas/importar', {'archivo': archivo}, format='multipart'
+    )
+
+    assert respuesta.json()['created'] == 1
+    assert 'meta' not in respuesta.json()['message']
+
+
+def test_el_tablero_de_claro_solo_cuenta_lo_que_tiene_meta(app_bi_trade, catalogo):
+    norte, sur, caro, barato = catalogo
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_meta=date(2026, 3, 1), meta_cantidad=5
+    )
+    # Del plan Belkin: el informe lo carga sin meta, pero eso es para el tablero del plan.
+    _producto_del_plan_belkin('SKU-2')
+    for producto, punto, dia, cantidad in (
+        (caro, norte, 4, 2),  # cuenta
+        (barato, norte, 4, 3),  # sin meta en ese punto
+        (caro, sur, 5, 1),  # el punto sur no tiene meta
+    ):
+        Venta.objects.create(
+            id_producto=producto,
+            id_punto_venta=punto,
+            fecha_venta=date(2026, 3, dia),
+            cantidad_vendida=cantidad,
+        )
+    Inventario.objects.create(id_producto=caro, id_punto_venta=norte, cantidad_inventario=4)
+    Inventario.objects.create(id_producto=caro, id_punto_venta=sur, cantidad_inventario=10)
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    mes = lector.get('/api/bi-trade/avance-mensual?anio=2026&mes=3').json()
+    assert (mes['totales']['ventasCantidad'], mes['totales']['inventarioUnidades']) == (2, 4)
+    assert [fila['label'] for fila in mes['porPuntoVenta']] == [norte.nombre_pdv]
+    assert mes['puntosVenta'] == [{'idPuntoVenta': 'PDV-001', 'nombrePdv': norte.nombre_pdv}]
+
+    dia = lector.get('/api/bi-trade/cumplimiento-diario?fecha=2026-03-04').json()
+    assert dia['totales']['realCantidad'] == 2
+    assert [p['idPuntoVenta'] for p in dia['puntosVenta']] == ['PDV-001']
+
+
+def test_el_avance_por_punto_dice_cuanto_alcanzaria_con_su_inventario(app_bi_trade, catalogo):
+    norte, _sur, caro, _barato = catalogo  # caro vale 4.000.000 en Coltrade
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_meta=date(2026, 3, 1), meta_cantidad=5
+    )
+    Venta.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 3, 4), cantidad_vendida=2
+    )
+    Inventario.objects.create(id_producto=caro, id_punto_venta=norte, cantidad_inventario=4)
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    datos = lector.get('/api/bi-trade/avance-mensual?anio=2026&mes=3').json()
+
+    fila = datos['porPuntoVenta'][0]
+    # Meta 20 M; vendido 8 M (40 %); con el stock de 16 M llegaría a 24 M: 120 %.
+    assert (fila['cumplimiento'], fila['inventarioValor'], fila['cumplimientoAlcanzable']) == (
+        40.0,
+        16_000_000,
+        120.0,
+    )
+    assert datos['totales']['cumplimientoAlcanzable'] == 120.0
+
+
+def test_el_punto_de_venta_de_claro_dice_si_tiene_asesor(app_bi_trade, catalogo, catalogo_hc):
+    editor = cliente_de(
+        crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    )
+    # Los que ya estaban quedan con asesor.
+    assert {p['asesorPdv'] for p in editor.get('/api/bi-trade/puntos-venta').json()} == {True}
+
+    respuesta = editor.patch('/api/bi-trade/puntos-venta/PDV-001', {'asesorPdv': False}, format='json')
+    assert respuesta.json()['asesorPdv'] is False
+
+    archivo = _archivo_xlsx(
+        ('id_punto_venta', 'nombre_pdv', 'regional', 'materiales', 'asesor_pdv'),
+        [
+            ('PDV-001', 'Claro Norte', None, None, None),  # vacío: no cambia
+            ('PDV-010', 'Nuevo con asesor', None, None, None),  # vacío y nuevo: sí
+            ('PDV-011', 'Nuevo sin asesor', None, None, 'No'),
+        ],
+    )
+    importado = editor.post(
+        '/api/bi-trade/puntos-venta/importar', {'archivo': archivo}, format='multipart'
+    )
+    assert importado.status_code == 200, importado.json()
+    asesores = dict(PuntoVenta.objects.values_list('id_punto_venta', 'asesor_pdv'))
+    assert (asesores['PDV-001'], asesores['PDV-010'], asesores['PDV-011']) == (False, True, False)
+
+    # Es solo de Claro: las tiendas de Homecenter no lo tienen.
+    assert 'asesorPdv' not in editor.get('/api/bi-trade/hc/puntos-venta').json()[0]

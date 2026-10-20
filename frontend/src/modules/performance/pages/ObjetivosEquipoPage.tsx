@@ -27,6 +27,7 @@ import {
   DialogTitle,
   Field,
   FieldLabel,
+  Switch,
   Textarea,
 } from '@/shared/components/ui';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
@@ -40,7 +41,6 @@ import {
   useObjetivos,
   useOpcionesPerformance,
   useResumenPeriodo,
-  useValidarResultado,
 } from '../hooks';
 import {
   AvisoCongelado,
@@ -52,6 +52,7 @@ import {
 import { CargaExcel } from '../components/CargaExcel';
 import { FormularioObjetivo } from '../components/FormularioObjetivo';
 import { FormularioResultado } from '../components/FormularioResultado';
+import { RevisionResultado } from '../components/RevisionResultado';
 import { TablaObjetivos } from '../components/TablaObjetivos';
 
 /** El mes en curso: desde que empieza, ya se pueden cargar resultados. */
@@ -67,16 +68,24 @@ const mesActual = () => new Date().toISOString().slice(0, 7);
 export default function ObjetivosEquipoPage() {
   const { data: opciones, isLoading: cargandoOpciones } = useOpcionesPerformance();
   const [colaboradorId, setColaboradorId] = useState('');
+  const [verCompania, setVerCompania] = useState(false);
   const [periodo, setPeriodo] = useState('');
   const [editando, setEditando] = useState<Objetivo | undefined>();
   const [porBorrar, setPorBorrar] = useState<Objetivo | null>(null);
   const [pendientes, setPendientes] = useState<PesoIncompleto | null>(null);
   const [cargando, setCargando] = useState<Objetivo | null>(null);
+  const [revisandoId, setRevisandoId] = useState<number | null>(null);
   const [excepcion, setExcepcion] = useState(false);
   const [motivo, setMotivo] = useState('');
 
   const periodos = opciones?.periodos ?? [];
-  const equipo = opciones?.equipo ?? [];
+  // Por defecto, solo las personas a cargo directo. People puede ampliar a toda
+  // la compañía; si no tiene a nadie a cargo, arranca ahí.
+  const aCargo = opciones?.equipo ?? [];
+  const compania = opciones?.compania ?? [];
+  const puedeVerCompania = compania.length > 0;
+  const mostrarCompania = puedeVerCompania && (verCompania || aCargo.length === 0);
+  const equipo = mostrarCompania ? compania : aCargo;
   const periodoElegido = periodo || periodos[0]?.periodo || '';
   // Sin el seleccionado explícito se trabaja sobre el primero del equipo.
   const colaborador = equipo.find((persona) => String(persona.id) === colaboradorId) ?? equipo[0];
@@ -86,8 +95,8 @@ export default function ObjetivosEquipoPage() {
     periodo: periodoElegido ? mesDe(periodoElegido) : undefined,
   });
   const { data: resumen } = useResumenPeriodo(periodoElegido, colaborador?.id);
+  const enRevision = objetivos.find((objetivo) => objetivo.id === revisandoId);
   const eliminar = useEliminarObjetivo();
-  const validar = useValidarResultado();
   const habilitarEdicion = useHabilitarEdicion();
   const queryClient = useQueryClient();
 
@@ -150,20 +159,35 @@ export default function ObjetivosEquipoPage() {
       </Encabezado>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,20rem)_minmax(0,16rem)_1fr] lg:items-end">
-        <Selector
-          id="eq-colaborador"
-          label="Colaborador"
-          placeholder="Selecciona a la persona"
-          value={String(colaborador?.id ?? '')}
-          onChange={(valor) => {
-            setColaboradorId(valor);
-            setEditando(undefined);
-          }}
-          opciones={equipo.map((persona) => ({
-            value: String(persona.id),
-            label: persona.cargo ? `${persona.nombre} — ${persona.cargo}` : persona.nombre,
-          }))}
-        />
+        <div className="flex min-w-0 flex-col gap-2">
+          <Selector
+            id="eq-colaborador"
+            label="Colaborador"
+            placeholder="Selecciona a la persona"
+            value={String(colaborador?.id ?? '')}
+            onChange={(valor) => {
+              setColaboradorId(valor);
+              setEditando(undefined);
+            }}
+            opciones={equipo.map((persona) => ({
+              value: String(persona.id),
+              label: persona.cargo ? `${persona.nombre} — ${persona.cargo}` : persona.nombre,
+            }))}
+          />
+          {puedeVerCompania && aCargo.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Switch
+                checked={verCompania}
+                onCheckedChange={(valor) => {
+                  setVerCompania(Boolean(valor));
+                  setColaboradorId('');
+                  setEditando(undefined);
+                }}
+              />
+              Ver toda la compañía (People)
+            </label>
+          )}
+        </div>
         <Selector
           id="eq-periodo"
           label="Periodo"
@@ -276,11 +300,11 @@ export default function ObjetivosEquipoPage() {
             onEditar={setEditando}
             onEliminar={setPorBorrar}
             onCargar={setCargando}
-            onValidar={(objetivo) => validar.mutate({ objetivo: objetivo.id, estado: 'validado' })}
-            // El resultado se carga desde que el mes empieza: antes no hay qué
-            // cargar. Validar es dar por bueno lo que ya subió alguien más.
+            // El colaborador carga su resultado; el jefe lo revisa acá (ve lo
+            // cargado, deja feedback, valida o devuelve) y también puede
+            // cargarlo por él. Antes de que empiece el mes no hay qué cargar.
+            onRevisar={(objetivo) => setRevisandoId(objetivo.id)}
             puedeCargar={() => empezado}
-            puedeValidar={(objetivo) => objetivo.resultado?.estadoValidacion !== 'validado'}
           />
         </EstadoTabla>
         <div className="px-6 pb-6">
@@ -298,6 +322,26 @@ export default function ObjetivosEquipoPage() {
           </DialogHeader>
           {cargando && (
             <FormularioResultado objetivo={cargando} onListo={() => setCargando(null)} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!enRevision} onOpenChange={(abierto) => !abierto && setRevisandoId(null)}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Revisar resultado — {colaborador?.nombre}</DialogTitle>
+            <DialogDescription>
+              Lo que cargó el colaborador y sus evidencias. Deja tu feedback y valida, o devuélvelo
+              explicando qué corregir.
+            </DialogDescription>
+          </DialogHeader>
+          {enRevision && (
+            <RevisionResultado
+              key={enRevision.id}
+              objetivo={enRevision}
+              puedeValidar
+              onListo={() => setRevisandoId(null)}
+            />
           )}
         </DialogContent>
       </Dialog>

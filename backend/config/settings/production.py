@@ -1,12 +1,12 @@
 """
-Entorno productivo (Render): Postgres por `DATABASE_URL`, HTTPS y estáticos con
+Entorno productivo (Render): Postgres por `DB_*`, HTTPS y estáticos con
 WhiteNoise.
 """
 from decouple import config
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F403
-from .base import ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, DATABASE_URL
+from .base import ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, USA_POSTGRES
 
 DEBUG = False
 
@@ -14,8 +14,8 @@ DEBUG = False
 # firmar los tokens con una clave que está en el repositorio.
 SECRET_KEY = config('SECRET_KEY')
 
-if not DATABASE_URL:
-    raise ImproperlyConfigured('Falta DATABASE_URL: en producción no se usa SQLite.')
+if not USA_POSTGRES:
+    raise ImproperlyConfigured('Falta DB_HOST: en producción no se usa SQLite.')
 
 # Render pone el dominio público del servicio en RENDER_EXTERNAL_HOSTNAME:
 # así no hay que escribirlo a mano en ALLOWED_HOSTS.

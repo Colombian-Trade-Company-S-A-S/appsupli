@@ -101,10 +101,18 @@ export function FormularioObjetivo({
   const necesitaMeta =
     datos.tipoMedicion === 'proporcional' || datos.tipoMedicion === 'proporcional_inverso';
 
+  // Por defecto carga el resultado el propio colaborador, y su jefe lo aprueba.
+  // El jefe (y People) siempre pueden cargarlo por él; designarlo aquí es para
+  // cuando le toca a alguien más, como el Trade Leader de un asesor. El jefe
+  // se ofrece aunque no esté en `equipo` (quien define es él, y no es parte de
+  // su propio equipo).
+  const jefeId = colaborador.jefeId;
+  const porDefecto = String(colaborador.id);
   const responsables = [
     { value: String(colaborador.id), label: `El colaborador (${colaborador.nombre})` },
+    ...(jefeId ? [{ value: String(jefeId), label: `${colaborador.jefe} (jefe directo)` }] : []),
     ...opciones.equipo
-      .filter((persona) => persona.id !== colaborador.id)
+      .filter((persona) => persona.id !== colaborador.id && persona.id !== jefeId)
       .map((persona) => ({ value: String(persona.id), label: persona.nombre })),
   ];
 
@@ -125,9 +133,7 @@ export function FormularioObjetivo({
       topeCumplimiento: datos.topeCumplimiento || '100',
       formula: esFormula ? datos.formula : '',
       fuenteDatos: datos.fuenteDatos,
-      responsableResultado: datos.responsableResultado
-        ? Number(datos.responsableResultado)
-        : colaborador.id,
+      responsableResultado: Number(datos.responsableResultado || porDefecto),
     };
     try {
       if (objetivo) await editar.mutateAsync({ id: objetivo.id, ...payload });
@@ -322,7 +328,7 @@ export function FormularioObjetivo({
           id="obj-responsable"
           label="Responsable del resultado"
           placeholder="Quién carga el resultado"
-          value={datos.responsableResultado || String(colaborador.id)}
+          value={datos.responsableResultado || porDefecto}
           onChange={(responsableResultado) => setDatos({ ...datos, responsableResultado })}
           opciones={responsables}
         />

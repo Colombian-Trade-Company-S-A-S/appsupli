@@ -7,7 +7,9 @@ from . import (
     views_belkin,
     views_falabella,
     views_hc,
+    views_marcas,
     views_partners,
+    views_precios,
     views_tmk,
 )
 
@@ -22,6 +24,14 @@ router.register('inventario', views.InventarioViewSet, basename='inventario')
 router.register('metas', views.MetaViewSet, basename='metas')
 router.register('campanas', views.CampanaViewSet, basename='campanas')
 router.register('enlaces', publico.EnlacePublicoViewSet, basename='enlaces')
+# Marcas: un solo catálogo para los cuatro canales.
+router.register('marcas', views_marcas.MarcaViewSet, basename='marcas')
+# Precios Coltrade por periodo: cada canal sobre su propia tabla.
+_pre = views_precios
+router.register('precios', _pre.PrecioViewSet, basename='precios')
+router.register('hc/precios', _pre.PrecioHcViewSet, basename='hc-precios')
+router.register('falabella/precios', _pre.PrecioFalabellaViewSet, basename='falabella-precios')
+router.register('tmk/precios', _pre.PrecioTmkViewSet, basename='tmk-precios')
 # Homecenter: los mismos recursos, sobre sus propias tablas.
 router.register('hc/puntos-venta', views_hc.PuntoVentaHcViewSet, basename='hc-puntos-venta')
 router.register('hc/productos', views_hc.ProductoHcViewSet, basename='hc-productos')

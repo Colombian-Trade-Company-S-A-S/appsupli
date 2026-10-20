@@ -44,11 +44,13 @@ export default function DashboardPage() {
 
   const filas = data?.colaboradores ?? [];
   const sinMedir = filas.filter((fila) => fila.cumplimiento === null).length;
+  // People y admin ven la compañía; un líder, su equipo a cargo.
+  const titulo = data?.alcance === 'compania' ? 'Semáforo de la compañía' : 'Semáforo del equipo';
 
   return (
     <div className="flex flex-col gap-6">
       <Encabezado
-        titulo="Semáforo del equipo"
+        titulo={titulo}
         descripcion="El cumplimiento de cada persona en el corte que elijas, con los cortes de color que definió People."
       />
 

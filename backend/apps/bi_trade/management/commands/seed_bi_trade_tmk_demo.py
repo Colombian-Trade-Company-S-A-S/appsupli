@@ -22,6 +22,7 @@ from django.utils import timezone
 from apps.bi_trade.calendario import dias_del_mes, es_habil
 from apps.bi_trade.models import (
     InventarioTmk,
+    Marca,
     Materiales,
     MetaComercialTmk,
     ProductoTmk,
@@ -92,7 +93,7 @@ class Command(BaseCommand):
                 id_producto=codigo,
                 defaults={
                     'nombre_producto': nombre,
-                    'marca': marca,
+                    'marca': Marca.objects.get_or_create(nombre=marca)[0],
                     'precio_venta_tmk': precio_tmk,
                     'precio_venta_coltrade': coltrade,
                 },

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeftIcon,
+  CalendarRangeIcon,
   PackageIcon,
   PencilIcon,
   PlusIcon,
@@ -37,7 +38,9 @@ import { formatoMoneda, formatoNumero } from '@/shared/lib/formato';
 import { biTradeApi, type Producto, type ProductoPayload } from '../api';
 import { useFuente } from '../fuente';
 import { BotonesExcel } from '../components/BotonesExcel';
-import { useBiTradeMutation, useProductos } from '../hooks';
+import { CampoSelect } from '../components/CampoSelect';
+import { MarcasDialog } from '../components/MarcasDialog';
+import { useBiTradeMutation, useMarcas, useProductos } from '../hooks';
 
 const PRECIO_MAXIMO = 100_000_000;
 
@@ -84,6 +87,11 @@ export default function ProductosPage() {
           // Solo HC exporta su catálogo; con la misma búsqueda que la tabla.
           filtrosExport={fuente.catalogoHc ? { search: buscar || undefined } : undefined}
         />
+        <Button variant="outline" render={<Link to={`${fuente.base}/precios`} />}>
+          <CalendarRangeIcon data-icon="inline-start" />
+          Precios por periodo
+        </Button>
+        <MarcasDialog />
         <Button
           variant="destructive"
           disabled={productos.length === 0 || vaciar.isPending}
@@ -128,7 +136,7 @@ export default function ProductosPage() {
                 )}
                 <TableHead>Producto</TableHead>
                 <TableHead>Marca</TableHead>
-                <TableHead>Precio Coltrade</TableHead>
+                <TableHead>Precio Coltrade hoy</TableHead>
                 <TableHead className="hidden lg:table-cell">Precio {fuente.nombreCanal}</TableHead>
                 {fuente.conPuntos && (
                   <TableHead className="hidden md:table-cell">Puntaje</TableHead>
@@ -160,7 +168,14 @@ export default function ProductosPage() {
                     )}
                   </TableCell>
                   <TableCell className="tabular-nums">
-                    {formatoMoneda(producto.precioVentaColtrade)}
+                    {formatoMoneda(producto.precioHoy)}
+                    {producto.preciosCount > 0 && (
+                      <span className="block text-xs text-muted-foreground">
+                        Base {formatoMoneda(producto.precioVentaColtrade)} ·{' '}
+                        {formatoNumero(producto.preciosCount)} periodo
+                        {producto.preciosCount === 1 ? '' : 's'}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
                     {formatoMoneda(producto.precioVentaClaro)}
@@ -175,6 +190,18 @@ export default function ProductosPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Precios por periodo de ${producto.nombreProducto}`}
+                        render={
+                          <Link
+                            to={`${fuente.base}/precios?producto=${encodeURIComponent(producto.idProducto)}`}
+                          />
+                        }
+                      >
+                        <CalendarRangeIcon />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -269,6 +296,7 @@ function ProductoDialog({
   const recursos = fuente.recursos ?? biTradeApi;
   const [datos, setDatos] = useState<ProductoPayload>(VACIO);
   const catalogoHc = !!fuente.catalogoHc;
+  const { data: marcas = [] } = useMarcas();
 
   const guardar = useBiTradeMutation(
     (payload: Partial<ProductoPayload>) =>
@@ -380,21 +408,26 @@ function ProductoDialog({
               />
             </Field>
 
-            <Field>
-              <FieldLabel htmlFor="prod-marca">Marca</FieldLabel>
-              <Input
+            <div className="flex flex-col gap-1.5">
+              <CampoSelect
                 id="prod-marca"
-                maxLength={60}
+                label="Marca"
+                placeholder={catalogoHc ? 'Sin marca' : 'Elige la marca'}
+                className="w-full min-w-0"
                 value={datos.marca ?? ''}
-                onChange={(e) => setDatos({ ...datos, marca: e.target.value })}
-                required={!catalogoHc}
+                onChange={(marca) => setDatos({ ...datos, marca: marca || null })}
+                opciones={marcas.map((m) => ({ value: m.nombre, label: m.nombre }))}
+                // En Homecenter la marca es opcional: la opción vacía es «sin marca».
+                incluirTodas={catalogoHc}
               />
-              {catalogoHc && <FieldDescription>Opcional.</FieldDescription>}
-            </Field>
+              <p className="text-xs text-muted-foreground">
+                Si no está en la lista, agrégala con el botón «Marcas».
+              </p>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
-                <FieldLabel htmlFor="prod-coltrade">Precio de venta Coltrade</FieldLabel>
+                <FieldLabel htmlFor="prod-coltrade">Precio Coltrade base</FieldLabel>
                 <Input
                   id="prod-coltrade"
                   type="number"
@@ -408,9 +441,8 @@ function ProductoDialog({
                   required={!catalogoHc}
                 />
                 <FieldDescription>
-                  {catalogoHc
-                    ? 'Opcional. Sin este precio, sus ventas no suman dinero.'
-                    : 'Con este precio se calculan los ingresos.'}
+                  {catalogoHc ? 'Opcional. ' : ''}Vale los días que no tienen un precio por periodo.
+                  Los cambios de precio se registran en «Precios por periodo».
                 </FieldDescription>
               </Field>
               <Field>

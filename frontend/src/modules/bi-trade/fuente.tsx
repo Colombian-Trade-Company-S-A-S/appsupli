@@ -28,7 +28,7 @@ export type HojaTablero = 'mes' | 'dia' | 'tickets';
 /** Los CRUD de un canal: los mismos recursos, cada canal con sus tablas. */
 export type RecursosCanal = Pick<
   typeof biTradeApi,
-  'ventas' | 'productos' | 'puntosVenta' | 'inventario' | 'metas'
+  'ventas' | 'productos' | 'precios' | 'puntosVenta' | 'inventario' | 'metas'
 >;
 
 /**

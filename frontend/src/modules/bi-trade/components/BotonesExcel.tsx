@@ -19,7 +19,7 @@ import { useFuente } from '../fuente';
 import { useBiTradeMutation } from '../hooks';
 
 /** Los recursos que tienen plantilla e importador. */
-type Recurso = 'ventas' | 'productos' | 'puntosVenta' | 'inventario' | 'metas';
+type Recurso = 'ventas' | 'productos' | 'precios' | 'puntosVenta' | 'inventario' | 'metas';
 
 interface FilaConError {
   fila: number;

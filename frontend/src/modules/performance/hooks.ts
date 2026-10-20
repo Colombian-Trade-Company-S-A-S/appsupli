@@ -99,11 +99,17 @@ export const useEditarObjetivo = () =>
 export const useEliminarObjetivo = () =>
   usePerformanceMutation((id: number) => performanceApi.eliminar(id), 'Objetivo eliminado');
 
-/** El cumplimiento del equipo en un corte: mes, Q, semestre o año (A8). */
-export const useAcumulado = (corte: { tipo: TipoCorte; anio?: number; indice?: number }) =>
+/**
+ * El cumplimiento en un corte: mes, Q, semestre o año (A8). Por defecto, lo que
+ * a cada quien le toca ver; con `top`, el ranking de toda la compañía.
+ */
+export const useAcumulado = (
+  corte: { tipo: TipoCorte; anio?: number; indice?: number },
+  top = false,
+) =>
   useQuery({
-    queryKey: performanceKeys.acumulado(corte),
-    queryFn: () => performanceApi.acumulado(corte),
+    queryKey: performanceKeys.acumulado({ ...corte, top }),
+    queryFn: () => performanceApi.acumulado(corte, top),
   });
 
 export const useCargarResultado = () =>
@@ -126,6 +132,14 @@ export const useValidarResultado = () =>
     }) => performanceApi.validarResultado(objetivo, estado, observacion),
     (resultado) =>
       resultado.estadoValidacion === 'validado' ? 'Resultado validado' : 'Resultado devuelto',
+  );
+
+/** El comentario del jefe sobre lo que cargó el colaborador. */
+export const useDarFeedback = () =>
+  usePerformanceMutation(
+    ({ objetivo, feedback }: { objetivo: number; feedback: string }) =>
+      performanceApi.darFeedback(objetivo, feedback),
+    (resultado) => (resultado.feedback ? 'Feedback enviado' : 'Feedback borrado'),
   );
 
 /** La excepción del A9: solo People, y siempre con motivo. */

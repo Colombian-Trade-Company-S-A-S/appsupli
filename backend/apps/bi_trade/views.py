@@ -8,7 +8,7 @@ reparte con roles desde Administración.
 from datetime import date, datetime
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, IntegerField, Q, Sum, Value
+from django.db.models import Count, Exists, F, IntegerField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
 from django.http import HttpResponse
 from django.utils import timezone
@@ -42,10 +42,17 @@ from .models import (
     Materiales,
     MetaComercial,
     Producto,
+    ProductoBelkin,
     PuntoVenta,
     Regional,
     Venta,
+)
+from .precios import (
     anotaciones_meta,
+    precio_de_hoy,
+    precio_de_meta,
+    precio_de_venta,
+    precio_vigente,
 )
 from .serializers import (
     RELACIONES_PRECARGADAS,
@@ -95,6 +102,10 @@ class BiTradeViewSet(viewsets.ModelViewSet):
 
     def dependencias(self) -> list[tuple[str, int]]:
         """Qué cuelga de esta tabla e impide vaciarla: (etiqueta, cantidad)."""
+        return []
+
+    def avisos_de_importacion(self) -> list[str]:
+        """Lo que la importación dejó afuera a propósito, para decirlo al terminar."""
         return []
 
     # ── Totales y exportación ──────────────────────────────────────────────
@@ -335,11 +346,16 @@ class BiTradeViewSet(viewsets.ModelViewSet):
             partes.append(f'{creados} creado(s)')
         if actualizados:
             partes.append(f'{actualizados} actualizado(s)')
+        mensaje = (
+            'Importación lista: ' + ' y '.join(partes) + '.'
+            if partes
+            else 'No se cargó ningún registro.'
+        )
         return Response(
             {
                 'created': creados,
                 'updated': actualizados,
-                'message': 'Importación lista: ' + ' y '.join(partes) + '.',
+                'message': ' '.join([mensaje, *self.avisos_de_importacion()]),
             }
         )
 
@@ -584,6 +600,85 @@ def _mensajes(errores: dict) -> list[str]:
     ]
 
 
+class VentasConMeta:
+    """
+    Qué ventas de Claro se cargan al importar.
+
+    Entra la venta de un producto que tiene meta ese mes en ese punto de venta:
+    lo que no tiene meta no se está midiendo, y sumarlo inflaría el
+    cumplimiento. Se mira mes por mes: sin meta en octubre no entra en octubre,
+    aunque en noviembre sí la tenga. La excepción son los productos del plan
+    Recomiéndame Belkin, que entran siempre: su tablero compara lo recomendado
+    contra todo lo que Claro vendió de ellos, haya meta o no.
+
+    Lee las metas de los meses del archivo y la lista del plan una sola vez.
+    """
+
+    def __init__(self, meses: set[tuple[int, int]], canal: Canal = CLARO):
+        meses_q = Q(pk__in=[])
+        for anio, mes in meses:
+            meses_q |= Q(fecha_meta__year=anio, fecha_meta__month=mes)
+        self.con_meta = {
+            (producto, punto, fecha.year, fecha.month)
+            for producto, punto, fecha in canal.meta.objects.filter(meses_q).values_list(
+                'id_producto_id', 'id_punto_venta_id', 'fecha_meta'
+            )
+        }
+        # El plan Belkin es de Claro: en otro canal no hay excepción.
+        self.del_plan_belkin = (
+            set(ProductoBelkin.objects.values_list('id_producto', flat=True))
+            if canal is CLARO
+            else set()
+        )
+
+    def admite(self, producto: str, punto: str, fecha: date) -> bool:
+        return (
+            producto in self.del_plan_belkin
+            or (producto, punto, fecha.year, fecha.month) in self.con_meta
+        )
+
+
+def solo_lo_que_tiene_meta(consulta, canal: Canal, anio: int, mes: int):
+    """
+    Las ventas o el stock que cuentan en el tablero de un mes.
+
+    En un canal que solo cuenta lo que tiene meta (Claro), queda lo de un
+    producto con meta ese mes en ese punto de venta: lo demás no se está
+    midiendo. Así tampoco aparecen en el tablero los puntos sin meta. Las
+    ventas Belkin que el informe carga sin meta son para el tablero del plan,
+    no para este.
+    """
+    if not canal.solo_con_meta:
+        return consulta
+    return consulta.filter(
+        Exists(
+            canal.meta.objects.filter(
+                id_producto=OuterRef('id_producto'),
+                id_punto_venta=OuterRef('id_punto_venta'),
+                fecha_meta__year=anio,
+                fecha_meta__month=mes,
+            )
+        )
+    )
+
+
+def puntos_del_tablero(canal: Canal, anio: int, mes: int) -> list[dict]:
+    """Los puntos que ofrece el filtro del tablero: con meta ese mes si el canal lo pide."""
+    puntos = canal.punto.objects.all()
+    if canal.solo_con_meta:
+        puntos = puntos.filter(
+            metas__fecha_meta__year=anio, metas__fecha_meta__month=mes
+        ).distinct()
+    return list(puntos.order_by('nombre_pdv').values('id_punto_venta', 'nombre_pdv'))
+
+
+def aviso_sin_meta(omitidas: int) -> str:
+    return (
+        f'{omitidas} venta(s) no entraron porque su producto no tiene meta ese mes '
+        'en ese punto de venta.'
+    )
+
+
 class PuntoVentaViewSet(BiTradeViewSet):
     queryset = PuntoVenta.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_pdv')
     serializer_class = PuntoVentaSerializer
@@ -602,9 +697,18 @@ class PuntoVentaViewSet(BiTradeViewSet):
                 ejemplo=Regional.ZONA_NORTE.value),
         Columna('materiales', tipo='opcion', obligatoria=False, opciones=list(Materiales.values),
                 ejemplo=Materiales.TODOS.value),
+        Columna('asesor_pdv', tipo='si_no', obligatoria=False,
+                ayuda='Sí si el punto tiene asesor, No si no tiene. Vacío: Sí.', ejemplo='Sí'),
     ]
 
     campos_clave = ('id_punto_venta',)
+
+    def fila_a_payload(self, fila: dict) -> dict:
+        payload = super().fila_a_payload(fila)
+        # Vacío no es «no»: el punto nuevo queda con asesor y el que existe no cambia.
+        if payload.get('asesor_pdv') is None:
+            payload.pop('asesor_pdv', None)
+        return payload
 
     def dependencias(self):
         return [
@@ -630,9 +734,10 @@ class PuntoVentaViewSet(BiTradeViewSet):
 
 
 class ProductoViewSet(BiTradeViewSet):
+    canal = CLARO
     queryset = Producto.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_producto')
     serializer_class = ProductoSerializer
-    search_fields = ('id_producto', 'nombre_producto', 'marca')
+    search_fields = ('id_producto', 'nombre_producto', 'marca__nombre')
     filterset_fields = ('marca',)
     nombre_plural = 'los productos'
     archivo_plantilla = 'plantilla-productos'
@@ -644,7 +749,8 @@ class ProductoViewSet(BiTradeViewSet):
         Columna('id_producto', ayuda='Código del producto. Máximo 60 caracteres.',
                 ejemplo='SKU-1001'),
         Columna('nombre_producto', ayuda='Máximo 60 caracteres.', ejemplo='Samsung Galaxy A55'),
-        Columna('marca', ayuda='Máximo 60 caracteres.', ejemplo='Samsung'),
+        Columna('marca', ayuda='Una marca de la lista de marcas. Da igual mayúsculas o tildes.',
+                ejemplo='Samsung'),
         Columna('precio_venta_claro', tipo='entero', ayuda='Hasta 100.000.000.',
                 ejemplo='1299900'),
         Columna('precio_venta_coltrade', tipo='entero',
@@ -655,6 +761,19 @@ class ProductoViewSet(BiTradeViewSet):
     ]
 
     campos_clave = ('id_producto',)
+
+    def get_queryset(self):
+        # En cada consulta y no en el atributo de clase: «hoy» cambia.
+        precios = self.canal.precio.objects.filter(id_producto=OuterRef('pk'))
+        return super().get_queryset().annotate(
+            precio_hoy=precio_vigente(self.canal, timezone.localdate(), 'precio_venta_coltrade'),
+            conteo_precios=Coalesce(
+                Subquery(
+                    precios.values('id_producto').annotate(n=Count('pk')).values('n')[:1]
+                ),
+                Value(0),
+            ),
+        )
 
     def dependencias(self):
         return [
@@ -680,6 +799,7 @@ class ProductoViewSet(BiTradeViewSet):
 
 
 class VentaViewSet(BiTradeViewSet):
+    canal = CLARO
     queryset = Venta.objects.select_related('id_producto', 'id_punto_venta').order_by(
         '-fecha_venta', '-id_venta'
     )
@@ -688,7 +808,7 @@ class VentaViewSet(BiTradeViewSet):
     search_fields = (
         'id_producto__id_producto',
         'id_producto__nombre_producto',
-        'id_producto__marca',
+        'id_producto__marca__nombre',
         'id_punto_venta__id_punto_venta',
         'id_punto_venta__nombre_pdv',
     )
@@ -708,16 +828,20 @@ class VentaViewSet(BiTradeViewSet):
         ColumnaExport('Punto de venta', 'id_punto_venta__nombre_pdv'),
         ColumnaExport('Regional', 'id_punto_venta__regional'),
         ColumnaExport('Cantidad vendida', 'cantidad_vendida', 'entero'),
-        ColumnaExport('Precio Coltrade', 'id_producto__precio_venta_coltrade', 'dinero'),
+        ColumnaExport('Precio Coltrade', 'precio_dia', 'dinero'),
         ColumnaExport('Total', 'total', 'dinero'),
     ]
+
+    def get_queryset(self):
+        # El precio del día de cada venta, para la tabla, el total y el archivo.
+        return super().get_queryset().annotate(precio_dia=precio_de_venta(self.canal))
 
     def anotaciones(self):
         # El sufijo `_linea` evita que un alias del aggregate se llame igual
         # que su anotación: Django lo resolvería contra sí mismo y devolvería
         # cero sin avisar.
         anotaciones = {
-            'total': F('cantidad_vendida') * F('id_producto__precio_venta_coltrade'),
+            'total': F('cantidad_vendida') * F('precio_dia'),
         }
         if self.con_puntos:
             anotaciones['puntos_linea'] = F('cantidad_vendida') * Coalesce(
@@ -737,11 +861,58 @@ class VentaViewSet(BiTradeViewSet):
                 Sum('puntos_linea', output_field=IntegerField()), Value(0)
             )
         return agregados
-    nota_plantilla = (
+    nota_base = (
         'Cada fila es una venta nueva: una venta no tiene código propio, así que volver a '
         'subir el mismo archivo duplica los registros. El producto y el punto de venta '
         'deben existir antes de importar.'
     )
+
+    @property
+    def solo_con_meta(self) -> bool:
+        """Claro solo carga ventas de productos con meta (ver `VentasConMeta`)."""
+        return self.canal.solo_con_meta
+
+    @property
+    def nota_plantilla(self) -> str:
+        if not self.solo_con_meta:
+            return self.nota_base
+        return (
+            f'{self.nota_base} Solo entran las ventas de un producto con meta ese mes en '
+            'ese punto de venta, y las de los productos del plan Recomiéndame Belkin; '
+            'las demás se omiten. Sube primero las metas del mes.'
+        )
+
+    def _importar_filas(self, filas: list[dict], errores: list[dict]) -> tuple[int, int]:
+        self.omitidas_sin_meta = 0
+        if self.solo_con_meta:
+            payloads = [self.fila_a_payload(fila) for fila in filas]
+            filtro = VentasConMeta(
+                {
+                    (p['fecha_venta'].year, p['fecha_venta'].month)
+                    for p in payloads
+                    if isinstance(p.get('fecha_venta'), date)
+                },
+                self.canal,
+            )
+            admitidas = [
+                fila
+                for fila, p in zip(filas, payloads, strict=True)
+                if isinstance(p.get('fecha_venta'), date)
+                and filtro.admite(
+                    str(p.get('id_producto') or '').strip(),
+                    str(p.get('id_punto_venta') or '').strip(),
+                    p['fecha_venta'],
+                )
+            ]
+            self.omitidas_sin_meta = len(filas) - len(admitidas)
+            if not admitidas:
+                return 0, 0
+            filas = admitidas
+        return super()._importar_filas(filas, errores)
+
+    def avisos_de_importacion(self) -> list[str]:
+        omitidas = getattr(self, 'omitidas_sin_meta', 0)
+        return [aviso_sin_meta(omitidas)] if omitidas else []
     columnas_excel = [
         Columna('id_producto', ayuda='Código de un producto que ya exista.', ejemplo='SKU-1001'),
         Columna('id_punto_venta', ayuda='Código de un punto de venta que ya exista.',
@@ -753,6 +924,7 @@ class VentaViewSet(BiTradeViewSet):
 
 
 class InventarioViewSet(BiTradeViewSet):
+    canal = CLARO
     queryset = Inventario.objects.select_related('id_producto', 'id_punto_venta').order_by(
         'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
     )
@@ -761,7 +933,7 @@ class InventarioViewSet(BiTradeViewSet):
     search_fields = (
         'id_producto__id_producto',
         'id_producto__nombre_producto',
-        'id_producto__marca',
+        'id_producto__marca__nombre',
         'id_punto_venta__id_punto_venta',
         'id_punto_venta__nombre_pdv',
     )
@@ -778,14 +950,16 @@ class InventarioViewSet(BiTradeViewSet):
         ColumnaExport('Punto de venta', 'id_punto_venta__nombre_pdv'),
         ColumnaExport('Regional', 'id_punto_venta__regional'),
         ColumnaExport('Cantidad en inventario', 'cantidad_inventario', 'entero'),
-        ColumnaExport('Precio Coltrade', 'id_producto__precio_venta_coltrade', 'dinero'),
+        ColumnaExport('Precio Coltrade', 'precio_hoy', 'dinero'),
         ColumnaExport('Valorizado', 'valorizado', 'dinero'),
     ]
 
+    def get_queryset(self):
+        # El stock es de hoy, así que se valoriza al precio de hoy.
+        return super().get_queryset().annotate(precio_hoy=precio_de_hoy(self.canal))
+
     def anotaciones(self):
-        return {
-            'valorizado': F('cantidad_inventario') * F('id_producto__precio_venta_coltrade')
-        }
+        return {'valorizado': F('cantidad_inventario') * F('precio_hoy')}
 
     def agregados(self):
         return {
@@ -813,17 +987,16 @@ class InventarioViewSet(BiTradeViewSet):
 
 
 class MetaViewSet(BiTradeViewSet):
-    queryset = (
-        MetaComercial.objects.select_related('id_producto', 'id_punto_venta')
-        .annotate(**anotaciones_meta())
-        .order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
+    canal = CLARO
+    queryset = MetaComercial.objects.select_related('id_producto', 'id_punto_venta').order_by(
+        'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
     )
     serializer_class = MetaSerializer
     pagination_class = PaginacionListado
     search_fields = (
         'id_producto__id_producto',
         'id_producto__nombre_producto',
-        'id_producto__marca',
+        'id_producto__marca__nombre',
         'id_punto_venta__id_punto_venta',
         'id_punto_venta__nombre_pdv',
     )
@@ -843,10 +1016,18 @@ class MetaViewSet(BiTradeViewSet):
         ColumnaExport('Punto de venta', 'id_punto_venta__nombre_pdv'),
         ColumnaExport('Regional', 'id_punto_venta__regional'),
         ColumnaExport('Meta unidades', 'meta_cantidad', 'entero'),
-        ColumnaExport('Precio Coltrade', 'id_producto__precio_venta_coltrade', 'dinero'),
+        ColumnaExport('Precio Coltrade', 'precio_mes', 'dinero'),
         ColumnaExport('Meta dinero', 'dinero_meta', 'dinero'),
         ColumnaExport('Meta puntos', 'puntos_meta', 'entero'),
     ]
+
+    def get_queryset(self):
+        # En cada consulta: los meses partidos salen de los precios de hoy, y
+        # en un atributo de clase quedarían congelados desde que arrancó el
+        # servidor.
+        return super().get_queryset().annotate(
+            **anotaciones_meta(self.canal, self.con_puntos)
+        )
 
     def agregados(self):
         agregados = {
@@ -915,8 +1096,8 @@ def dashboard(request):
     if marca:
         ventas = ventas.filter(id_producto__marca=marca)
 
-    # Ingreso de cada línea: unidades × precio Coltrade.
-    ingreso = F('cantidad_vendida') * F('id_producto__precio_venta_coltrade')
+    # Ingreso de cada línea: unidades × precio Coltrade de su día.
+    ingreso = F('cantidad_vendida') * precio_de_venta(CLARO)
     con_ingreso = ventas.annotate(ingreso=ingreso)
 
     totales = con_ingreso.aggregate(
@@ -1039,7 +1220,7 @@ def cumplimiento(request):
     cobertura sobre lo que ya se vendió.
     """
     ventas = Venta.objects.all()
-    metas = MetaComercial.objects.annotate(**anotaciones_meta())
+    metas = MetaComercial.objects.annotate(**anotaciones_meta(CLARO))
     inventarios = Inventario.objects.all()
 
     regional = (request.query_params.get('regional') or '').strip()
@@ -1073,7 +1254,7 @@ def cumplimiento(request):
     # aggregate: Django resuelve el alias contra sí mismo y devuelve 0 sin
     # avisar. De ahí el sufijo.
     reales = ventas.annotate(
-        dinero_linea=F('cantidad_vendida') * F('id_producto__precio_venta_coltrade'),
+        dinero_linea=F('cantidad_vendida') * precio_de_venta(CLARO),
         puntos_linea=F('cantidad_vendida') * puntaje,
     )
 
@@ -1215,13 +1396,18 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
     marca = (request.query_params.get('marca') or '').strip()
     punto = (request.query_params.get('id_punto_venta') or '').strip()
 
-    ventas = canal.venta.objects.filter(fecha_venta__year=anio, fecha_venta__month=mes)
+    ventas = solo_lo_que_tiene_meta(
+        canal.venta.objects.filter(fecha_venta__year=anio, fecha_venta__month=mes),
+        canal,
+        anio,
+        mes,
+    )
     # La meta entra por el mes de su fecha, no por el día: el día que traiga
     # el registro es irrelevante.
     metas = canal.meta.objects.filter(
         fecha_meta__year=anio, fecha_meta__month=mes
-    ).annotate(**anotaciones_meta(canal.con_puntos))
-    inventarios = canal.inventario.objects.all()
+    ).annotate(**anotaciones_meta(canal, canal.con_puntos))
+    inventarios = solo_lo_que_tiene_meta(canal.inventario.objects.all(), canal, anio, mes)
 
     if regional:
         ventas = ventas.filter(id_punto_venta__regional=regional)
@@ -1240,7 +1426,7 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
         inventarios = inventarios.filter(id_punto_venta=punto)
 
     ventas = ventas.annotate(
-        dinero_linea=F('cantidad_vendida') * F('id_producto__precio_venta_coltrade')
+        dinero_linea=F('cantidad_vendida') * precio_de_venta(canal)
     )
 
     dias = dias_del_mes(anio, mes)
@@ -1289,10 +1475,23 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
         dinero=Coalesce(Sum('dinero_linea', output_field=IntegerField()), Value(0)),
         cantidad=Coalesce(Sum('cantidad_vendida'), Value(0)),
     )
-    stock = inventarios.aggregate(unidades=Coalesce(Sum('cantidad_inventario'), Value(0)))
+    # El stock vale lo que valdría venderlo hoy: unidades por el precio Coltrade de hoy.
+    inventarios = inventarios.annotate(
+        valor_linea=F('cantidad_inventario') * precio_de_hoy(canal)
+    )
+    stock = inventarios.aggregate(
+        unidades=Coalesce(Sum('cantidad_inventario'), Value(0)),
+        valor=Coalesce(Sum('valor_linea', output_field=IntegerField()), Value(0)),
+    )
 
     def agrupar(campo: str):
-        """Meta mensual, venta e inventario cruzados por una misma dimensión."""
+        """
+        Meta mensual, venta e inventario cruzados por una misma dimensión.
+
+        `cumplimiento_alcanzable` es hasta dónde llegaría el cumplimiento si se
+        vendiera todo el stock: lo vendido más el inventario valorizado, contra
+        la meta. En Claro el stock ya es solo el de productos con meta.
+        """
         reales_por = {
             f[campo]: f
             for f in ventas.values(campo).annotate(
@@ -1307,15 +1506,17 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
             )
         }
         stock_por = {
-            f[campo]: f['unidades']
+            f[campo]: f
             for f in inventarios.values(campo).annotate(
-                unidades=Coalesce(Sum('cantidad_inventario'), Value(0))
+                unidades=Coalesce(Sum('cantidad_inventario'), Value(0)),
+                valor=Coalesce(Sum('valor_linea', output_field=IntegerField()), Value(0)),
             )
         }
 
         filas = []
         for clave in set(reales_por) | set(metas_por) | set(stock_por):
             r = reales_por.get(clave, {})
+            s = stock_por.get(clave, {})
             meta_fila = metas_por.get(clave, 0)
             filas.append(
                 {
@@ -1324,8 +1525,12 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
                     'meta_mensual': meta_fila,
                     'importe': r.get('dinero', 0),
                     'cantidad': r.get('cantidad', 0),
-                    'inventario': stock_por.get(clave, 0),
+                    'inventario': s.get('unidades', 0),
+                    'inventario_valor': s.get('valor', 0),
                     'cumplimiento': _porcentaje(r.get('dinero', 0), meta_fila),
+                    'cumplimiento_alcanzable': _porcentaje(
+                        r.get('dinero', 0) + s.get('valor', 0), meta_fila
+                    ),
                 }
             )
         filas.sort(key=lambda f: f['cumplimiento'], reverse=True)
@@ -1351,10 +1556,15 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
             'ventas_cantidad': real['cantidad'],
             'cumplimiento': _porcentaje(real['dinero'], objetivo['dinero']),
             'inventario_unidades': stock['unidades'],
+            'inventario_valor': stock['valor'],
+            'cumplimiento_alcanzable': _porcentaje(
+                real['dinero'] + stock['valor'], objetivo['dinero']
+            ),
         },
         'serie': serie,
         'por_regional': agrupar('id_punto_venta__regional'),
         'por_punto_venta': agrupar('id_punto_venta__nombre_pdv'),
+        'puntos_venta': puntos_del_tablero(canal, anio, mes),
     }
 
 
@@ -1399,10 +1609,12 @@ HOJAS_AVANCE = {
         [
             ColumnaExport('Punto de venta', 'label'),
             ColumnaExport('Inventario', 'inventario', 'entero'),
+            ColumnaExport('Inventario valorizado', 'inventario_valor', 'dinero'),
             ColumnaExport('Meta mensual', 'meta_mensual', 'dinero'),
             ColumnaExport('Importe', 'importe', 'dinero'),
             ColumnaExport('Cantidad', 'cantidad', 'entero'),
             ColumnaExport('Cumplimiento %', 'cumplimiento'),
+            ColumnaExport('Alcanzable con inventario %', 'cumplimiento_alcanzable'),
         ],
     ),
 }
@@ -1575,6 +1787,8 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
         if partes
         else 'No había nada nuevo que cargar del archivo.'
     )
+    if resumen_ventas['sin_meta']:
+        mensaje = f'{mensaje} {aviso_sin_meta(resumen_ventas["sin_meta"])}'
 
     return Response(
         {
@@ -1589,7 +1803,13 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
 
 
 def _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal: Canal) -> dict:
-    """Aplica las ventas del archivo al mes elegido, según el modo."""
+    """
+    Aplica las ventas del archivo al mes elegido, según el modo.
+
+    En Claro solo entran las de productos con meta ese mes en ese punto, y las
+    del plan Belkin (ver `VentasConMeta`). Tmk carga todo.
+    """
+    filtro = VentasConMeta({(anio, mes)}, canal) if canal.solo_con_meta else None
     del_mes = {
         (producto, centro, fecha): unidades
         for (producto, centro, fecha), unidades in lectura.ventas.items()
@@ -1607,7 +1827,7 @@ def _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal: Canal) 
         # Un día que ya tiene ventas cargadas se deja como está.
         dias_ocupados = set(existentes.values_list('fecha_venta', flat=True).distinct())
 
-    sin_producto = sin_punto = 0
+    sin_producto = sin_punto = sin_meta = 0
     omitidas_por_dia = 0
     nuevas = []
     for (producto, centro, fecha), unidades in sorted(del_mes.items()):
@@ -1619,6 +1839,9 @@ def _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal: Canal) 
             continue
         if centro not in puntos:
             sin_punto += 1
+            continue
+        if filtro is not None and not filtro.admite(producto, centro, fecha):
+            sin_meta += 1
             continue
         nuevas.append(
             canal.venta(
@@ -1639,6 +1862,8 @@ def _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal: Canal) 
         'fuera_del_mes': fuera_del_mes,
         'sin_producto': sin_producto,
         'sin_punto_venta': sin_punto,
+        # Lo que no entró porque el producto no tiene meta ese mes en ese punto.
+        'sin_meta': sin_meta,
         # Lo que no entró porque su día ya tenía ventas cargadas. En modo
         # sobrescribir siempre es cero: ahí no queda nada que respetar.
         'omitidas_por_dia': omitidas_por_dia,
@@ -1915,7 +2140,9 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
     producto = (request.query_params.get('id_producto') or '').strip()
     punto = (request.query_params.get('id_punto_venta') or '').strip()
 
-    ventas = canal.venta.objects.filter(fecha_venta=fecha)
+    ventas = solo_lo_que_tiene_meta(
+        canal.venta.objects.filter(fecha_venta=fecha), canal, anio, mes
+    )
     metas = canal.meta.objects.filter(fecha_meta__year=anio, fecha_meta__month=mes)
 
     if regional:
@@ -1935,11 +2162,11 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
     # las llaves de puntos se quitan de la respuesta al final.
     puntaje = Coalesce('id_producto__puntaje', Value(0)) if canal.con_puntos else Value(0)
     ventas = ventas.annotate(
-        dinero_linea=F('cantidad_vendida') * F('id_producto__precio_venta_coltrade'),
+        dinero_linea=F('cantidad_vendida') * precio_de_venta(canal),
         puntos_linea=F('cantidad_vendida') * puntaje,
     )
     metas = metas.annotate(
-        dinero_meta_linea=F('meta_cantidad') * F('id_producto__precio_venta_coltrade'),
+        dinero_meta_linea=F('meta_cantidad') * precio_de_meta(canal),
         puntos_meta_linea=F('meta_cantidad') * puntaje,
     )
 
@@ -2055,6 +2282,7 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
         'por_punto_venta': agrupar(CORTES_DIA['puntos'][1]),
         'por_marca': agrupar(CORTES_DIA['marcas'][1]),
         'por_producto': agrupar(CORTES_DIA['productos'][1]),
+        'puntos_venta': puntos_del_tablero(canal, anio, mes),
     }
     return datos if canal.con_puntos else _sin_puntos(datos)
 

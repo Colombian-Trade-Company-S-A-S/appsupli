@@ -25,7 +25,13 @@ from apps.bi_trade.models import (
     RegistroBelkin,
     Venta,
 )
-from apps.bi_trade.tests import _importar, app_bi_trade, cliente_de, crear_usuario  # noqa: F401
+from apps.bi_trade.tests import (  # noqa: F401
+    _importar,
+    app_bi_trade,
+    cliente_de,
+    crear_usuario,
+    marca,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -443,7 +449,7 @@ def test_el_tablero_liquida_el_bono_de_cada_promotor_con_la_categoria_del_punto(
     producto_claro = Producto.objects.create(
         id_producto='7020178',
         nombre_producto='Spigen Iphone 12',
-        marca='Spigen',
+        marca=marca('Spigen'),
         precio_venta_claro=1,
         precio_venta_coltrade=1,
     )

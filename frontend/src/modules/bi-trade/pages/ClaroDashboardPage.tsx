@@ -23,7 +23,7 @@ import {
 import { Encabezado, Kpi } from '@/shared/components/layout';
 import { formatoMoneda, formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
 import type { HojaAvance } from '../api';
-import { useAvanceMensual, useDescarga, useOpciones, usePuntosVenta } from '../hooks';
+import { useAvanceMensual, useDescarga, useOpciones } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BarraCumplimiento } from '../components/Cumplimiento';
 import { BadgeRitmo, GraficoAvance, TablaAvance, calcularRitmo } from '../components/AvanceMensual';
@@ -55,7 +55,8 @@ export default function ClaroDashboardPage() {
   const consulta = { ...mes, ...filtros };
   const { data, isFetching, isLoading } = useAvanceMensual(consulta);
   const { data: opciones } = useOpciones();
-  const { data: puntos = [] } = usePuntosVenta();
+  // Los del mes que se mira: en Claro, solo los que tienen meta.
+  const puntos = data?.puntosVenta ?? [];
 
   const exportar = useDescarga(
     (hoja?: HojaAvance) => fuente.exportarAvance(consulta, hoja),
@@ -283,7 +284,7 @@ export default function ClaroDashboardPage() {
 
       <TablaAvance
         titulo="Avance por punto de venta"
-        descripcion="El mismo corte, punto por punto, con el stock disponible."
+        descripcion="El mismo corte, punto por punto, con el stock disponible y hasta dónde llegaría el cumplimiento si lo vendiera todo (a precio Coltrade de hoy)."
         encabezado="Punto de venta"
         filas={data?.porPuntoVenta ?? []}
         hoja="puntos"

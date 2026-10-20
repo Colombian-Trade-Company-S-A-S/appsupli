@@ -2,7 +2,6 @@
 from datetime import timedelta
 from pathlib import Path
 
-import dj_database_url
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -78,15 +77,31 @@ TEMPLATES = [
 ]
 
 # ── Base de datos ──────────────────────────────────────────────────────────
-# Con DATABASE_URL (el Postgres de Render) se usa esa base; sin ella, el
-# SQLite local. `conn_max_age` reutiliza la conexión entre peticiones y
-# `conn_health_checks` la descarta si Postgres la cerró mientras tanto.
-DATABASE_URL = config('DATABASE_URL', default='')
-if DATABASE_URL:
+# Con DB_HOST (y las demás DB_* de `.env`) se usa el Postgres de Render; sin
+# él, el SQLite local. Las tablas de Supli viven en el schema DB_SCHEMA de la
+# base, no en `public`: se fija en el `search_path` de cada conexión. El
+# schema hay que crearlo una vez (`manage.py crear_schema`) antes de migrar.
+# `CONN_MAX_AGE` reutiliza la conexión entre peticiones y `CONN_HEALTH_CHECKS`
+# la descarta si Postgres la cerró mientras tanto.
+DB_HOST = config('DB_HOST', default='')
+DB_SCHEMA = config('DB_SCHEMA', default='public')
+USA_POSTGRES = bool(DB_HOST)
+if USA_POSTGRES:
     DATABASES = {
-        'default': dj_database_url.parse(
-            DATABASE_URL, conn_max_age=600, conn_health_checks=True
-        )
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'HOST': DB_HOST,
+            'PORT': config('DB_PORT', default='5432'),
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'CONN_MAX_AGE': 600,
+            'CONN_HEALTH_CHECKS': True,
+            'OPTIONS': {
+                'sslmode': config('DB_SSLMODE', default='require'),
+                'options': f'-c search_path={DB_SCHEMA}',
+            },
+        }
     }
 else:
     DATABASES = {

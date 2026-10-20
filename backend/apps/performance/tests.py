@@ -485,6 +485,24 @@ def test_las_opciones_traen_el_equipo_y_los_catalogos(equipo):
     assert datos['maximoObjetivos'] == 6
     assert len(datos['tiposMedicion']) == len(TipoMedicion.choices)
     assert datos['capacidades']['esLider'] is True
+    # Un líder común no recibe a la compañía.
+    assert datos['compania'] == []
+
+
+def test_people_ve_solo_sus_directos_y_aparte_la_compania(equipo, app_performance):
+    """People define a cualquiera, pero el desplegable arranca con sus directos."""
+    jefe, julian, daniel = equipo
+    people = crear_usuario(
+        'people@supli.tech', app_performance, permisos=['performance:objetivos:manage_all']
+    )
+    # El jefe ahora responde a People: así «julian» y «daniel» no son sus directos.
+    jefe.manager = people
+    jefe.save(update_fields=['manager'])
+
+    datos = cliente_de(people).get(f'{RUTA}/opciones').json()
+
+    assert {p['id'] for p in datos['equipo']} == {jefe.pk}
+    assert {p['id'] for p in datos['compania']} >= {jefe.pk, julian.pk, daniel.pk}
 
 
 # ── Estructura del menú (§3) ───────────────────────────────────────────────
@@ -764,6 +782,75 @@ def test_el_jefe_valida_el_resultado_y_quien_lo_cargo_no(equipo):
     assert validado.json()['validadoPorNombre'] == jefe.full_name
 
 
+def test_el_colaborador_carga_su_resultado_y_el_jefe_tambien_puede(equipo, app_performance):
+    """Lo normal: el colaborador sube su evidencia y el jefe la aprueba; el jefe puede cargarla por él."""
+    jefe, julian, daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100')
+    _empezar_el_mes(objetivo.periodo)
+    ruta = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
+    cuerpo = {'resultadoEjecutado': '1'}
+
+    assert cliente_de(julian).put(ruta, cuerpo, format='json').status_code == 200
+    assert cliente_de(jefe).put(ruta, cuerpo, format='json').status_code == 200
+    # Un compañero que no es jefe ni People no la carga.
+    assert cliente_de(daniel).put(ruta, cuerpo, format='json').status_code in (403, 404)
+
+
+def test_el_jefe_que_cargo_el_resultado_tambien_lo_valida(equipo):
+    """El responsable por defecto es el jefe: si carga él, no se queda sin poder validar."""
+    jefe, julian, _daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100', responsable_resultado=jefe)
+    _empezar_el_mes(objetivo.periodo)
+    cliente_de(jefe).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+    )
+
+    validado = cliente_de(jefe).post(
+        f'{RUTA}/objetivos/{objetivo.pk}/validar', {'estado': 'validado'}, format='json'
+    )
+
+    assert validado.status_code == 200
+
+
+def test_el_jefe_deja_feedback_sin_pisar_la_observacion_del_colaborador(equipo):
+    jefe, julian, daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100')
+    _empezar_el_mes(objetivo.periodo)
+    cliente_de(julian).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'resultadoEjecutado': '1', 'observacion': 'Entregado el viernes.'},
+        format='json',
+    )
+    ruta = f'{RUTA}/objetivos/{objetivo.pk}/feedback'
+
+    # Ni el colaborador ni un compañero comentan su propio resultado.
+    assert cliente_de(julian).post(ruta, {'feedback': 'Voy bien.'}, format='json').status_code == 403
+    assert cliente_de(daniel).post(ruta, {'feedback': 'Voy bien.'}, format='json').status_code in (
+        403,
+        404,
+    )
+
+    dado = cliente_de(jefe).post(ruta, {'feedback': 'Falta el acta firmada.'}, format='json')
+    assert dado.status_code == 200
+    assert dado.json()['feedback'] == 'Falta el acta firmada.'
+    assert dado.json()['feedbackPorNombre'] == jefe.full_name
+    # La observación de quien cargó queda intacta.
+    assert dado.json()['observacion'] == 'Entregado el viernes.'
+
+    # Devolver con razón guarda esa razón como feedback, también sin pisar la observación.
+    devuelto = cliente_de(jefe).post(
+        f'{RUTA}/objetivos/{objetivo.pk}/validar',
+        {'estado': 'rechazado', 'observacion': 'Sube el acta.'},
+        format='json',
+    ).json()
+    assert devuelto['feedback'] == 'Sube el acta.'
+    assert devuelto['observacion'] == 'Entregado el viernes.'
+
+    # El colaborador ve el feedback en su propio resultado.
+    visto = cliente_de(julian).get(f'{RUTA}/mis-objetivos').json()
+    assert visto and visto[0]['resultado']['feedback'] == 'Sube el acta.'
+
+
 def test_corregir_el_resultado_devuelve_la_validacion_a_pendiente(equipo):
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
@@ -823,6 +910,45 @@ def test_el_acumulado_pondera_lo_medido_y_pinta_el_semaforo(equipo):
     assert fila['semaforo'] == Semaforo.ROJO
     assert datos['cortes']['verdeDesde'] == 100.0
     assert datos['label'].endswith(str(mes.year))
+
+
+def test_el_tablero_muestra_a_cada_quien_lo_que_le_toca(equipo, app_performance):
+    jefe, julian, daniel = equipo
+    people = crear_usuario(
+        'people@supli.tech', app_performance, permisos=['performance:objetivos:manage_all']
+    )
+    ajeno = crear_usuario('ajeno@supli.tech', app_performance)
+
+    def ids(usuario, extra=''):
+        datos = cliente_de(usuario).get(f'{RUTA}/acumulado?tipo=mes{extra}').json()
+        return datos['alcance'], {f['colaborador'] for f in datos['colaboradores']}
+
+    # Líder: solo sus personas a cargo, ni él mismo ni nadie más.
+    assert ids(jefe) == ('equipo', {julian.pk, daniel.pk})
+    # Colaborador sin equipo: no tiene tablero.
+    assert cliente_de(julian).get(f'{RUTA}/acumulado?tipo=mes').status_code == 403
+    # People: la compañía entera.
+    alcance, todos = ids(people)
+    assert alcance == 'compania'
+    assert {jefe.pk, julian.pk, daniel.pk, ajeno.pk, people.pk} <= todos
+
+
+def test_el_top_lo_ve_todo_el_mundo_y_solo_lleva_a_los_medidos(equipo):
+    jefe, julian, daniel = equipo
+    mes = primer_dia(date.today())
+    objetivo = objetivo_de(julian, jefe, '100', periodo=mes)
+    objetivo_de(daniel, jefe, '100', periodo=mes)
+    _empezar_el_mes(mes)
+    cliente_de(julian).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+    )
+
+    # Daniel es un colaborador sin equipo: el tablero no es para él…
+    assert cliente_de(daniel).get(f'{RUTA}/acumulado?tipo=mes').status_code == 403
+
+    # …pero el Top sí: le muestra a Julian, que es quien tiene resultado.
+    top = cliente_de(daniel).get(f'{RUTA}/acumulado?tipo=mes&alcance=top').json()
+    assert [f['colaborador'] for f in top['colaboradores']] == [julian.pk]
 
 
 # ── Carga de objetivos por Excel ───────────────────────────────────────────

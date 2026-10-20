@@ -31,6 +31,10 @@ def api_exception_handler(exc, context) -> Response | None:
             field: [str(m) for m in (msgs if isinstance(msgs, list) else [msgs])]
             for field, msgs in detail.items()
         }
+    elif isinstance(detail, list):
+        # `ValidationError('texto')` llega como lista de mensajes: se muestran
+        # tal cual, no como el repr de la lista.
+        payload['message'] = ' '.join(str(m) for m in detail) or 'Los datos enviados no son válidos.'
     else:
         payload['message'] = str(detail)
 

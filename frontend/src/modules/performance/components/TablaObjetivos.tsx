@@ -1,4 +1,4 @@
-import { CheckIcon, PencilIcon, Trash2Icon, UploadIcon } from 'lucide-react';
+import { EyeIcon, PencilIcon, Trash2Icon, UploadIcon } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -55,21 +55,20 @@ export function TablaObjetivos({
   onEditar,
   onEliminar,
   onCargar,
-  onValidar,
+  onRevisar,
   puedeCargar,
-  puedeValidar,
 }: {
   objetivos: Objetivo[];
   soloLectura?: boolean;
   onEditar?: (objetivo: Objetivo) => void;
   onEliminar?: (objetivo: Objetivo) => void;
   onCargar?: (objetivo: Objetivo) => void;
-  onValidar?: (objetivo: Objetivo) => void;
-  /** Quién puede cargar el resultado de esta fila (el responsable o su jefe). */
+  /** Abre la revisión del resultado cargado: verlo, dejar feedback y aprobar o devolver. */
+  onRevisar?: (objetivo: Objetivo) => void;
+  /** Quién puede cargar el resultado de esta fila (el colaborador, su jefe o el responsable). */
   puedeCargar?: (objetivo: Objetivo) => boolean;
-  puedeValidar?: (objetivo: Objetivo) => boolean;
 }) {
-  const conAcciones = !soloLectura || !!onCargar;
+  const conAcciones = !soloLectura || !!onCargar || !!onRevisar;
 
   return (
     <Table>
@@ -110,6 +109,17 @@ export function TablaObjetivos({
                   {objetivo.resultado.estadoValidacionLabel}
                 </p>
               )}
+              {objetivo.resultado?.feedback && (
+                <p
+                  className="mt-1 line-clamp-2 max-w-56 text-xs text-pretty text-muted-foreground"
+                  title={objetivo.resultado.feedback}
+                >
+                  <span className="font-medium text-foreground">
+                    Feedback{objetivo.resultado.feedbackPorNombre && ` de ${objetivo.resultado.feedbackPorNombre}`}:
+                  </span>{' '}
+                  {objetivo.resultado.feedback}
+                </p>
+              )}
             </TableCell>
             {conAcciones && (
               <TableCell className="text-right whitespace-nowrap">
@@ -124,15 +134,15 @@ export function TablaObjetivos({
                     <UploadIcon />
                   </Button>
                 )}
-                {onValidar && objetivo.resultado && puedeValidar?.(objetivo) && (
+                {onRevisar && objetivo.resultado && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label={`Validar resultado de ${objetivo.objetivo}`}
-                    title="Validar el resultado cargado"
-                    onClick={() => onValidar(objetivo)}
+                    aria-label={`Revisar el resultado de ${objetivo.objetivo}`}
+                    title="Ver lo cargado, dejar feedback y validar"
+                    onClick={() => onRevisar(objetivo)}
                   >
-                    <CheckIcon />
+                    <EyeIcon />
                   </Button>
                 )}
                 {!soloLectura && (

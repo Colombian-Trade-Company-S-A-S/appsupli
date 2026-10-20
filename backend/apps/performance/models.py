@@ -261,6 +261,18 @@ class Resultado(TimeStampedModel):
     )
     fecha_validacion = models.DateTimeField('fecha de validación', null=True, blank=True)
     observacion = models.TextField('observación', blank=True)
+    # El comentario del jefe sobre lo cargado, aparte de la observación de quien
+    # lo cargó. Se escribe al aprobar, al devolver o solo como feedback.
+    feedback = models.TextField('feedback del jefe', blank=True)
+    feedback_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='feedbacks_dados',
+        verbose_name='feedback de',
+    )
+    feedback_fecha = models.DateTimeField('fecha del feedback', null=True, blank=True)
 
     class Meta:
         verbose_name = 'resultado'

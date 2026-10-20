@@ -39,6 +39,7 @@ import {
   useBiTradeMutation,
   useListado,
   useOpciones,
+  usePrecioVigente,
   useProductos,
   usePuntosVenta,
   useResumen,
@@ -416,11 +417,11 @@ function MetaDialog({
 
   const producto = productos.find((p) => p.idProducto === datos.idProducto);
 
-  // Lo mismo que calcula el backend, para mostrarlo antes de guardar.
-  const enDinero =
-    producto?.precioVentaColtrade == null
-      ? null
-      : datos.metaCantidad * producto.precioVentaColtrade;
+  // El precio del mes de la meta —el promedio por días hábiles si cambió a mitad
+  // de mes—: lo calcula el backend, para mostrarlo antes de guardar.
+  const { data: vigente } = usePrecioVigente(datos.idProducto, datos.fechaMeta, true);
+  const precioDelMes = vigente?.precio ?? null;
+  const enDinero = precioDelMes == null ? null : datos.metaCantidad * precioDelMes;
   const enPuntos = producto ? datos.metaCantidad * (producto.puntaje ?? 0) : 0;
 
   const onSubmit = (event: FormEvent) => {
@@ -496,8 +497,8 @@ function MetaDialog({
               />
               <FieldDescription>
                 {fuente.conPuntos
-                  ? 'Es lo único que se guarda. El dinero y los puntos se calculan con el precio y el puntaje del producto, igual que el total de una venta.'
-                  : 'Es lo único que se guarda. El dinero se calcula con el precio Coltrade del producto, igual que el total de una venta.'}
+                  ? 'Es lo único que se guarda. El dinero se calcula con el precio Coltrade del mes y los puntos con el puntaje del producto.'
+                  : 'Es lo único que se guarda. El dinero se calcula con el precio Coltrade del mes: el promedio de sus días hábiles si el precio cambió a mitad de mes.'}
               </FieldDescription>
             </Field>
 
@@ -511,8 +512,8 @@ function MetaDialog({
                       {formatoMoneda(enDinero)}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {formatoNumero(datos.metaCantidad)} ×{' '}
-                      {formatoMoneda(producto.precioVentaColtrade)}
+                      {formatoNumero(datos.metaCantidad)} × {formatoMoneda(precioDelMes)}, el precio
+                      del mes
                     </span>
                   </div>
                   {fuente.conPuntos && (

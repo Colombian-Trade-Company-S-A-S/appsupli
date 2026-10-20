@@ -11,6 +11,5 @@ cryptography==46.0.3
 openpyxl==3.1.5
 # Postgres y despliegue
 psycopg[binary]==3.3.5
-dj-database-url==3.1.2
 gunicorn==26.2.0
 whitenoise==6.12.0

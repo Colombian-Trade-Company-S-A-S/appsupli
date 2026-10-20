@@ -29,7 +29,6 @@ from .models import (
     PuntoVentaHc,
     RegionalHc,
     VentaHc,
-    anotaciones_meta,
 )
 from .query_hc import ErrorDeQuery, leer_query, leer_query_ventas
 from .serializers import (
@@ -113,9 +112,11 @@ _EXPORT_PUNTO = [
     ColumnaExport('Materiales', 'id_punto_venta__materiales'),
     ColumnaExport('Categoría', 'id_punto_venta__categoria'),
 ]
-_EXPORT_PRECIO = ColumnaExport(
-    'Precio Coltrade', 'id_producto__precio_venta_coltrade', 'dinero'
-)
+# El precio de cada fila es el de su fecha: el día de la venta, el mes de
+# la meta, hoy para el inventario.
+_EXPORT_PRECIO_DIA = ColumnaExport('Precio Coltrade', 'precio_dia', 'dinero')
+_EXPORT_PRECIO_HOY = ColumnaExport('Precio Coltrade', 'precio_hoy', 'dinero')
+_EXPORT_PRECIO_MES = ColumnaExport('Precio Coltrade', 'precio_mes', 'dinero')
 
 
 def _error(mensaje: str, **extra) -> Response:
@@ -240,6 +241,7 @@ class PuntoVentaHcViewSet(_PlantillaHc, PuntoVentaViewSet):
 
 
 class ProductoHcViewSet(_PlantillaHc, ProductoViewSet):
+    canal = HC
     queryset = ProductoHc.objects.annotate(conteo_ventas=Count('ventas')).order_by(
         'nombre_producto'
     )
@@ -253,11 +255,12 @@ class ProductoHcViewSet(_PlantillaHc, ProductoViewSet):
         ColumnaExport('SKU Coltrade', 'sku_coltrade'),
         ColumnaExport('Producto', 'nombre_producto'),
         ColumnaExport('Marca', 'marca'),
-        ColumnaExport('Precio Coltrade', 'precio_venta_coltrade', 'dinero'),
+        ColumnaExport('Precio Coltrade base', 'precio_venta_coltrade', 'dinero'),
+        ColumnaExport('Precio Coltrade hoy', 'precio_hoy', 'dinero'),
         ColumnaExport('Precio Homecenter', 'precio_venta_hc', 'dinero'),
         ColumnaExport('Ventas registradas', 'conteo_ventas', 'entero'),
     ]
-    search_fields = ('id_producto', 'ean', 'sku_coltrade', 'nombre_producto', 'marca')
+    search_fields = ('id_producto', 'ean', 'sku_coltrade', 'nombre_producto', 'marca__nombre')
     nota_plantilla = (
         'Si el código ya existe, la fila actualiza ese producto en vez de duplicarlo. '
         'Solo el código y el nombre son obligatorios. Los precios van en pesos, sin '
@@ -271,7 +274,8 @@ class ProductoHcViewSet(_PlantillaHc, ProductoViewSet):
         Columna('sku_coltrade', obligatoria=False, ayuda='Opcional. Máximo 60 caracteres.',
                 ejemplo='CT-AIW-001'),
         Columna('nombre_producto', ayuda='Máximo 60 caracteres.', ejemplo='Torre de sonido Aiwa'),
-        Columna('marca', obligatoria=False, ayuda='Opcional. Máximo 60 caracteres.',
+        Columna('marca', obligatoria=False,
+                ayuda='Opcional. Una marca de la lista de marcas. Da igual mayúsculas o tildes.',
                 ejemplo='Aiwa'),
         Columna('precio_venta_coltrade', tipo='entero', obligatoria=False,
                 ayuda='Opcional. Hasta 100.000.000. Con este precio se calculan los ingresos.',
@@ -285,6 +289,7 @@ class ProductoHcViewSet(_PlantillaHc, ProductoViewSet):
 
 
 class VentaHcViewSet(_PlantillaHc, VentaViewSet):
+    canal = HC
     queryset = VentaHc.objects.select_related('id_producto', 'id_punto_venta').order_by(
         '-fecha_venta', '-id_venta'
     )
@@ -299,7 +304,7 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
         *_EXPORT_PRODUCTO,
         *_EXPORT_PUNTO,
         ColumnaExport('Cantidad vendida', 'cantidad_vendida', 'entero'),
-        _EXPORT_PRECIO,
+        _EXPORT_PRECIO_DIA,
         ColumnaExport('Total', 'total', 'dinero'),
     ]
     con_puntos = False
@@ -408,6 +413,7 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
 
 
 class InventarioHcViewSet(_PlantillaHc, InventarioViewSet):
+    canal = HC
     queryset = InventarioHc.objects.select_related('id_producto', 'id_punto_venta').order_by(
         'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
     )
@@ -421,7 +427,7 @@ class InventarioHcViewSet(_PlantillaHc, InventarioViewSet):
         *_EXPORT_PRODUCTO,
         *_EXPORT_PUNTO,
         ColumnaExport('Cantidad en inventario', 'cantidad_inventario', 'entero'),
-        _EXPORT_PRECIO,
+        _EXPORT_PRECIO_HOY,
         ColumnaExport('Valorizado', 'valorizado', 'dinero'),
     ]
     columnas_excel = [
@@ -495,10 +501,9 @@ class InventarioHcViewSet(_PlantillaHc, InventarioViewSet):
 
 
 class MetaHcViewSet(_PlantillaHc, MetaViewSet):
-    queryset = (
-        MetaComercialHc.objects.select_related('id_producto', 'id_punto_venta')
-        .annotate(**anotaciones_meta(con_puntos=False))
-        .order_by('id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
+    canal = HC
+    queryset = MetaComercialHc.objects.select_related('id_producto', 'id_punto_venta').order_by(
+        'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
     )
     serializer_class = MetaHcSerializer
     filterset_class = MetaHcFilter
@@ -514,7 +519,7 @@ class MetaHcViewSet(_PlantillaHc, MetaViewSet):
         *_EXPORT_PRODUCTO,
         *_EXPORT_PUNTO,
         ColumnaExport('Meta unidades', 'meta_cantidad', 'entero'),
-        _EXPORT_PRECIO,
+        _EXPORT_PRECIO_MES,
         ColumnaExport('Meta dinero', 'dinero_meta', 'dinero'),
     ]
     nota_plantilla = MetaViewSet.nota_plantilla.replace(

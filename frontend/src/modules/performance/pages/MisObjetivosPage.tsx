@@ -38,10 +38,12 @@ export default function MisObjetivosPage() {
   const asignado = objetivos.reduce((total, objetivo) => total + Number(objetivo.peso), 0);
   const congelados = objetivos.some((objetivo) => !objetivo.editable);
   const empezado = elegido.slice(0, 7) <= mesActual();
-  // Cada quien carga lo suyo, salvo los objetivos cuyo resultado carga otra
-  // persona: es el caso de los asesores, que los sube su Trade Leader.
+  // En «Mis objetivos» el colaborador siempre carga su resultado y su evidencia
+  // (su jefe los aprueba). Si se designó a otra persona como responsable, esa
+  // persona también puede, y lo ve en esta lista cuando le toca.
   const mio = (objetivo: Objetivo) =>
-    empezado && (objetivo.responsableResultado ?? objetivo.colaborador) === user?.id;
+    empezado &&
+    (objetivo.colaborador === user?.id || objetivo.responsableResultado === user?.id);
 
   return (
     <div className="flex flex-col gap-6">

@@ -39,6 +39,7 @@ import {
   useBiTradeMutation,
   useListado,
   useOpciones,
+  usePrecioVigente,
   useProductos,
   usePuntosVenta,
   useResumen,
@@ -402,10 +403,10 @@ function VentaDialog({
   }, [abierto, venta]);
 
   const productoElegido = productos.find((p) => p.idProducto === datos.idProducto);
-  const total =
-    productoElegido?.precioVentaColtrade == null
-      ? null
-      : productoElegido.precioVentaColtrade * (datos.cantidadVendida || 0);
+  // El precio del día de la venta: lo calcula el backend, con los precios por periodo.
+  const { data: vigente } = usePrecioVigente(datos.idProducto, datos.fechaVenta);
+  const precioDelDia = vigente?.precio ?? null;
+  const total = precioDelDia == null ? null : precioDelDia * (datos.cantidadVendida || 0);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -482,8 +483,8 @@ function VentaDialog({
                 <FieldLabel>Total de la venta</FieldLabel>
                 <p className="text-lg font-semibold tabular-nums">{formatoMoneda(total)}</p>
                 <FieldDescription>
-                  {formatoNumero(datos.cantidadVendida || 0)} ×{' '}
-                  {formatoMoneda(productoElegido.precioVentaColtrade)}
+                  {formatoNumero(datos.cantidadVendida || 0)} × {formatoMoneda(precioDelDia)}, el
+                  precio Coltrade de ese día
                 </FieldDescription>
               </Field>
             )}

@@ -449,7 +449,14 @@ function Renglon({
 }
 
 /** Las columnas de las tablas de avance que se pueden ordenar. */
-type CampoOrden = 'label' | 'metaMensual' | 'importe' | 'cantidad' | 'inventario' | 'cumplimiento';
+type CampoOrden =
+  | 'label'
+  | 'metaMensual'
+  | 'importe'
+  | 'cantidad'
+  | 'inventario'
+  | 'cumplimiento'
+  | 'cumplimientoAlcanzable';
 
 const COLUMNAS_COPIA_AVANCE: Array<ColumnaCopia<FilaAvance>> = [
   { encabezado: 'Nombre', valor: (f) => f.label },
@@ -458,6 +465,8 @@ const COLUMNAS_COPIA_AVANCE: Array<ColumnaCopia<FilaAvance>> = [
   { encabezado: 'Importe', valor: (f) => f.importe },
   { encabezado: 'Cantidad', valor: (f) => f.cantidad },
   { encabezado: 'Cumplimiento %', valor: (f) => f.cumplimiento },
+  { encabezado: 'Inventario valorizado', valor: (f) => f.inventarioValor },
+  { encabezado: 'Alcanzable con inventario %', valor: (f) => f.cumplimientoAlcanzable },
 ];
 
 /** Cuántas filas se ven antes de pedir «ver todas». */
@@ -468,6 +477,8 @@ const TOPE_FILAS = 10;
  *
  * `columnaInventario` la enciende solo donde el stock significa algo: por
  * punto de venta sí, por regional es una suma que nadie usa para decidir.
+ * Con ella va también el cumplimiento alcanzable: hasta dónde llegaría el
+ * punto si vendiera todo su stock, a precio Coltrade de hoy.
  */
 export function TablaAvance({
   titulo,
@@ -519,10 +530,12 @@ export function TablaAvance({
       importe: suma.importe + fila.importe,
       cantidad: suma.cantidad + fila.cantidad,
       inventario: suma.inventario + fila.inventario,
+      inventarioValor: suma.inventarioValor + fila.inventarioValor,
     }),
-    { metaMensual: 0, importe: 0, cantidad: 0, inventario: 0 },
+    { metaMensual: 0, importe: 0, cantidad: 0, inventario: 0, inventarioValor: 0 },
   );
   const cumplimientoTotal = porcentaje(total.importe, total.metaMensual);
+  const alcanzableTotal = porcentaje(total.importe + total.inventarioValor, total.metaMensual);
 
   const recortadas = verTodas ? visibles : visibles.slice(0, TOPE_FILAS);
   const mejor = orden.campo === 'cumplimiento' && orden.desc ? visibles[0]?.key : undefined;
@@ -620,6 +633,11 @@ export function TablaAvance({
                   <Encabezado campo="cumplimiento" className="text-right">
                     Cumplimiento
                   </Encabezado>
+                  {columnaInventario && (
+                    <Encabezado campo="cumplimientoAlcanzable" className="text-right">
+                      Alcanzable con inventario
+                    </Encabezado>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -657,6 +675,16 @@ export function TablaAvance({
                         <BadgeCumplimiento porcentaje={fila.cumplimiento} />
                       </div>
                     </TableCell>
+                    {columnaInventario && (
+                      <TableCell className="text-right">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <BadgeCumplimiento porcentaje={fila.cumplimientoAlcanzable} />
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            + {formatoMoneda(fila.inventarioValor)} en stock
+                          </span>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -678,6 +706,9 @@ export function TablaAvance({
                     {formatoNumero(total.cantidad)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{cumplimientoTotal}%</TableCell>
+                  {columnaInventario && (
+                    <TableCell className="text-right tabular-nums">{alcanzableTotal}%</TableCell>
+                  )}
                 </TableRow>
               </TableFooter>
             </Table>

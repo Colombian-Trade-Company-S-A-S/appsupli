@@ -84,7 +84,12 @@ export function useChallengeMutation<TDatos, TVariables>(
       queryClient.invalidateQueries({ queryKey: challengeKeys.todo });
       toast.success(typeof exito === 'function' ? exito(datos) : exito);
     },
-    onError: (error) => toast.error(mensajeDeError(error, 'No se pudo guardar.')),
+    onError: (error) => {
+      toast.error(mensajeDeError(error, 'No se pudo guardar.'));
+      // Si el servidor dice que el estado ya cambió (un reto ya publicado, por
+      // ejemplo), la pantalla estaba vieja: se recarga para mostrar lo real.
+      queryClient.invalidateQueries({ queryKey: challengeKeys.todo });
+    },
   });
 }
 

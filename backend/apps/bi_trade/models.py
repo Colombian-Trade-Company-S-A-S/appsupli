@@ -8,10 +8,11 @@ traducen para que un archivo del BI se pueda cargar sin renombrar columnas.
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import F, Value
-from django.db.models.functions import Coalesce
+from django.db.models import F, Q
 
 from apps.core.models import TimeStampedModel
+
+from .precios import precio_del_dia, precio_promedio_del_mes
 
 # Tope de los precios: cien millones, sin decimales.
 PRECIO_MAXIMO = 100_000_000
@@ -64,6 +65,153 @@ class Materiales(models.TextChoices):
     INCOMPLETOS = 'Sin todos los materiales', 'Sin todos los materiales'
 
 
+# ── Marcas y precios, comunes a los cuatro canales ─────────────────────────
+
+
+class Marca(TimeStampedModel):
+    """
+    Una marca del catálogo: Samsung, Belkin, JBL…
+
+    Es una sola lista para Claro, Homecenter, Falabella y Tmk: una marca es la
+    misma en todos los canales. Antes se escribía a mano en cada producto y la
+    misma llegaba de varias formas («Generica», «Generico»); ahora se elige.
+    """
+
+    id_marca = models.AutoField('id de la marca', primary_key=True)
+    nombre = models.CharField('nombre', max_length=60, unique=True)
+
+    class Meta:
+        db_table = 'bi_trade_marcas'
+        verbose_name = 'marca'
+        verbose_name_plural = 'marcas'
+        ordering = ('nombre',)
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
+def campo_marca(related_name: str) -> models.ForeignKey:
+    """
+    La marca de un producto, elegida del catálogo.
+
+    La llave es el nombre y la columna se sigue llamando `marca`: lo que ya
+    filtraba, agrupaba o exportaba por marca sigue recibiendo el nombre, igual
+    que cuando era texto. Renombrar una marca arrastra sus productos en la
+    misma transacción: la base revisa la llave al cerrarla, no fila por fila.
+    """
+    return models.ForeignKey(
+        Marca,
+        to_field='nombre',
+        db_column='marca',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name=related_name,
+        verbose_name='marca',
+    )
+
+
+class ConPreciosPorPeriodo:
+    """
+    Lo que comparten los productos de los cuatro canales: su precio Coltrade
+    en el tiempo. La regla está en `precios`; esto la aplica a un producto
+    suelto, para el registro que se acaba de guardar. Los listados y los
+    tableros la calculan en la base.
+    """
+
+    def _rangos(self) -> list:
+        return list(self.precios.values_list('desde', 'hasta', 'precio_venta_coltrade'))
+
+    def precio_en(self, dia) -> int | None:
+        """El precio Coltrade de un día."""
+        return precio_del_dia(self._rangos(), self.precio_venta_coltrade, dia)
+
+    def precio_del_mes(self, anio: int, mes: int) -> int | None:
+        """El precio con que se valora la meta del mes: el promedio de sus días hábiles."""
+        return precio_promedio_del_mes(self._rangos(), self.precio_venta_coltrade, anio, mes)
+
+
+class ValorizadaAlPrecioDelDia:
+    """Una venta de cualquier canal vale el precio Coltrade del día en que se hizo."""
+
+    @property
+    def precio_aplicado(self) -> int | None:
+        # El listado lo trae anotado (`precio_dia`); el registro suelto lo busca.
+        if 'precio_dia' in self.__dict__:
+            return self.precio_dia
+        return self.id_producto.precio_en(self.fecha_venta)
+
+    @property
+    def total_coltrade(self) -> int | None:
+        """Lo que factura la venta. Sin precio, no hay total."""
+        precio = self.precio_aplicado
+        return None if precio is None else self.cantidad_vendida * precio
+
+
+class ValorizadaAlPrecioDelMes:
+    """
+    Una meta de cualquier canal vale el precio del mes: el promedio de sus
+    días hábiles, por si el precio cambió a mitad de mes.
+
+    Solo se guardan las unidades: si se guardara el dinero, un cambio de precio
+    dejaría la meta desactualizada y el cumplimiento se mediría contra un valor
+    que ya no existe.
+    """
+
+    @property
+    def precio_de_meta(self) -> int | None:
+        # El listado lo trae anotado (`precio_mes`); el registro suelto lo calcula.
+        if 'precio_mes' in self.__dict__:
+            return self.precio_mes
+        return self.id_producto.precio_del_mes(self.fecha_meta.year, self.fecha_meta.month)
+
+    @property
+    def meta_dinero(self) -> int | None:
+        """La meta en pesos. Sin precio, no hay dinero."""
+        precio = self.precio_de_meta
+        return None if precio is None else self.meta_cantidad * precio
+
+
+class PrecioPorPeriodo(TimeStampedModel):
+    """
+    El precio Coltrade de un producto entre dos fechas.
+
+    Sin `hasta`, sigue vigente. Los periodos de un mismo producto no se pisan;
+    los días que ninguno cubre valen el precio del producto. Cada canal tiene
+    su tabla, como sus productos.
+    """
+
+    id_precio = models.AutoField('id del precio', primary_key=True)
+    desde = models.DateField('vigente desde')
+    hasta = models.DateField(
+        'vigente hasta', null=True, blank=True, help_text='Vacío: sigue vigente.'
+    )
+    precio_venta_coltrade = models.PositiveIntegerField(
+        'precio de venta Coltrade', validators=[MaxValueValidator(PRECIO_MAXIMO)]
+    )
+
+    class Meta:
+        abstract = True
+        ordering = ('id_producto', '-desde')
+
+    def __str__(self) -> str:
+        hasta = self.hasta or 'en adelante'
+        return f'{self.id_producto_id} · {self.desde} a {hasta} → {self.precio_venta_coltrade}'
+
+
+def indice_de_precio(canal: str) -> models.Index:
+    """El precio de un día se busca por producto y fecha."""
+    return models.Index(fields=['id_producto', 'desde'], name=f'precio_{canal}_prod_desde')
+
+
+def periodo_valido(canal: str) -> models.CheckConstraint:
+    """Un periodo no termina antes de empezar."""
+    return models.CheckConstraint(
+        condition=Q(hasta__isnull=True) | Q(hasta__gte=F('desde')),
+        name=f'precio_{canal}_hasta_desde',
+    )
+
+
 class PuntoVenta(TimeStampedModel):
     """Punto de venta. Su código viene del negocio, no lo genera la base."""
 
@@ -74,6 +222,14 @@ class PuntoVenta(TimeStampedModel):
     )
     materiales = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
         'materiales', max_length=100, choices=Materiales.choices, null=True, blank=True
+    )
+    # `db_default` además de `default`: la base pone «sí» aunque quien inserte
+    # sea una versión de la app que todavía no conoce la columna.
+    asesor_pdv = models.BooleanField(
+        'tiene asesor',
+        default=True,
+        db_default=True,
+        help_text='Si el punto de venta tiene asesor. Falso: no tiene.',
     )
 
     class Meta:
@@ -86,12 +242,12 @@ class PuntoVenta(TimeStampedModel):
         return f'{self.id_punto_venta} · {self.nombre_pdv}'
 
 
-class Producto(TimeStampedModel):
+class Producto(ConPreciosPorPeriodo, TimeStampedModel):
     """Producto del catálogo, con su precio en Claro y en Coltrade."""
 
     id_producto = models.CharField('código del producto', max_length=60, primary_key=True)
     nombre_producto = models.CharField('nombre del producto', max_length=60)
-    marca = models.CharField('marca', max_length=60)
+    marca = campo_marca('productos_claro')
     precio_venta_claro = models.PositiveIntegerField(
         'precio de venta Claro', validators=[MaxValueValidator(PRECIO_MAXIMO)]
     )
@@ -110,7 +266,26 @@ class Producto(TimeStampedModel):
         return f'{self.id_producto} · {self.nombre_producto}'
 
 
-class Venta(TimeStampedModel):
+class PrecioProducto(PrecioPorPeriodo):
+    """El precio Coltrade de un producto entre dos fechas."""
+
+    id_producto = models.ForeignKey(
+        Producto,
+        on_delete=models.CASCADE,
+        db_column='id_producto',
+        related_name='precios',
+        verbose_name='producto',
+    )
+
+    class Meta(PrecioPorPeriodo.Meta):
+        db_table = 'bi_trade_precios'
+        verbose_name = 'precio por periodo'
+        verbose_name_plural = 'precios por periodo'
+        indexes = [indice_de_precio('claro')]
+        constraints = [periodo_valido('claro')]
+
+
+class Venta(ValorizadaAlPrecioDelDia, TimeStampedModel):
     """Una venta: qué producto, en qué punto, cuándo y cuántas unidades."""
 
     id_venta = models.AutoField('id de la venta', primary_key=True)
@@ -141,11 +316,6 @@ class Venta(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.fecha_venta} · {self.id_producto_id} × {self.cantidad_vendida}'
-
-    @property
-    def total_coltrade(self) -> int:
-        """Lo que factura la venta al precio Coltrade."""
-        return self.cantidad_vendida * self.id_producto.precio_venta_coltrade
 
 
 class Inventario(TimeStampedModel):
@@ -183,7 +353,7 @@ class Inventario(TimeStampedModel):
         return f'{self.id_punto_venta_id} · {self.id_producto_id} = {self.cantidad_inventario}'
 
 
-class MetaComercial(TimeStampedModel):
+class MetaComercial(ValorizadaAlPrecioDelMes, TimeStampedModel):
     """Meta de un producto en un punto de venta, en unidades.
 
     Solo se guardan las unidades: el dinero y los puntos se calculan con el
@@ -229,34 +399,9 @@ class MetaComercial(TimeStampedModel):
         )
 
     @property
-    def meta_dinero(self) -> int:
-        """La meta en pesos, al precio Coltrade del producto."""
-        return self.meta_cantidad * self.id_producto.precio_venta_coltrade
-
-    @property
     def meta_puntos(self) -> int:
         """La meta en puntos. El puntaje es nulable: sin él, no hay puntos."""
         return self.meta_cantidad * (self.id_producto.puntaje or 0)
-
-
-def anotaciones_meta(con_puntos: bool = True) -> dict:
-    """
-    La meta en dinero y en puntos, calculadas en la base.
-
-    Con `con_puntos=False` solo va el dinero: es para los canales que no
-    miden en puntos, cuyos productos no tienen puntaje.
-
-    Las propiedades del modelo sirven para una fila; esto sirve para filtrar,
-    ordenar, sumar y exportar sin traer las metas a Python.
-
-    El sufijo `_meta` en los alias no es adorno: un alias de `annotate` que se
-    llame igual que uno de `aggregate` hace que Django lo resuelva contra sí
-    mismo y devuelva cero sin avisar.
-    """
-    anotaciones = {'dinero_meta': F('meta_cantidad') * F('id_producto__precio_venta_coltrade')}
-    if con_puntos:
-        anotaciones['puntos_meta'] = F('meta_cantidad') * Coalesce('id_producto__puntaje', Value(0))
-    return anotaciones
 
 
 class Campana(TimeStampedModel):
@@ -500,7 +645,7 @@ class PuntoVentaHc(TimeStampedModel):
         return f'{self.id_punto_venta} · {self.nombre_pdv}'
 
 
-class ProductoHc(TimeStampedModel):
+class ProductoHc(ConPreciosPorPeriodo, TimeStampedModel):
     """Producto del catálogo Homecenter, con su precio en Homecenter y en Coltrade.
 
     Solo el código y el nombre son obligatorios: el catálogo de Homecenter
@@ -518,9 +663,7 @@ class ProductoHc(TimeStampedModel):
         'SKU Coltrade', max_length=60, null=True, blank=True
     )
     nombre_producto = models.CharField('nombre del producto', max_length=60)
-    marca = models.CharField(  # noqa: DJ001 — nulable a propósito: "sin dato" ≠ ""
-        'marca', max_length=60, null=True, blank=True
-    )
+    marca = campo_marca('productos_hc')
     precio_venta_coltrade = models.PositiveIntegerField(
         'precio de venta Coltrade',
         null=True,
@@ -544,7 +687,26 @@ class ProductoHc(TimeStampedModel):
         return f'{self.id_producto} · {self.nombre_producto}'
 
 
-class VentaHc(TimeStampedModel):
+class PrecioProductoHc(PrecioPorPeriodo):
+    """El precio Coltrade de un producto Homecenter entre dos fechas."""
+
+    id_producto = models.ForeignKey(
+        ProductoHc,
+        on_delete=models.CASCADE,
+        db_column='id_producto_hc',
+        related_name='precios',
+        verbose_name='producto',
+    )
+
+    class Meta(PrecioPorPeriodo.Meta):
+        db_table = 'bi_trade_precios_hc'
+        verbose_name = 'precio por periodo Homecenter'
+        verbose_name_plural = 'precios por periodo Homecenter'
+        indexes = [indice_de_precio('hc')]
+        constraints = [periodo_valido('hc')]
+
+
+class VentaHc(ValorizadaAlPrecioDelDia, TimeStampedModel):
     """Una venta en una tienda Homecenter."""
 
     id_venta = models.AutoField('id de la venta', primary_key=True, db_column='id_venta_hc')
@@ -573,12 +735,6 @@ class VentaHc(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.fecha_venta} · {self.id_producto_id} × {self.cantidad_vendida}'
-
-    @property
-    def total_coltrade(self) -> int | None:
-        """Lo que factura la venta al precio Coltrade. Sin precio, no hay total."""
-        precio = self.id_producto.precio_venta_coltrade
-        return None if precio is None else self.cantidad_vendida * precio
 
 
 class InventarioHc(TimeStampedModel):
@@ -614,7 +770,7 @@ class InventarioHc(TimeStampedModel):
         return f'{self.id_punto_venta_id} · {self.id_producto_id} = {self.cantidad_inventario}'
 
 
-class MetaComercialHc(TimeStampedModel):
+class MetaComercialHc(ValorizadaAlPrecioDelMes, TimeStampedModel):
     """Meta de un producto en una tienda Homecenter, en unidades.
 
     Igual que en Claro, solo se guardan las unidades: el dinero sale del precio
@@ -651,11 +807,6 @@ class MetaComercialHc(TimeStampedModel):
             f'{self.id_punto_venta_id} · {self.id_producto_id} · {self.fecha_meta} '
             f'→ {self.meta_cantidad} u.'
         )
-
-    @property
-    def meta_dinero(self) -> int | None:
-        precio = self.id_producto.precio_venta_coltrade
-        return None if precio is None else self.meta_cantidad * precio
 
 
 # ── Falabella ──────────────────────────────────────────────────────────────
@@ -696,14 +847,14 @@ class PuntoVentaFalabella(TimeStampedModel):
         return f'{self.id_punto_venta} · {self.nombre_pdv}'
 
 
-class ProductoFalabella(TimeStampedModel):
+class ProductoFalabella(ConPreciosPorPeriodo, TimeStampedModel):
     """Producto del catálogo Falabella, con su precio en Falabella y en Coltrade."""
 
     id_producto = models.CharField(
         'código del producto', max_length=60, primary_key=True, db_column='id_producto_falabella'
     )
     nombre_producto = models.CharField('nombre del producto', max_length=60)
-    marca = models.CharField('marca', max_length=60)
+    marca = campo_marca('productos_falabella')
     precio_venta_falabella = models.PositiveIntegerField(
         'precio de venta Falabella', validators=[MaxValueValidator(PRECIO_MAXIMO)]
     )
@@ -721,7 +872,26 @@ class ProductoFalabella(TimeStampedModel):
         return f'{self.id_producto} · {self.nombre_producto}'
 
 
-class VentaFalabella(TimeStampedModel):
+class PrecioProductoFalabella(PrecioPorPeriodo):
+    """El precio Coltrade de un producto Falabella entre dos fechas."""
+
+    id_producto = models.ForeignKey(
+        ProductoFalabella,
+        on_delete=models.CASCADE,
+        db_column='id_producto_falabella',
+        related_name='precios',
+        verbose_name='producto',
+    )
+
+    class Meta(PrecioPorPeriodo.Meta):
+        db_table = 'bi_trade_precios_falabella'
+        verbose_name = 'precio por periodo Falabella'
+        verbose_name_plural = 'precios por periodo Falabella'
+        indexes = [indice_de_precio('falabella')]
+        constraints = [periodo_valido('falabella')]
+
+
+class VentaFalabella(ValorizadaAlPrecioDelDia, TimeStampedModel):
     """Una venta en una tienda Falabella."""
 
     id_venta = models.AutoField(
@@ -752,11 +922,6 @@ class VentaFalabella(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.fecha_venta} · {self.id_producto_id} × {self.cantidad_vendida}'
-
-    @property
-    def total_coltrade(self) -> int:
-        """Lo que factura la venta al precio Coltrade."""
-        return self.cantidad_vendida * self.id_producto.precio_venta_coltrade
 
 
 class InventarioFalabella(TimeStampedModel):
@@ -792,7 +957,7 @@ class InventarioFalabella(TimeStampedModel):
         return f'{self.id_punto_venta_id} · {self.id_producto_id} = {self.cantidad_inventario}'
 
 
-class MetaComercialFalabella(TimeStampedModel):
+class MetaComercialFalabella(ValorizadaAlPrecioDelMes, TimeStampedModel):
     """Meta de un producto en una tienda Falabella, en unidades.
 
     Igual que en Claro, solo se guardan las unidades: el dinero sale del precio
@@ -829,10 +994,6 @@ class MetaComercialFalabella(TimeStampedModel):
             f'{self.id_punto_venta_id} · {self.id_producto_id} · {self.fecha_meta} '
             f'→ {self.meta_cantidad} u.'
         )
-
-    @property
-    def meta_dinero(self) -> int:
-        return self.meta_cantidad * self.id_producto.precio_venta_coltrade
 
 
 # ── Tmk Ecommerce Claro ──────────────────────────────────────────────────────────────
@@ -873,14 +1034,14 @@ class PuntoVentaTmk(TimeStampedModel):
         return f'{self.id_punto_venta} · {self.nombre_pdv}'
 
 
-class ProductoTmk(TimeStampedModel):
+class ProductoTmk(ConPreciosPorPeriodo, TimeStampedModel):
     """Producto del catálogo Tmk Ecommerce Claro, con su precio en Tmk y en Coltrade."""
 
     id_producto = models.CharField(
         'código del producto', max_length=60, primary_key=True, db_column='id_producto_tmk'
     )
     nombre_producto = models.CharField('nombre del producto', max_length=60)
-    marca = models.CharField('marca', max_length=60)
+    marca = campo_marca('productos_tmk')
     precio_venta_tmk = models.PositiveIntegerField(
         'precio de venta Tmk Ecommerce Claro', validators=[MaxValueValidator(PRECIO_MAXIMO)]
     )
@@ -898,7 +1059,26 @@ class ProductoTmk(TimeStampedModel):
         return f'{self.id_producto} · {self.nombre_producto}'
 
 
-class VentaTmk(TimeStampedModel):
+class PrecioProductoTmk(PrecioPorPeriodo):
+    """El precio Coltrade de un producto Tmk entre dos fechas."""
+
+    id_producto = models.ForeignKey(
+        ProductoTmk,
+        on_delete=models.CASCADE,
+        db_column='id_producto_tmk',
+        related_name='precios',
+        verbose_name='producto',
+    )
+
+    class Meta(PrecioPorPeriodo.Meta):
+        db_table = 'bi_trade_precios_tmk'
+        verbose_name = 'precio por periodo Tmk'
+        verbose_name_plural = 'precios por periodo Tmk'
+        indexes = [indice_de_precio('tmk')]
+        constraints = [periodo_valido('tmk')]
+
+
+class VentaTmk(ValorizadaAlPrecioDelDia, TimeStampedModel):
     """Una venta en una tienda Tmk Ecommerce Claro."""
 
     id_venta = models.AutoField(
@@ -929,11 +1109,6 @@ class VentaTmk(TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.fecha_venta} · {self.id_producto_id} × {self.cantidad_vendida}'
-
-    @property
-    def total_coltrade(self) -> int:
-        """Lo que factura la venta al precio Coltrade."""
-        return self.cantidad_vendida * self.id_producto.precio_venta_coltrade
 
 
 class InventarioTmk(TimeStampedModel):
@@ -969,7 +1144,7 @@ class InventarioTmk(TimeStampedModel):
         return f'{self.id_punto_venta_id} · {self.id_producto_id} = {self.cantidad_inventario}'
 
 
-class MetaComercialTmk(TimeStampedModel):
+class MetaComercialTmk(ValorizadaAlPrecioDelMes, TimeStampedModel):
     """Meta de un producto en una tienda Tmk Ecommerce Claro, en unidades.
 
     Igual que en Claro, solo se guardan las unidades: el dinero sale del precio
@@ -1006,10 +1181,6 @@ class MetaComercialTmk(TimeStampedModel):
             f'{self.id_punto_venta_id} · {self.id_producto_id} · {self.fecha_meta} '
             f'→ {self.meta_cantidad} u.'
         )
-
-    @property
-    def meta_dinero(self) -> int:
-        return self.meta_cantidad * self.id_producto.precio_venta_coltrade
 
 
 # ── Plan Partners ──────────────────────────────────────────────────────────

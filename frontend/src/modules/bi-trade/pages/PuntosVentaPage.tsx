@@ -23,7 +23,9 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
+  Label,
   Spinner,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -39,6 +41,9 @@ import { useFuente } from '../fuente';
 import { useBiTradeMutation, useOpciones, usePuntosVenta } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BotonesExcel } from '../components/BotonesExcel';
+
+/** Si el canal dice qué puntos tienen asesor. Por ahora, solo Claro. */
+const conAsesor = (canal: string) => canal === 'claro';
 
 export default function PuntosVentaPage() {
   const fuente = useFuente();
@@ -119,6 +124,7 @@ export default function PuntosVentaPage() {
                 <TableHead>Regional</TableHead>
                 <TableHead className="hidden md:table-cell">Materiales</TableHead>
                 {fuente.catalogoHc && <TableHead>Categoría</TableHead>}
+                {conAsesor(fuente.canal) && <TableHead>Asesor</TableHead>}
                 <TableHead>Ventas</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
@@ -144,6 +150,17 @@ export default function PuntosVentaPage() {
                         <Badge variant="outline">{punto.categoria}</Badge>
                       ) : (
                         <span className="text-muted-foreground">Sin dato</span>
+                      )}
+                    </TableCell>
+                  )}
+                  {conAsesor(fuente.canal) && (
+                    <TableCell>
+                      {punto.asesorPdv ? (
+                        <Badge variant="secondary">Sí</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          No
+                        </Badge>
                       )}
                     </TableCell>
                   )}
@@ -229,6 +246,7 @@ function PuntoVentaDialog({
   const fuente = useFuente();
   const recursos = fuente.recursos ?? biTradeApi;
   const catalogoHc = !!fuente.catalogoHc;
+  const asesor = conAsesor(fuente.canal);
   const { data: opciones } = useOpciones();
   const [datos, setDatos] = useState<PuntoVentaPayload>(VACIO);
 
@@ -250,12 +268,15 @@ function PuntoVentaDialog({
             regional: punto.regional,
             materiales: punto.materiales,
             ...(catalogoHc && { categoria: punto.categoria ?? null }),
+            ...(asesor && { asesorPdv: punto.asesorPdv ?? true }),
           }
         : catalogoHc
           ? { ...VACIO, categoria: null }
-          : VACIO,
+          : asesor
+            ? { ...VACIO, asesorPdv: true }
+            : VACIO,
     );
-  }, [abierto, punto, catalogoHc]);
+  }, [abierto, punto, catalogoHc, asesor]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -350,6 +371,22 @@ function PuntoVentaDialog({
                 }
                 opciones={opciones?.categorias ?? []}
               />
+            )}
+
+            {asesor && (
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="pdv-asesor"
+                  checked={datos.asesorPdv ?? true}
+                  onCheckedChange={(asesorPdv) => setDatos({ ...datos, asesorPdv })}
+                />
+                <Label htmlFor="pdv-asesor" className="flex flex-col items-start gap-0.5">
+                  Tiene asesor
+                  <span className="text-xs font-normal text-muted-foreground">
+                    Apágalo si el punto de venta no tiene asesor.
+                  </span>
+                </Label>
+              </div>
             )}
           </FieldGroup>
         </form>

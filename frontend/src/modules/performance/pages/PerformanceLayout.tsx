@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   BarChart3Icon,
   GaugeIcon,
@@ -29,7 +29,7 @@ const SECCIONES: Seccion[] = [
   { to: '', label: 'Inicio', icon: GaugeIcon, exacto: true },
   { to: 'mis-objetivos', label: 'Mis objetivos', icon: ListChecksIcon },
   { to: 'equipo', label: 'Objetivos del equipo', icon: UsersIcon, soloLider: true },
-  { to: 'dashboard', label: 'Semáforo del equipo', icon: BarChart3Icon },
+  { to: 'dashboard', label: 'Semáforo del equipo', icon: BarChart3Icon, soloLider: true },
   { to: 'top', label: 'Top Performance', icon: TrophyIcon },
 ];
 
@@ -53,6 +53,11 @@ export default function PerformanceLayout() {
     const ruta = seccion.to ? `${BASE}/${seccion.to}` : BASE;
     return seccion.exacto ? pathname === ruta : pathname.startsWith(ruta);
   };
+
+  // Escribir la dirección a mano no abre lo que el menú no ofrece: un
+  // colaborador que llega a «equipo» o al semáforo vuelve al inicio.
+  const restringida = SECCIONES.some((seccion) => seccion.soloLider && activa(seccion));
+  if (restringida && opciones && !esLider) return <Navigate to={BASE} replace />;
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -100,7 +105,8 @@ export default function PerformanceLayout() {
         </ul>
       </nav>
 
-      <Outlet />
+      {/* Sin saber si es líder, no se abre una vista restringida: se evitan pedidos que el servidor niega. */}
+      {restringida && !opciones ? null : <Outlet />}
     </div>
   );
 }
