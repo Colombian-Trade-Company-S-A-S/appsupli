@@ -1,5 +1,5 @@
 # Backend de Supli: Django servido con gunicorn. Pensado para Render, pero
-# corre igual en cualquier lado que le pase DATABASE_URL y SECRET_KEY.
+# corre igual en cualquier lado que le pase las DB_* y SECRET_KEY.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -18,9 +18,11 @@ RUN pip install -r requirements.txt
 COPY . .
 
 # Los estáticos (admin y documentación de la API) quedan dentro de la imagen.
-# collectstatic no toca la base, pero los settings de producción exigen estas
-# dos variables: aquí van valores de relleno que no se usan para nada más.
-RUN SECRET_KEY=solo-para-collectstatic DATABASE_URL=sqlite:////tmp/build.sqlite3 \
+# collectstatic no toca la base, pero los settings de producción exigen la
+# clave y los datos de la base: aquí van valores de relleno que no se usan
+# para nada más (no se abre ninguna conexión).
+RUN SECRET_KEY=solo-para-collectstatic \
+    DB_HOST=relleno-del-build DB_NAME=relleno DB_USER=relleno DB_PASSWORD=relleno \
     python manage.py collectstatic --noinput
 
 # Sin root: si alguien rompe la app, no es dueño del contenedor.
@@ -29,7 +31,8 @@ USER app
 
 EXPOSE 8000
 
-# Cada arranque aplica las migraciones pendientes y después levanta gunicorn
-# en el puerto que diga Render. El timeout de 120 s es por la importación del
-# informe del ERP, que trae miles de filas.
-CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --timeout 120 --access-logfile -"]
+# Cada arranque se asegura de que exista el schema (DB_SCHEMA), aplica las
+# migraciones pendientes y después levanta gunicorn en el puerto que diga
+# Render. El timeout de 120 s es por la importación del informe del ERP, que
+# trae miles de filas.
+CMD ["sh", "-c", "python manage.py crear_schema && python manage.py migrate --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --timeout 120 --access-logfile -"]
