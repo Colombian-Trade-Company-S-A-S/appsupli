@@ -33,7 +33,15 @@ import {
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
 import { ConfirmarBorrado, EsqueletoPagina } from '@/shared/components/feedback';
 import { ApiError } from '@/shared/api/http-client';
-import { etiquetaMes, mesDe, performanceApi, type Objetivo, type PesoIncompleto } from '../api';
+import {
+  etiquetaMes,
+  mesDe,
+  mesEnCurso,
+  performanceApi,
+  periodoPorDefecto,
+  type Objetivo,
+  type PesoIncompleto,
+} from '../api';
 import {
   performanceKeys,
   useEliminarObjetivo,
@@ -54,9 +62,6 @@ import { FormularioObjetivo } from '../components/FormularioObjetivo';
 import { FormularioResultado } from '../components/FormularioResultado';
 import { RevisionResultado } from '../components/RevisionResultado';
 import { TablaObjetivos } from '../components/TablaObjetivos';
-
-/** El mes en curso: desde que empieza, ya se pueden cargar resultados. */
-const mesActual = () => new Date().toISOString().slice(0, 7);
 
 /**
  * «Objetivos del equipo»: la pantalla del mockup aprobado.
@@ -86,7 +91,7 @@ export default function ObjetivosEquipoPage() {
   const puedeVerCompania = compania.length > 0;
   const mostrarCompania = puedeVerCompania && (verCompania || aCargo.length === 0);
   const equipo = mostrarCompania ? compania : aCargo;
-  const periodoElegido = periodo || periodos[0]?.periodo || '';
+  const periodoElegido = periodo || periodoPorDefecto(periodos);
   // Sin el seleccionado explícito se trabaja sobre el primero del equipo.
   const colaborador = equipo.find((persona) => String(persona.id) === colaboradorId) ?? equipo[0];
 
@@ -141,7 +146,7 @@ export default function ObjetivosEquipoPage() {
   // El mes se congela solo cuando empieza (A9). Lo dice el backend, que es
   // quien conoce la fecha y la excepción que haya autorizado People.
   const editable = resumen?.editable ?? true;
-  const empezado = periodoElegido.slice(0, 7) <= mesActual();
+  const empezado = periodoElegido.slice(0, 7) <= mesEnCurso();
 
   return (
     <div className="flex flex-col gap-6">
@@ -331,15 +336,14 @@ export default function ObjetivosEquipoPage() {
           <DialogHeader>
             <DialogTitle>Revisar resultado — {colaborador?.nombre}</DialogTitle>
             <DialogDescription>
-              Lo que cargó el colaborador y sus evidencias. Deja tu feedback y valida, o devuélvelo
-              explicando qué corregir.
+              Lo que cargó y sus evidencias; si es una corrección, qué cambió desde que lo
+              devolviste. Apruébalo o devuélvelo explicando qué corregir.
             </DialogDescription>
           </DialogHeader>
           {enRevision && (
             <RevisionResultado
               key={enRevision.id}
               objetivo={enRevision}
-              puedeValidar
               onListo={() => setRevisandoId(null)}
             />
           )}

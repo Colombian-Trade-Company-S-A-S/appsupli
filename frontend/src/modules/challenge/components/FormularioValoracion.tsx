@@ -123,9 +123,8 @@ export function FormularioValoracion({
 
       <p className="rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         Promedio: ({valores.join(' + ')}) ÷ {valores.length} × 10 ={' '}
-        <b className="text-foreground tabular-nums">{puntaje} / 100</b>. Cada participación la
-        valoran dos miembros de Supli y un jurado sorteado; el puntaje final es el promedio de los
-        tres.
+        <b className="text-foreground tabular-nums">{puntaje} / 100</b>. Si alguien más de People
+        también la califica, el puntaje final es el promedio de las calificaciones.
       </p>
 
       <Field className="min-w-0">

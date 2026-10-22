@@ -9,7 +9,7 @@ así, sin correo, y eso no puede romper nada.
 import pytest
 from rest_framework.test import APIClient
 
-from apps.accounts.models import User
+from apps.accounts.models import Application, User
 
 pytestmark = pytest.mark.django_db
 
@@ -210,3 +210,28 @@ def test_el_listado_de_usuarios_sigue_trayendo_sus_accesos():
     assert areas['Área 0'] == 1
     roles = {r['name']: r['userCount'] for r in cliente.get('/api/admin/roles').json()['items']}
     assert roles['Rol 0'] == 1
+
+
+def test_administracion_solo_le_aparece_al_administrador():
+    """Tenerla asignada no basta: a Administración solo entra la cuenta Administrador."""
+    admin_app = Application.objects.create(
+        code='admin', name='Administración', base_path='/inicio/admin'
+    )
+    otra = Application.objects.create(code='bi-trade', name='BI Trade', base_path='/inicio/bi')
+    colaborador = User.objects.create_user(
+        email='colab@supli.tech', username='colab', first_name='Colab', password='clave-123456'
+    )
+    colaborador.applications.add(admin_app, otra)
+    administrador = User.objects.create_user(
+        email='jefa@supli.tech',
+        username='jefa',
+        first_name='Jefa',
+        password='clave-123456',
+        kind=User.Kind.ADMIN,
+    )
+
+    assert set(colaborador.get_accessible_applications().values_list('code', flat=True)) == {
+        'bi-trade'
+    }
+    assert colaborador.has_app_access('admin') is False
+    assert administrador.has_app_access('admin') is True

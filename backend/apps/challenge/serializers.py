@@ -93,6 +93,21 @@ class RetoSerializer(serializers.ModelSerializer):
     def get_jurados_nombres(self, obj) -> list[str]:
         return [jurado.usuario.full_name for jurado in obj.jurados.all()]
 
+    def to_representation(self, instance):
+        """
+        Cuántas entregas van valoradas es avance del reto: hasta finalizarlo
+        solo lo ven quienes valoran o administran, que lo necesitan para
+        trabajar. Al resto le llega vacío.
+        """
+        datos = super().to_representation(instance)
+        peticion = self.context.get('request')
+        if peticion is not None and instance.estado != EstadoReto.FINALIZADO:
+            from .api_permissions import puede_valorar
+
+            if not puede_valorar(peticion.user, instance):
+                datos['valoradas_count'] = None
+        return datos
+
     def validate_formatos_evidencia(self, valor):
         validos = set(FormatoEvidencia.values)
         if not valor:
@@ -189,6 +204,9 @@ class ValoracionSerializer(serializers.ModelSerializer):
 class ParticipacionSerializer(serializers.ModelSerializer):
     participante_nombre = serializers.CharField(source='participante.full_name', read_only=True)
     participante_cargo = serializers.CharField(source='participante.position', read_only=True)
+    participante_area = serializers.CharField(
+        source='participante.area.name', default='', read_only=True
+    )
     estado_label = serializers.CharField(source='get_estado_display', read_only=True)
     valoraciones = ValoracionSerializer(many=True, read_only=True)
     puntaje_con_bonus = serializers.DecimalField(
@@ -205,6 +223,7 @@ class ParticipacionSerializer(serializers.ModelSerializer):
             'participante',
             'participante_nombre',
             'participante_cargo',
+            'participante_area',
             'formato',
             'entrega_texto',
             'entrega_link',

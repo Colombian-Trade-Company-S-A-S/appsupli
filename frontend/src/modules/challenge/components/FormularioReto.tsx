@@ -351,8 +351,8 @@ export function FormularioReto({
           ))}
         </div>
         <p className="mt-2">
-          Cada criterio se califica de 1 a 10; el sistema promedia y lo lleva a 0–100. Cada
-          participación la valoran dos miembros de Supli y un jurado sorteado para el reto.
+          Cada criterio se califica de 1 a 10; el sistema promedia y lo lleva a 0–100. Califica solo
+          People; si califican varias personas, se promedian.
         </p>
       </div>
 

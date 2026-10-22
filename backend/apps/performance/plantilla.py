@@ -84,15 +84,6 @@ COLUMNAS = [
         ayuda='De dónde sale el dato con el que se va a medir.',
         ejemplo='Tablero de BI',
     ),
-    Columna(
-        'responsable_correo',
-        obligatoria=False,
-        ayuda=(
-            'Correo de quien carga el resultado, si no es el propio colaborador. '
-            'Para asesores y promotores, su Trade Leader.'
-        ),
-        ejemplo='',
-    ),
 ]
 
 NOTA = (

@@ -27,7 +27,6 @@ interface Campos {
   topeCumplimiento: string;
   formula: string;
   fuenteDatos: string;
-  responsableResultado: string;
 }
 
 const VACIO: Campos = {
@@ -42,7 +41,6 @@ const VACIO: Campos = {
   topeCumplimiento: '100',
   formula: '',
   fuenteDatos: '',
-  responsableResultado: '',
 };
 
 const desde = (objetivo: Objetivo): Campos => ({
@@ -57,7 +55,6 @@ const desde = (objetivo: Objetivo): Campos => ({
   topeCumplimiento: objetivo.topeCumplimiento,
   formula: objetivo.formula,
   fuenteDatos: objetivo.fuenteDatos,
-  responsableResultado: objetivo.responsableResultado ? String(objetivo.responsableResultado) : '',
 });
 
 /**
@@ -101,20 +98,11 @@ export function FormularioObjetivo({
   const necesitaMeta =
     datos.tipoMedicion === 'proporcional' || datos.tipoMedicion === 'proporcional_inverso';
 
-  // Por defecto carga el resultado el propio colaborador, y su jefe lo aprueba.
-  // El jefe (y People) siempre pueden cargarlo por él; designarlo aquí es para
-  // cuando le toca a alguien más, como el Trade Leader de un asesor. El jefe
-  // se ofrece aunque no esté en `equipo` (quien define es él, y no es parte de
-  // su propio equipo).
-  const jefeId = colaborador.jefeId;
-  const porDefecto = String(colaborador.id);
-  const responsables = [
-    { value: String(colaborador.id), label: `El colaborador (${colaborador.nombre})` },
-    ...(jefeId ? [{ value: String(jefeId), label: `${colaborador.jefe} (jefe directo)` }] : []),
-    ...opciones.equipo
-      .filter((persona) => persona.id !== colaborador.id && persona.id !== jefeId)
-      .map((persona) => ({ value: String(persona.id), label: persona.nombre })),
-  ];
+  // El responsable del resultado no se escoge: es siempre el jefe directo del
+  // colaborador (sale de la jerarquía, y el backend lo impone igual). El
+  // colaborador carga su resultado y este responsable lo aprueba.
+  const responsableId = colaborador.jefeId ?? colaborador.id;
+  const responsableNombre = colaborador.jefeId ? colaborador.jefe : colaborador.nombre;
 
   const onSubmit = async (evento: FormEvent) => {
     evento.preventDefault();
@@ -133,7 +121,7 @@ export function FormularioObjetivo({
       topeCumplimiento: datos.topeCumplimiento || '100',
       formula: esFormula ? datos.formula : '',
       fuenteDatos: datos.fuenteDatos,
-      responsableResultado: Number(datos.responsableResultado || porDefecto),
+      responsableResultado: responsableId,
     };
     try {
       if (objetivo) await editar.mutateAsync({ id: objetivo.id, ...payload });
@@ -324,14 +312,15 @@ export function FormularioObjetivo({
           />
         </Field>
 
-        <Selector
-          id="obj-responsable"
-          label="Responsable del resultado"
-          placeholder="Quién carga el resultado"
-          value={datos.responsableResultado || porDefecto}
-          onChange={(responsableResultado) => setDatos({ ...datos, responsableResultado })}
-          opciones={responsables}
-        />
+        <Field className="min-w-0">
+          <FieldLabel htmlFor="obj-responsable">Responsable del resultado</FieldLabel>
+          <Input id="obj-responsable" value={responsableNombre} readOnly disabled />
+          <FieldDescription>
+            {colaborador.jefeId
+              ? 'Su jefe directo: aprueba el resultado que cargue el colaborador.'
+              : 'Esta persona no tiene jefe registrado: queda ella misma.'}
+          </FieldDescription>
+        </Field>
       </div>
 
       <div className="flex flex-wrap gap-2 border-t pt-4">

@@ -34,7 +34,8 @@ def api_exception_handler(exc, context) -> Response | None:
     elif isinstance(detail, list):
         # `ValidationError('texto')` llega como lista de mensajes: se muestran
         # tal cual, no como el repr de la lista.
-        payload['message'] = ' '.join(str(m) for m in detail) or 'Los datos enviados no son válidos.'
+        mensajes = ' '.join(str(m) for m in detail)
+        payload['message'] = mensajes or 'Los datos enviados no son válidos.'
     else:
         payload['message'] = str(detail)
 

@@ -11,14 +11,11 @@ import {
 } from '@/shared/components/ui';
 import { useAuth } from '@/core/auth';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
-import { etiquetaMes, mesDe, type Objetivo } from '../api';
+import { etiquetaMes, mesDe, mesEnCurso, periodoPorDefecto, type Objetivo } from '../api';
 import { useMisObjetivos, useOpcionesPerformance } from '../hooks';
 import { BannerPonderacion, LeyendaSemaforo, Selector } from '../components/Piezas';
 import { FormularioResultado } from '../components/FormularioResultado';
 import { TablaObjetivos } from '../components/TablaObjetivos';
-
-/** El mes en curso: desde que empieza, ya se puede cargar el resultado. */
-const mesActual = () => new Date().toISOString().slice(0, 7);
 
 /**
  * Lo que ve el colaborador: sus objetivos del mes, en solo lectura.
@@ -32,18 +29,17 @@ export default function MisObjetivosPage() {
   const periodos = opciones?.periodos ?? [];
   const [periodo, setPeriodo] = useState('');
   const [cargando, setCargando] = useState<Objetivo | null>(null);
-  const elegido = periodo || periodos[0]?.periodo || '';
+  const elegido = periodo || periodoPorDefecto(periodos);
   const { data: objetivos = [], isLoading } = useMisObjetivos(elegido ? mesDe(elegido) : undefined);
 
   const asignado = objetivos.reduce((total, objetivo) => total + Number(objetivo.peso), 0);
   const congelados = objetivos.some((objetivo) => !objetivo.editable);
-  const empezado = elegido.slice(0, 7) <= mesActual();
+  const empezado = elegido.slice(0, 7) <= mesEnCurso();
   // En «Mis objetivos» el colaborador siempre carga su resultado y su evidencia
   // (su jefe los aprueba). Si se designó a otra persona como responsable, esa
   // persona también puede, y lo ve en esta lista cuando le toca.
   const mio = (objetivo: Objetivo) =>
-    empezado &&
-    (objetivo.colaborador === user?.id || objetivo.responsableResultado === user?.id);
+    empezado && (objetivo.colaborador === user?.id || objetivo.responsableResultado === user?.id);
 
   return (
     <div className="flex flex-col gap-6">

@@ -59,6 +59,7 @@ const TopPerformancePage = lazy(() => import('@/modules/performance/pages/TopPer
 const ChallengeLayout = lazy(() => import('@/modules/challenge/pages/ChallengeLayout'));
 const RetosPage = lazy(() => import('@/modules/challenge/pages/RetosPage'));
 const RetoDetallePage = lazy(() => import('@/modules/challenge/pages/RetoDetallePage'));
+const RetoGestionPage = lazy(() => import('@/modules/challenge/pages/RetoGestionPage'));
 const MisRetosChallengePage = lazy(() => import('@/modules/challenge/pages/MisRetosPage'));
 const TopChallengePage = lazy(() => import('@/modules/challenge/pages/TopChallengePage'));
 
@@ -246,6 +247,8 @@ const routes: RouteObject[] = [
                 children: [
                   { index: true, element: withSuspense(<RetosPage />) },
                   { path: 'retos/:id', element: withSuspense(<RetoDetallePage />) },
+                  // Solo People: la calificación de toda la empresa, con filtros.
+                  { path: 'retos/:id/detalles', element: withSuspense(<RetoGestionPage />) },
                   { path: 'mis-retos', element: withSuspense(<MisRetosChallengePage />) },
                   { path: 'top', element: withSuspense(<TopChallengePage />) },
                 ],

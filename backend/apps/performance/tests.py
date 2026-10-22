@@ -192,8 +192,8 @@ def test_el_jefe_define_los_objetivos_de_su_equipo(equipo):
     creado = Objetivo.objects.get()
     assert creado.registrado_por == jefe
     assert creado.estado == EstadoObjetivo.BORRADOR
-    # El responsable del resultado, si no se dice otra cosa, es el colaborador.
-    assert creado.responsable_resultado == julian
+    # El responsable del resultado es siempre el jefe directo del colaborador.
+    assert creado.responsable_resultado == jefe
     # El mes se abre solo con el primer objetivo.
     assert Periodo.objects.get(periodo=OCTUBRE).estado == EstadoPeriodo.DEFINICION
 
@@ -783,7 +783,7 @@ def test_el_jefe_valida_el_resultado_y_quien_lo_cargo_no(equipo):
 
 
 def test_el_colaborador_carga_su_resultado_y_el_jefe_tambien_puede(equipo, app_performance):
-    """Lo normal: el colaborador sube su evidencia y el jefe la aprueba; el jefe puede cargarla por él."""
+    """El colaborador sube su evidencia y el jefe la aprueba; el jefe también puede cargarla."""
     jefe, julian, daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
     _empezar_el_mes(objetivo.periodo)
@@ -824,7 +824,8 @@ def test_el_jefe_deja_feedback_sin_pisar_la_observacion_del_colaborador(equipo):
     ruta = f'{RUTA}/objetivos/{objetivo.pk}/feedback'
 
     # Ni el colaborador ni un compañero comentan su propio resultado.
-    assert cliente_de(julian).post(ruta, {'feedback': 'Voy bien.'}, format='json').status_code == 403
+    propio = cliente_de(julian).post(ruta, {'feedback': 'Voy bien.'}, format='json')
+    assert propio.status_code == 403
     assert cliente_de(daniel).post(ruta, {'feedback': 'Voy bien.'}, format='json').status_code in (
         403,
         404,
@@ -849,6 +850,47 @@ def test_el_jefe_deja_feedback_sin_pisar_la_observacion_del_colaborador(equipo):
     # El colaborador ve el feedback en su propio resultado.
     visto = cliente_de(julian).get(f'{RUTA}/mis-objetivos').json()
     assert visto and visto[0]['resultado']['feedback'] == 'Sube el acta.'
+
+
+def test_el_historial_guarda_cada_paso_con_su_motivo(equipo):
+    """Cargar, devolver con motivo, corregir, comentar y validar: todo queda registrado."""
+    jefe, julian, _daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100')
+    _empezar_el_mes(objetivo.periodo)
+    resultado = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
+    validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
+
+    cliente_de(julian).put(resultado, {'resultadoEjecutado': '0'}, format='json')
+    cliente_de(jefe).post(
+        validar, {'estado': 'rechazado', 'observacion': 'Falta el acta.'}, format='json'
+    )
+    acta = {'nombre': 'Acta', 'linkSoporte': 'https://supli.sharepoint.com/acta'}
+    cliente_de(julian).put(
+        resultado, {'resultadoEjecutado': '1', 'evidencias': [acta]}, format='json'
+    )
+    cliente_de(jefe).post(
+        f'{RUTA}/objetivos/{objetivo.pk}/feedback', {'feedback': 'Ahora sí.'}, format='json'
+    )
+    cliente_de(jefe).post(validar, {'estado': 'validado'}, format='json')
+
+    # El colaborador lo ve en su propio resultado, en orden.
+    historial = cliente_de(julian).get(f'{RUTA}/mis-objetivos').json()[0]['resultado']['historial']
+    assert [paso['accion'] for paso in historial] == [
+        'cargado',
+        'rechazado',
+        'corregido',
+        'feedback',
+        'validado',
+    ]
+    rechazo = historial[1]
+    assert rechazo['comentario'] == 'Falta el acta.'
+    assert rechazo['autorNombre'] == jefe.full_name
+    # Cada paso guarda el valor de ese momento, aunque después se corrija.
+    assert float(historial[0]['resultadoEjecutado']) == 0
+    assert float(historial[2]['resultadoEjecutado']) == 1
+    # Y las evidencias de ese momento: así el jefe ve «antes → ahora».
+    assert historial[0]['evidencias'] == []
+    assert historial[2]['evidencias'] == [acta]
 
 
 def test_corregir_el_resultado_devuelve_la_validacion_a_pendiente(equipo):
@@ -1024,7 +1066,11 @@ def test_la_plantilla_de_objetivos_trae_encabezados_e_instrucciones(equipo):
     assert respuesta['Content-Disposition'].endswith('.xlsx"')
     libro = openpyxl.load_workbook(BytesIO(respuesta.content))
     assert libro.sheetnames == ['Datos', 'Instrucciones']
-    assert [celda.value for celda in libro['Datos'][1]] == list(ENCABEZADOS_EXCEL)
+    # La plantilla ya no trae «responsable_correo» (el responsable es siempre el jefe);
+    # los archivos de prueba la conservan para comprobar que uno viejo se sigue leyendo.
+    assert [celda.value for celda in libro['Datos'][1]] == [
+        columna for columna in ENCABEZADOS_EXCEL if columna != 'responsable_correo'
+    ]
     texto = ' '.join(
         str(celda.value)
         for fila in libro['Instrucciones'].iter_rows()
@@ -1127,22 +1173,25 @@ def test_el_excel_avisa_si_el_tipo_de_medicion_no_existe(equipo):
     assert 'tipo_medicion' in str(respuesta.data)
 
 
-def test_el_responsable_del_resultado_llega_por_correo(equipo):
-    """Para asesores y promotores, el resultado lo carga su Trade Leader."""
-    jefe, julian, _daniel = equipo
+def test_el_responsable_del_resultado_es_siempre_el_jefe_directo(equipo):
+    """Por formulario o por Excel: no se escoge, sale de la jerarquía."""
+    jefe, julian, daniel = equipo
 
-    inexistente = _importar(
-        cliente_de(jefe), julian, [_fila('Uno', responsable_correo='nadie@supli.tech')]
-    )
-    assert inexistente.status_code == 400
-    assert 'nadie@supli.tech' in str(inexistente.data)
-
+    # Un archivo viejo que todavía trae la columna no la impone.
     respuesta = _importar(
-        cliente_de(jefe), julian, [_fila('Uno', peso='100', responsable_correo=jefe.email)]
+        cliente_de(jefe), julian, [_fila('Uno', peso='100', responsable_correo=daniel.email)]
     )
-
     assert respuesta.status_code == 200, respuesta.data
     assert Objetivo.objects.get().responsable_resultado == jefe
+
+    # Y por la API tampoco se puede poner a otra persona.
+    objetivo = Objetivo.objects.get()
+    editado = cliente_de(jefe).patch(
+        f'{RUTA}/objetivos/{objetivo.pk}', {'responsableResultado': daniel.pk}, format='json'
+    )
+    assert editado.status_code == 200, editado.data
+    objetivo.refresh_from_db()
+    assert objetivo.responsable_resultado == jefe
 
 
 def test_nadie_carga_por_excel_los_objetivos_de_otro_equipo(app_performance, equipo):

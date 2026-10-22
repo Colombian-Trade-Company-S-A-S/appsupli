@@ -20,6 +20,7 @@ from .models import (
     PONDERACION_COMPLETA,
     EstadoObjetivo,
     Evidencia,
+    HistorialResultado,
     Objetivo,
     Periodo,
     Resultado,
@@ -51,6 +52,29 @@ class PersonaSerializer(serializers.ModelSerializer):
             'regional',
             'punto_venta',
         )
+
+
+class HistorialSerializer(serializers.ModelSerializer):
+    """Un paso del resultado: qué pasó, quién, cuándo y con qué comentario."""
+
+    accion_label = serializers.CharField(source='get_accion_display', read_only=True)
+    autor_nombre = serializers.CharField(source='autor.full_name', default='', read_only=True)
+
+    class Meta:
+        model = HistorialResultado
+        fields = (
+            'id',
+            'accion',
+            'accion_label',
+            'autor',
+            'autor_nombre',
+            'comentario',
+            'resultado_ejecutado',
+            'porcentaje_cumplimiento',
+            'evidencias',
+            'created_at',
+        )
+        read_only_fields = fields
 
 
 class EvidenciaSerializer(serializers.ModelSerializer):
@@ -90,6 +114,7 @@ class ResultadoSerializer(serializers.ModelSerializer):
     feedback_por_nombre = serializers.CharField(
         source='feedback_por.full_name', default='', read_only=True
     )
+    historial = HistorialSerializer(many=True, read_only=True)
     semaforo = serializers.SerializerMethodField()
 
     class Meta:
@@ -114,6 +139,7 @@ class ResultadoSerializer(serializers.ModelSerializer):
             'feedback_por_nombre',
             'feedback_fecha',
             'evidencias',
+            'historial',
         )
         read_only_fields = (
             'id',
@@ -219,11 +245,13 @@ class ObjetivoSerializer(serializers.ModelSerializer):
         después solo si People habilitó la excepción.
         """
         registros = self.context.get('periodos')
-        registro = (
-            registros.get(obj.periodo)
-            if registros is not None
-            else Periodo.objects.filter(periodo=obj.periodo).first()
-        )
+        if registros is None:
+            # Una sola consulta para toda la lista: el contexto es el mismo para
+            # todas las filas, así que queda guardado para las siguientes. La
+            # tabla tiene una fila por mes, así que traerla entera es barato.
+            registros = {registro.periodo: registro for registro in Periodo.objects.all()}
+            self.context['periodos'] = registros
+        registro = registros.get(obj.periodo)
         puede, _motivo = puede_editarse(obj.periodo, registro, timezone.localdate())
         return puede
 

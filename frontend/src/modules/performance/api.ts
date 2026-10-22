@@ -88,6 +88,25 @@ export interface Resultado {
   feedbackPorNombre: string;
   feedbackFecha: string | null;
   evidencias: Evidencia[];
+  /** Cada paso del resultado, del más viejo al más nuevo. */
+  historial: PasoHistorial[];
+}
+
+export type AccionHistorial = 'cargado' | 'corregido' | 'validado' | 'rechazado' | 'feedback';
+
+/** Un paso del resultado: qué pasó, quién, cuándo y con qué comentario o motivo. */
+export interface PasoHistorial {
+  id: number;
+  accion: AccionHistorial;
+  accionLabel: string;
+  autor: number | null;
+  autorNombre: string;
+  comentario: string;
+  resultadoEjecutado: string | null;
+  porcentajeCumplimiento: string | null;
+  /** Las evidencias de ese momento; `null` en registros viejos, donde no se sabe. */
+  evidencias: Array<{ nombre: string; linkSoporte: string }> | null;
+  createdAt: string;
 }
 
 export interface ResultadoPayload {
@@ -315,8 +334,6 @@ export const performanceApi = {
     api.put<Resultado>(`${RUTA}/objetivos/${objetivo}/resultado`, payload),
   validarResultado: (objetivo: number, estado: EstadoValidacion, observacion = '') =>
     api.post<Resultado>(`${RUTA}/objetivos/${objetivo}/validar`, { estado, observacion }),
-  darFeedback: (objetivo: number, feedback: string) =>
-    api.post<Resultado>(`${RUTA}/objetivos/${objetivo}/feedback`, { feedback }),
   acumulado: (corte: { tipo: TipoCorte; anio?: number; indice?: number }, top = false) =>
     api.get<Acumulado>(`${RUTA}/acumulado`, {
       ...corte,
@@ -349,6 +366,22 @@ export const performanceApi = {
 
 /** `2026-10-01` → `2026-10`: lo que esperan las rutas de periodo. */
 export const mesDe = (periodo: string) => periodo.slice(0, 7);
+
+/**
+ * El mes en curso como «AAAA-MM», con la fecha local: `toISOString` está en
+ * UTC y en Colombia, de noche el último día del mes, ya daría el siguiente.
+ */
+export const mesEnCurso = () => {
+  const hoy = new Date();
+  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+};
+
+/**
+ * El periodo que se abre por defecto: el mes en curso. La lista viene del más
+ * nuevo al más viejo, así que sin esto se abriría un mes que todavía no llega.
+ */
+export const periodoPorDefecto = (periodos: PeriodoDisponible[]) =>
+  (periodos.find((p) => mesDe(p.periodo) === mesEnCurso()) ?? periodos[0])?.periodo ?? '';
 
 const MESES = [
   'Enero',

@@ -31,7 +31,7 @@ ROLES = [
     (
         'challenge-evaluador',
         'Supli Challenge · Evaluador',
-        'Valora las participaciones con la rúbrica del reto.',
+        'Ya no da acceso a calificar: en Supli Challenge califica solo People.',
         [VALORAR],
     ),
 ]

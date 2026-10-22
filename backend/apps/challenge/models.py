@@ -113,8 +113,9 @@ SIGNIFICADO_NIVEL = {
     10: 'Excepcional',
 }
 
-#: Dos miembros de Supli y un jurado sorteado para el reto (B9).
-EVALUADORES_POR_PARTICIPACION = 3
+#: Con cuántas valoraciones queda calificada una entrega. Califica solo People,
+#: así que basta una; si califican varias personas de People, se promedian.
+EVALUADORES_POR_PARTICIPACION = 1
 
 #: Lo que suma quien gana un desempate (B4).
 BONUS_DESEMPATE = 20

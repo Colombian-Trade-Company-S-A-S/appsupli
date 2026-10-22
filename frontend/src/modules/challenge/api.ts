@@ -53,7 +53,8 @@ export interface Reto {
   cerradoEn: string | null;
   finalizadoEn: string | null;
   participacionesCount: number;
-  valoradasCount: number;
+  /** Avance del reto: hasta finalizarlo solo llega a quien valora o administra. */
+  valoradasCount: number | null;
   createdAt: string;
 }
 
@@ -95,6 +96,8 @@ export interface Participacion {
   participante: number;
   participanteNombre: string;
   participanteCargo: string;
+  /** El área del participante, para filtrar y resumir en los detalles del reto. */
+  participanteArea: string;
   formato: FormatoEvidencia;
   entregaTexto: string;
   entregaLink: string;
@@ -131,6 +134,8 @@ export interface OpcionesChallenge {
 }
 
 export interface FilaRanking {
+  /** El puesto en el reto (1 es el ganador). */
+  posicion: number;
   participacion: number;
   participante: number;
   participanteNombre: string;
@@ -144,7 +149,13 @@ export interface FilaRanking {
 
 export interface ResultadoReto {
   reto: Reto;
-  ganador: Participacion | null;
+  /** El resultado se publica al finalizar el reto; antes, ganador y ranking vienen vacíos. */
+  publicado: boolean;
+  /** Resumido como una fila del ranking: nunca trae la evidencia ni cómo lo calificaron. */
+  ganador: FilaRanking | null;
+  totalParticipantes: number;
+  /** El puesto de quien mira, aunque no esté en el top 10; `null` si no participó. */
+  miResultado: FilaRanking | null;
   huboDesempate: boolean;
   ranking: FilaRanking[];
 }

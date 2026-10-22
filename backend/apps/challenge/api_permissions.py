@@ -1,10 +1,12 @@
 """
 Quién puede hacer qué en Supli Challenge.
 
-    People        → crea retos, los publica, los cierra y los finaliza
-    Evaluador     → valora las entregas (dos miembros de Supli por reto)
-    Jurado        → el tercero, sorteado para cada reto: valora sin más permisos
-    Colaborador   → participa en los retos de su público y ve lo suyo
+    People        → crea retos, los publica, los cierra, los califica y los finaliza
+    Colaborador   → participa en los retos de su público y ve lo suyo: su entrega,
+                    y cuando se publica el resultado, el ganador y el top 10
+
+Calificar es solo de People (y del administrador). Ningún líder ni otra área
+califica: el rol «Evaluador» y el jurado sorteado ya no dan ese acceso.
 
 Como en el resto de la plataforma, cada capacidad es un `Permission` que se
 reparte con roles desde Administración.
@@ -41,17 +43,29 @@ def puede_gestionar_retos(user) -> bool:
 
 
 def es_evaluador(user) -> bool:
-    """Los miembros de Supli que valoran entregas."""
-    return has_perm(user, VALORAR) or puede_gestionar_retos(user)
+    """
+    Quién califica las entregas: solo People (o el administrador).
+
+    El permiso `VALORAR` (rol «Evaluador») ya no basta por sí solo: calificar es
+    del área de People, no de los líderes ni de nadie más.
+    """
+    return puede_gestionar_retos(user)
 
 
 def es_jurado_de(user, reto) -> bool:
-    """El tercer evaluador, sorteado para ese reto."""
-    return reto.jurados.filter(usuario=user).exists()
+    """
+    El tercer evaluador, sorteado para ese reto.
+
+    Se recorre `reto.jurados.all()` en vez de filtrar: así aprovecha el
+    `prefetch_related('jurados')` de los listados y no hace una consulta por
+    reto. Sin prefetch cuesta lo mismo que antes, una consulta.
+    """
+    return any(jurado.usuario_id == user.id for jurado in reto.jurados.all())
 
 
 def puede_valorar(user, reto) -> bool:
-    return es_evaluador(user) or es_jurado_de(user, reto)
+    """Calificar un reto: solo People. Haber salido de jurado ya no da el acceso."""
+    return es_evaluador(user)
 
 
 def es_del_publico(user, reto) -> bool:
@@ -66,9 +80,13 @@ def es_del_publico(user, reto) -> bool:
         return False
     if reto.alcance == Alcance.TODOS:
         return True
+    # Como en `es_jurado_de`: recorrer lo ya cargado en vez de filtrar, para que
+    # la cartelera no pregunte por cada reto.
     if reto.alcance == Alcance.AREAS:
-        return user.area_id is not None and reto.areas.filter(pk=user.area_id).exists()
-    return reto.personas.filter(pk=user.pk).exists()
+        return user.area_id is not None and any(
+            area.pk == user.area_id for area in reto.areas.all()
+        )
+    return any(persona.pk == user.pk for persona in reto.personas.all())
 
 
 def puede_participar(user, reto) -> bool:

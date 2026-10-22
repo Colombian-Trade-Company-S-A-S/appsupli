@@ -29,8 +29,8 @@ from .api_permissions import (
     capacidades,
     es_lider,
     puede_cargar_resultado,
-    puede_definir,
     puede_dar_feedback,
+    puede_definir,
     puede_definir_a_cualquiera,
     puede_validar_resultado,
     puede_ver,
@@ -46,12 +46,15 @@ from .models import (
     CRITERIOS_CUALITATIVOS,
     MAXIMO_OBJETIVOS,
     PONDERACION_COMPLETA,
+    AccionHistorial,
     EstadoObjetivo,
     EstadoPeriodo,
     EstadoValidacion,
     Evidencia,
+    HistorialResultado,
     Objetivo,
     Periodo,
+    Resultado,
     Semaforo,
     TipoEvidencia,
     TipoMedicion,
@@ -133,6 +136,48 @@ def _periodos_disponibles() -> list[dict]:
     return disponibles
 
 
+def objetivos_para_serializar():
+    """
+    Los objetivos con todo lo que `ObjetivoSerializer` lee, en pocas consultas.
+
+    Las personas del resultado (quién cargó, validó y comentó) van con
+    `select_related`; evidencias e historial, con `prefetch_related`. Sin esto
+    cada fila pide tres usuarios más por su cuenta (N+1).
+    """
+    return Objetivo.objects.select_related(
+        'colaborador',
+        'registrado_por',
+        'responsable_resultado',
+        'resultado__cargado_por',
+        'resultado__validado_por',
+        'resultado__feedback_por',
+    ).prefetch_related('resultado__evidencias', 'resultado__historial__autor')
+
+
+def _resultado_para_serializar(pk) -> Resultado:
+    """
+    Un resultado recién guardado, releído con todo lo que serializa.
+
+    La respuesta lleva el historial completo: sin el `prefetch` cada paso pedía
+    su autor por separado, y la consulta crecía con la historia del resultado.
+    """
+    return (
+        Resultado.objects.select_related('cargado_por', 'validado_por', 'feedback_por')
+        .prefetch_related('evidencias', 'historial__autor')
+        .get(pk=pk)
+    )
+
+
+def responsable_de(colaborador):
+    """
+    El responsable del resultado es siempre el jefe directo del colaborador.
+
+    Es quien responde por ese objetivo y lo aprueba; el colaborador igual carga
+    su propio resultado. Sin jefe registrado, queda el propio colaborador.
+    """
+    return colaborador.manager or colaborador
+
+
 def _equipo_de(user):
     """A quién le puede definir objetivos esta persona."""
     if puede_definir_a_cualquiera(user):
@@ -157,9 +202,7 @@ class ObjetivoViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        consulta = Objetivo.objects.select_related(
-            'colaborador', 'registrado_por', 'responsable_resultado', 'resultado'
-        ).prefetch_related('resultado__evidencias')
+        consulta = objetivos_para_serializar()
         if not puede_ver_todo(user):
             consulta = consulta.filter(
                 colaborador__in=[user.pk, *user.team.values_list('pk', flat=True)]
@@ -191,17 +234,15 @@ class ObjetivoViewSet(viewsets.ModelViewSet):
         serializer.save(
             registrado_por=self.request.user,
             estado=EstadoObjetivo.BORRADOR,
-            responsable_resultado=serializer.validated_data.get('responsable_resultado')
-            or colaborador,
+            responsable_resultado=responsable_de(colaborador),
         )
 
     def perform_update(self, serializer):
         self._exigir_permiso(serializer.instance.colaborador)
         self._exigir_mes_abierto(serializer.instance.periodo)
-        self._exigir_permiso(
-            serializer.validated_data.get('colaborador', serializer.instance.colaborador)
-        )
-        serializer.save()
+        colaborador = serializer.validated_data.get('colaborador', serializer.instance.colaborador)
+        self._exigir_permiso(colaborador)
+        serializer.save(responsable_resultado=responsable_de(colaborador))
 
     def perform_destroy(self, instancia):
         self._exigir_permiso(instancia.colaborador)
@@ -226,9 +267,7 @@ def mis_objetivos(request):
     evaluación propia en valoración.
     """
     periodo = request.query_params.get('periodo')
-    consulta = Objetivo.objects.filter(colaborador=request.user).select_related(
-        'colaborador', 'registrado_por', 'responsable_resultado', 'resultado'
-    ).prefetch_related('resultado__evidencias')
+    consulta = objetivos_para_serializar().filter(colaborador=request.user)
     if periodo:
         consulta = consulta.filter(periodo=_a_periodo(periodo))
     return Response(ObjetivoSerializer(consulta, many=True).data)
@@ -410,7 +449,9 @@ def resumen(request):
     registro = Periodo.objects.filter(periodo=mes).first()
     estado = registro.estado if registro else EstadoPeriodo.DEFINICION
     editable, motivo = puede_editarse(mes, registro, timezone.localdate())
-    equipo = list(_equipo_de(request.user).only('id', 'first_name', 'last_name', 'position'))
+    equipo = list(
+        _equipo_de(request.user).only('id', 'first_name', 'last_name', 'position', 'manager')
+    )
     ponderacion = _ponderacion(equipo, mes) if equipo else []
     mios = Objetivo.objects.filter(colaborador=request.user, periodo=mes)
     return Response(
@@ -479,6 +520,7 @@ def cargar_resultado(request, pk):
         )
 
     resultado = getattr(objetivo, 'resultado', None)
+    es_nuevo = resultado is None
     serializer = ResultadoSerializer(
         resultado,
         data=request.data,
@@ -514,9 +556,16 @@ def cargar_resultado(request, pk):
             )
             for fila in evidencias
         )
+    # Después de las evidencias: el registro guarda las de este momento, que es
+    # lo que el jefe compara («antes → ahora») cuando revisa una corrección.
+    _registrar(
+        resultado,
+        AccionHistorial.CARGADO if es_nuevo else AccionHistorial.CORREGIDO,
+        request.user,
+        resultado.observacion,
+    )
 
-    resultado.refresh_from_db()
-    return Response(ResultadoSerializer(resultado).data)
+    return Response(ResultadoSerializer(_resultado_para_serializar(resultado.pk)).data)
 
 
 @api_view(['POST'])
@@ -559,7 +608,31 @@ def validar_resultado(request, pk):
         _poner_feedback(resultado, request.user, observacion)
         campos += ['feedback', 'feedback_por', 'feedback_fecha']
     resultado.save(update_fields=campos)
-    return Response(ResultadoSerializer(resultado).data)
+    _registrar(
+        resultado,
+        AccionHistorial.VALIDADO
+        if estado == EstadoValidacion.VALIDADO
+        else AccionHistorial.RECHAZADO,
+        request.user,
+        observacion,
+    )
+    return Response(ResultadoSerializer(_resultado_para_serializar(resultado.pk)).data)
+
+
+def _registrar(resultado, accion: str, autor, comentario: str = '') -> None:
+    """Deja el paso en el historial, con el valor y el % de ese momento."""
+    HistorialResultado.objects.create(
+        resultado=resultado,
+        accion=accion,
+        autor=autor,
+        comentario=comentario or '',
+        resultado_ejecutado=resultado.resultado_ejecutado,
+        porcentaje_cumplimiento=resultado.porcentaje_cumplimiento,
+        evidencias=[
+            {'nombre': nombre, 'link_soporte': link}
+            for nombre, link in resultado.evidencias.values_list('nombre', 'link_soporte')
+        ],
+    )
 
 
 def _poner_feedback(resultado, autor, texto: str) -> None:
@@ -589,10 +662,11 @@ def dar_feedback(request, pk):
         raise ValidationError({'feedback': 'Máximo 2000 caracteres.'})
     if texto:
         _poner_feedback(resultado, request.user, texto)
+        _registrar(resultado, AccionHistorial.FEEDBACK, request.user, texto)
     else:
         resultado.feedback, resultado.feedback_por, resultado.feedback_fecha = '', None, None
     resultado.save(update_fields=['feedback', 'feedback_por', 'feedback_fecha', 'updated_at'])
-    return Response(ResultadoSerializer(resultado).data)
+    return Response(ResultadoSerializer(_resultado_para_serializar(resultado.pk)).data)
 
 
 # ── Excepción de edición (A9) ──────────────────────────────────────────────
@@ -752,7 +826,7 @@ def acumulado(request):
         personas = User.objects.filter(is_active=True)
     else:
         alcance, personas = _alcance_del_tablero(request.user)
-    equipo = list(personas.only('id', 'first_name', 'last_name', 'position'))
+    equipo = list(personas.only('id', 'first_name', 'last_name', 'position', 'manager'))
 
     filas = _cumplimiento_por_persona(equipo, meses)
     con_dato = [fila for fila in filas if fila['cumplimiento'] is not None]
@@ -868,17 +942,6 @@ def importar_objetivos(request):
     if not filas and not errores:
         raise ValidationError('El archivo no tiene filas con datos.')
 
-    correos = {
-        str(fila['responsable_correo']).strip().lower()
-        for fila in filas
-        if fila.get('responsable_correo')
-    }
-    responsables = {
-        usuario.email.lower(): usuario
-        for usuario in User.objects.filter(email__in=correos)
-        if usuario.email
-    }
-
     # En «reemplazar» se borra primero: si no, cada fila se validaría contra la
     # ponderación de los objetivos que el archivo viene justamente a sustituir.
     # Si algo falla más abajo, la transacción devuelve todo a como estaba.
@@ -891,10 +954,7 @@ def importar_objetivos(request):
     serializers = []
     peso_del_archivo = Decimal('0')
     for fila in filas:
-        payload, problema = _fila_a_objetivo(fila, colaborador, periodo, responsables)
-        if problema:
-            errores.append({'fila': fila['_fila'], 'errores': [problema]})
-            continue
+        payload = _fila_a_objetivo(fila, colaborador, periodo)
         serializer = ObjetivoSerializer(data=payload, context={'request': request})
         if not serializer.is_valid():
             errores.append(
@@ -960,8 +1020,7 @@ def importar_objetivos(request):
         serializer.save(
             registrado_por=request.user,
             estado=EstadoObjetivo.BORRADOR,
-            responsable_resultado=serializer.validated_data.get('responsable_resultado')
-            or colaborador,
+            responsable_resultado=responsable_de(colaborador),
         )
         for serializer in serializers
     ]
@@ -992,19 +1051,14 @@ def importar_objetivos(request):
     )
 
 
-def _fila_a_objetivo(fila: dict, colaborador, periodo, responsables) -> tuple[dict, str]:
+def _fila_a_objetivo(fila: dict, colaborador, periodo) -> dict:
     """
     Traduce una fila de la plantilla al payload del serializer.
 
-    Devuelve `(payload, problema)`: el problema es el texto que ve la persona
-    cuando la fila trae algo que el serializer no sabría explicar, como un
-    correo de responsable que no existe.
+    El responsable no sale del archivo: es siempre el jefe directo del
+    colaborador. Si un archivo viejo trae la columna «responsable_correo», se
+    ignora.
     """
-    correo = str(fila.get('responsable_correo') or '').strip().lower()
-    responsable = responsables.get(correo) if correo else None
-    if correo and responsable is None:
-        return {}, f'responsable_correo: no hay ninguna cuenta con el correo {correo}.'
-
     meta = fila.get('meta')
     umbral = fila.get('umbral_cumplimiento')
     return {
@@ -1020,5 +1074,5 @@ def _fila_a_objetivo(fila: dict, colaborador, periodo, responsables) -> tuple[di
         'permite_sobrecumplimiento': bool(fila.get('permite_sobrecumplimiento')),
         'formula': fila.get('formula') or '',
         'fuente_datos': fila.get('fuente_datos') or '',
-        'responsable_resultado': responsable.pk if responsable else colaborador.pk,
-    }, ''
+        'responsable_resultado': responsable_de(colaborador).pk,
+    }

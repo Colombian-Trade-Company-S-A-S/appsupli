@@ -131,15 +131,9 @@ export const useValidarResultado = () =>
       observacion?: string;
     }) => performanceApi.validarResultado(objetivo, estado, observacion),
     (resultado) =>
-      resultado.estadoValidacion === 'validado' ? 'Resultado validado' : 'Resultado devuelto',
-  );
-
-/** El comentario del jefe sobre lo que cargó el colaborador. */
-export const useDarFeedback = () =>
-  usePerformanceMutation(
-    ({ objetivo, feedback }: { objetivo: number; feedback: string }) =>
-      performanceApi.darFeedback(objetivo, feedback),
-    (resultado) => (resultado.feedback ? 'Feedback enviado' : 'Feedback borrado'),
+      resultado.estadoValidacion === 'validado'
+        ? 'Resultado aprobado'
+        : 'Resultado devuelto al colaborador',
   );
 
 /** La excepción del A9: solo People, y siempre con motivo. */

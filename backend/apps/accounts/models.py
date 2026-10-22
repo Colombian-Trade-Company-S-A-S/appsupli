@@ -80,6 +80,11 @@ class Departamento(TimeStampedModel):
         return cadena[::-1]
 
 
+#: El código de la app de Administración: es la única que no se reparte, porque
+#: solo entra la cuenta de tipo Administrador (`User.is_admin`).
+APP_ADMINISTRACION = 'admin'
+
+
 class Application(TimeStampedModel):
     """Cada área/aplicación de la empresa dentro de la plataforma."""
 
@@ -326,11 +331,18 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         active = Application.objects.filter(is_active=True)
         if self.is_admin:
             return active
-        propias = active.filter(
-            models.Q(users=self)
-            | models.Q(permissions__roles__users=self)
-            | models.Q(permissions__users=self)
-        ).distinct()
+        propias = (
+            active.filter(
+                models.Q(users=self)
+                | models.Q(permissions__roles__users=self)
+                | models.Q(permissions__users=self)
+            )
+            # A Administración solo entra la cuenta de tipo Administrador (así lo
+            # exigen su API y su ruta): aunque alguien la tenga asignada o tenga
+            # alguno de sus permisos, no se le ofrece en el menú.
+            .exclude(code=APP_ADMINISTRACION)
+            .distinct()
+        )
         # Un sub-módulo arrastra a su contenedor: sin él, el menú no tendría
         # de dónde colgarlo aunque la persona sí tenga acceso al sub-módulo.
         ids = set(propias.values_list('id', flat=True))

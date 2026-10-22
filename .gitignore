@@ -1,0 +1,4 @@
+# Archivos con credenciales (contraseñas de acceso para entregar a la gente):
+# nunca se suben al repositorio.
+credenciales/
+*credenciales*.xlsx

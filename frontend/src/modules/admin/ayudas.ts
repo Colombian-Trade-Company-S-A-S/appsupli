@@ -18,7 +18,7 @@ export const AYUDA_APPS: Record<string, Ayuda> = {
   admin: {
     texto:
       'Es este panel: aquí se crean usuarios, áreas y roles, y se decide a qué entra cada persona.',
-    ojo: 'Solo funciona si la cuenta es de tipo Administrador. Si no lo es, verá la opción en el menú pero no podrá entrar.',
+    ojo: 'Solo funciona si la cuenta es de tipo Administrador. Si no lo es, no le aparece en el menú aunque la marques: para darle acceso, cambia su tipo de usuario a Administrador.',
   },
   'bi-trade': {
     texto:
@@ -75,12 +75,12 @@ export const AYUDA_ROLES: Record<string, Ayuda> = {
   },
   'challenge-people': {
     texto:
-      'Para People. Crea los retos, los publica, los cierra y responde cuando alguien pide revisar su calificación.',
+      'Para People. Crea los retos, los publica, los califica, los cierra y responde cuando alguien pide revisar su calificación.',
     ojo: 'Con este rol entra a Supli Challenge aunque no marques la app.',
   },
   'challenge-evaluador': {
-    texto: 'Para quien califica las participaciones de los retos, usando la rúbrica de cada reto.',
-    ojo: 'Con este rol entra a Supli Challenge aunque no marques la app.',
+    texto: 'Ya no da acceso a calificar: en Supli Challenge califica solo People.',
+    ojo: 'Para que alguien califique, dale el rol «Supli Challenge · People». Este rol se puede quitar.',
   },
 };
 
@@ -146,7 +146,7 @@ export const AYUDA_PERMISOS: Record<string, Ayuda> = {
     texto: 'Crear retos, publicarlos, cerrarlos y darlos por terminados.',
   },
   'challenge:valoraciones:crear': {
-    texto: 'Calificar las participaciones de los retos con la rúbrica.',
+    texto: 'Ya no da acceso a calificar: califica solo quien tiene «Administrar retos» (People).',
   },
 };
 

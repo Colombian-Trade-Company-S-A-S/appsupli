@@ -305,3 +305,54 @@ class Evidencia(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.nombre or self.link_soporte
+
+
+class AccionHistorial(models.TextChoices):
+    CARGADO = 'cargado', 'Resultado cargado'
+    CORREGIDO = 'corregido', 'Resultado corregido'
+    VALIDADO = 'validado', 'Validado'
+    RECHAZADO = 'rechazado', 'Rechazado'
+    FEEDBACK = 'feedback', 'Feedback'
+
+
+class HistorialResultado(TimeStampedModel):
+    """
+    Cada paso del resultado: quién lo cargó o corrigió, quién lo validó o lo
+    devolvió y por qué, y los comentarios del jefe.
+
+    El `Resultado` guarda solo el último estado; esto es lo que permite ver,
+    por ejemplo, el motivo de un rechazo después de que el colaborador ya
+    corrigió. Se guarda el valor y el % de ese momento para que el registro no
+    cambie cuando el resultado cambie.
+    """
+
+    resultado = models.ForeignKey(
+        Resultado, on_delete=models.CASCADE, related_name='historial', verbose_name='resultado'
+    )
+    accion = models.CharField('acción', max_length=20, choices=AccionHistorial.choices)
+    autor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='historial_resultados',
+        verbose_name='autor',
+    )
+    comentario = models.TextField('comentario', blank=True)
+    resultado_ejecutado = models.DecimalField(
+        'resultado ejecutado', max_digits=14, decimal_places=2, null=True, blank=True
+    )
+    porcentaje_cumplimiento = models.DecimalField(
+        '% de cumplimiento', max_digits=8, decimal_places=2, null=True, blank=True
+    )
+    # Las evidencias de ese momento ([{nombre, link_soporte}]). `None` en los
+    # registros armados antes de que se guardaran: no se sabe cuáles eran.
+    evidencias = models.JSONField('evidencias', null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'registro del historial'
+        verbose_name_plural = 'historial de resultados'
+        ordering = ('created_at', 'id')
+
+    def __str__(self) -> str:
+        return f'{self.get_accion_display()} · resultado {self.resultado_id}'

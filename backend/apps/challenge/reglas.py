@@ -5,15 +5,13 @@ Están acá y no repartidas entre vistas y serializers porque son las que
 definen el juego: quién puede pedir una revisión, cómo se recalcula un puntaje
 cuando llega una valoración nueva y a quién le toca ser jurado.
 """
-import random
 
-from django.db.models import Q
+from django.utils import timezone
 
 from .models import (
     EVALUADORES_POR_PARTICIPACION,
     NIVEL_MAXIMO_PARA_REVISION,
     EstadoParticipacion,
-    JuradoReto,
     Participacion,
 )
 from .puntajes import puntaje_final, resolver_ganador
@@ -67,46 +65,34 @@ def recalcular(participacion) -> Participacion:
             'valoraciones__puntajes__criterio'
         )
     )
-    tocadas = resolver_ganador(hermanas)
-    for fila in tocadas:
-        fila.save(update_fields=['es_ganador', 'bonus', 'puntaje_desempate', 'updated_at'])
+    guardar_ganador(resolver_ganador(hermanas))
     # La instancia en memoria pudo quedar desactualizada por el paso anterior.
     participacion.refresh_from_db()
     return participacion
+
+
+def guardar_ganador(tocadas) -> None:
+    """
+    Guarda de una vez lo que cambió `resolver_ganador`.
+
+    En un empate se tocan todas las empatadas (su puntaje de desempate): una
+    por una serían tantas consultas como entregas.
+    """
+    if not tocadas:
+        return
+    ahora = timezone.now()
+    for fila in tocadas:
+        fila.updated_at = ahora
+    Participacion.objects.bulk_update(
+        tocadas, ['es_ganador', 'bonus', 'puntaje_desempate', 'updated_at']
+    )
 
 
 def evaluadores_esperados(participacion) -> int:
     """
     Cuántas valoraciones necesita una participación para quedar valorada.
 
-    Son tres —dos de Supli y el jurado del reto (B9)—, salvo que el jurado
-    sorteado sea justamente quien participa: nadie se valora a sí mismo, así
-    que en ese caso la entrega se cierra con las otras dos.
+    Califica solo People, así que basta una. Ya no hay jurado sorteado: era
+    alguien fuera de People calificando, y eso es justo lo que no se quiere.
     """
-    esperados = EVALUADORES_POR_PARTICIPACION
-    if participacion.reto.jurados.filter(usuario_id=participacion.participante_id).exists():
-        esperados -= 1
-    return esperados
-
-
-def sortear_jurado(reto, elegibles) -> JuradoReto | None:
-    """
-    Escoge al azar el jurado del reto (B9).
-
-    Se sortea una sola vez, al publicar: si cambiara en cada valoración no
-    sería «el jurado del reto», sería un evaluador distinto cada vez. Se
-    prefiere a quien ya valora en Supli —es quien conoce la rúbrica— y se
-    excluye a quien creó el reto.
-    """
-    from .api_permissions import es_evaluador
-
-    candidatos = list(
-        elegibles.filter(is_active=True)
-        .exclude(pk=reto.creado_por_id)
-        .filter(~Q(jurados_challenge__reto=reto))
-    )
-    evaluadores = [usuario for usuario in candidatos if es_evaluador(usuario)]
-    sorteables = evaluadores or candidatos
-    if not sorteables:
-        return None
-    return JuradoReto.objects.create(reto=reto, usuario=random.choice(sorteables))
+    return EVALUADORES_POR_PARTICIPACION

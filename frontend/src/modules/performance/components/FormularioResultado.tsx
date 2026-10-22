@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { InfoIcon, LinkIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { CircleXIcon, InfoIcon, LinkIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import {
   Button,
   Checkbox,
@@ -12,6 +12,7 @@ import {
 import { celebrar } from '@/shared/lib/celebrar';
 import { useCargarResultado } from '../hooks';
 import type { Objetivo } from '../api';
+import { estadoRevision, fechaHora, ultimoRechazo } from '../flujo';
 import { SemaforoBadge } from './Piezas';
 
 interface Soporte {
@@ -71,8 +72,17 @@ export function FormularioResultado({
   const esBinario = objetivo.tipoMedicion === 'binario';
   const cumplido = Number(valor) === 1;
 
+  // Si el jefe lo devolvió, el motivo va arriba —es lo que hay que corregir—
+  // y el formulario arranca limpio: lo devuelto queda en el historial, no
+  // precargado, para que no se confunda con lo que se va a enviar ahora.
+  const devolucion =
+    objetivo.resultado && estadoRevision(objetivo.resultado) === 'devuelto'
+      ? ultimoRechazo(objetivo.resultado)
+      : undefined;
+  const corrigiendo = !!devolucion;
+
   useEffect(() => {
-    const resultado = objetivo.resultado;
+    const resultado = corrigiendo ? null : objetivo.resultado;
     setValor(resultado?.resultadoEjecutado ?? '');
     setObservacion(resultado?.observacion ?? '');
     setSoportes(
@@ -83,7 +93,7 @@ export function FormularioResultado({
           }))
         : [{ nombre: '', linkSoporte: '' }],
     );
-  }, [objetivo]);
+  }, [objetivo, corrigiendo]);
 
   const cambiar = (indice: number, parche: Partial<Soporte>) =>
     setSoportes(soportes.map((fila, i) => (i === indice ? { ...fila, ...parche } : fila)));
@@ -115,6 +125,34 @@ export function FormularioResultado({
           KPI: {objetivo.kpi} · Peso {Number(objetivo.peso)}%
         </p>
       </div>
+
+      {devolucion ? (
+        <div className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-200">
+          <CircleXIcon className="mt-0.5 size-4 shrink-0" />
+          <div className="min-w-0">
+            <p className="font-medium">
+              {devolucion.autorNombre || 'Tu jefe'} te lo devolvió ·{' '}
+              {fechaHora(devolucion.createdAt)}
+            </p>
+            <p className="text-pretty whitespace-pre-line">
+              Motivo: {devolucion.comentario || '(sin motivo)'}
+            </p>
+            <p className="mt-1 text-xs">
+              Carga de nuevo el resultado y la evidencia corregidos y guarda: le vuelve a llegar
+              para revisar. Lo que habías enviado queda en el historial.
+            </p>
+          </div>
+        </div>
+      ) : (
+        objetivo.resultado?.feedback && (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <p className="text-xs font-medium text-muted-foreground">
+              {`Comentario${objetivo.resultado.feedbackPorNombre ? ` de ${objetivo.resultado.feedbackPorNombre}` : ''}`}
+            </p>
+            <p className="text-pretty whitespace-pre-line">{objetivo.resultado.feedback}</p>
+          </div>
+        )
+      )}
 
       {esBinario ? (
         <Field className="min-w-0">
@@ -151,7 +189,7 @@ export function FormularioResultado({
         <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
         <span>
           El % de cumplimiento no se digita: lo calcula el sistema.{' '}
-          {objetivo.resultado && (
+          {objetivo.resultado && !corrigiendo && (
             <>
               Hoy va en{' '}
               <SemaforoBadge semaforo={objetivo.semaforo} cumplimiento={objetivo.cumplimiento} />
@@ -213,15 +251,6 @@ export function FormularioResultado({
           Agregar otro enlace
         </Button>
       </fieldset>
-
-      {objetivo.resultado?.feedback && (
-        <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-          <p className="text-xs font-medium text-muted-foreground">
-            Feedback{objetivo.resultado.feedbackPorNombre && ` de ${objetivo.resultado.feedbackPorNombre}`}
-          </p>
-          <p className="text-pretty whitespace-pre-line">{objetivo.resultado.feedback}</p>
-        </div>
-      )}
 
       <Field className="min-w-0">
         <FieldLabel htmlFor="res-observacion">Observación (opcional)</FieldLabel>

@@ -73,29 +73,22 @@ def cliente_de(usuario) -> APIClient:
 
 @pytest.fixture
 def gente(app_challenge):
-    """People, tres evaluadores y dos colaboradores.
+    """People que crea los retos, tres personas más de People que califican y dos colaboradores.
 
-    Son tres evaluadores porque el jurado se sortea entre ellos: así siempre
-    quedan dos más para completar las tres valoraciones que pide la regla B9.
+    Califica solo People: por eso los tres que valoran tienen el permiso de People.
     """
     people = crear_usuario('people@supli.tech', app_challenge, ['challenge:retos:manage'])
-    uno = crear_usuario('eval1@supli.tech', app_challenge, ['challenge:valoraciones:crear'])
-    dos = crear_usuario('eval2@supli.tech', app_challenge, ['challenge:valoraciones:crear'])
-    crear_usuario('eval3@supli.tech', app_challenge, ['challenge:valoraciones:crear'])
+    uno = crear_usuario('eval1@supli.tech', app_challenge, ['challenge:retos:manage'])
+    dos = crear_usuario('eval2@supli.tech', app_challenge, ['challenge:retos:manage'])
+    crear_usuario('eval3@supli.tech', app_challenge, ['challenge:retos:manage'])
     ana = crear_usuario('ana@supli.tech', app_challenge, cargo='Promotor')
     mario = crear_usuario('mario@supli.tech', app_challenge, cargo='Asesor PDV')
     return people, uno, dos, ana, mario
 
 
 def los_tres_evaluadores(reto_id) -> list[User]:
-    """El jurado sorteado del reto más los otros dos evaluadores de Supli."""
-    jurado = JuradoReto.objects.get(reto_id=reto_id).usuario
-    otros = [
-        usuario
-        for usuario in User.objects.filter(email__startswith='eval').order_by('email')
-        if usuario != jurado
-    ]
-    return [jurado, *otros[:2]]
+    """Las tres personas de People que califican (el reto no cambia quiénes son)."""
+    return list(User.objects.filter(email__startswith='eval').order_by('email'))
 
 
 def datos_de_reto(**extra) -> dict:
@@ -119,6 +112,14 @@ def crear_reto(people, **extra) -> dict:
 
 def publicar(people, reto_id):
     return cliente_de(people).post(f'{RUTA}/retos/{reto_id}/publicar', {}, format='json')
+
+
+def cerrar_y_finalizar(people, reto_id):
+    """Cierra el reto y publica su resultado, como el botón «Finalizar y publicar»."""
+    cliente = cliente_de(people)
+    assert cliente.post(f'{RUTA}/retos/{reto_id}/cerrar', {}, format='json').status_code == 200
+    finalizado = cliente.post(f'{RUTA}/retos/{reto_id}/finalizar', {}, format='json')
+    assert finalizado.status_code == 200, finalizado.data
 
 
 def participar(usuario, reto_id, texto='Atendí el caso del cliente en el mismo día.'):
@@ -242,10 +243,10 @@ def test_el_reto_pasa_por_sus_cuatro_estados(gente):
     participacion = participar(ana, reto['id']).json()
     assert cliente.post(f'{RUTA}/retos/{reto["id"]}/cerrar', {}, format='json').status_code == 200
 
-    # Con entregas sin valorar no se finaliza: el ganador saldría incompleto.
+    # Con una entrega sin ninguna valoración no se finaliza: no hay con qué comparar.
     sin_valorar = cliente.post(f'{RUTA}/retos/{reto["id"]}/finalizar', {}, format='json')
     assert sin_valorar.status_code == 400
-    assert 'sin valorar' in str(sin_valorar.data)
+    assert 'sin ninguna valoración' in sin_valorar.json()['message']
 
     for evaluador in los_tres_evaluadores(reto['id']):
         valorar(evaluador, participacion['id'], [8, 8, 8, 8, 8])
@@ -253,6 +254,41 @@ def test_el_reto_pasa_por_sus_cuatro_estados(gente):
     finalizado = cliente.post(f'{RUTA}/retos/{reto["id"]}/finalizar', {}, format='json')
     assert finalizado.status_code == 200, finalizado.data
     assert Reto.objects.get(pk=reto['id']).estado == EstadoReto.FINALIZADO
+
+
+def test_se_finaliza_con_las_valoraciones_que_haya(gente):
+    """Si falta un evaluador, el reto no queda trabado: se cierra con lo valorado."""
+    people, uno, _dos, ana, mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    de_ana = participar(ana, reto['id']).json()
+    de_mario = participar(mario, reto['id']).json()
+    # Una sola valoración por entrega, no las tres de la regla B9.
+    valorar(uno, de_ana['id'], [6, 6, 6, 6, 6])
+    valorar(uno, de_mario['id'], [9, 9, 9, 9, 9])
+
+    cerrar_y_finalizar(people, reto['id'])
+
+    assert set(
+        Participacion.objects.filter(reto_id=reto['id']).values_list('estado', flat=True)
+    ) == {EstadoParticipacion.VALORADA}
+    resultado = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    assert resultado['ganador']['participanteNombre'] == mario.full_name
+
+
+def test_el_que_valora_solo_ve_su_propia_valoracion_antes_de_finalizar(gente):
+    people, uno, dos, ana, _mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    participacion = participar(ana, reto['id']).json()
+    valorar(uno, participacion['id'], [8, 8, 8, 8, 8])
+    valorar(dos, participacion['id'], [5, 5, 5, 5, 5])
+
+    filas = cliente_de(uno).get(f'{RUTA}/retos/{reto["id"]}/participaciones').json()
+
+    assert [v['evaluador'] for v in filas[0]['valoraciones']] == [uno.pk]
+    assert filas[0]['puntajeFinal'] is None
+    assert filas[0]['esGanador'] is False
 
 
 def test_reabrir_un_reto_cerrado_exige_motivo_y_queda_registrado(gente):
@@ -274,15 +310,21 @@ def test_reabrir_un_reto_cerrado_exige_motivo_y_queda_registrado(gente):
     assert 'Leadership Team' in Reto.objects.get(pk=reto['id']).cambios.first().descripcion
 
 
-def test_al_publicar_se_sortea_el_jurado_del_reto(gente):
-    people, *_ = gente
+def test_solo_people_califica(app_challenge, gente):
+    """Ningún líder ni otra área califica: ni con el rol «Evaluador» ni como jurado."""
+    people, uno, _dos, ana, _mario = gente
+    lider = crear_usuario('lider@supli.tech', app_challenge, ['challenge:valoraciones:crear'])
     reto = crear_reto(people)
-
     publicar(people, reto['id'])
+    participacion = participar(ana, reto['id']).json()
 
-    jurados = JuradoReto.objects.filter(reto_id=reto['id'])
-    assert jurados.count() == 1
-    assert jurados.first().usuario != people
+    # Al publicar ya no se sortea jurado.
+    assert not JuradoReto.objects.filter(reto_id=reto['id']).exists()
+    assert valorar(lider, participacion['id'], [9, 9, 9, 9, 9]).status_code == 403
+    assert valorar(ana, participacion['id'], [9, 9, 9, 9, 9]).status_code == 403
+    assert valorar(uno, participacion['id'], [9, 9, 9, 9, 9]).status_code == 200
+    # Con la valoración de People la entrega ya queda calificada.
+    assert Participacion.objects.get(pk=participacion['id']).estado == EstadoParticipacion.VALORADA
 
 
 # ── Participación y público ────────────────────────────────────────────────
@@ -332,27 +374,27 @@ def test_no_se_participa_en_un_reto_cerrado(gente):
     assert participar(ana, reto['id']).status_code == 403
 
 
-def test_la_evidencia_se_esconde_segun_la_visibilidad_del_reto(gente):
-    """B6: en «solo líder y People», los demás ven la fila pero no el soporte."""
+def test_quien_solo_participa_no_ve_las_entregas_de_los_demas(gente):
+    """People ve todas las entregas; cada colaborador, solo la suya."""
     people, _uno, _dos, ana, mario = gente
     reto = crear_reto(people, visibilidadEvidencia='lider_people')
     publicar(people, reto['id'])
     participar(ana, reto['id'], texto='Mi evidencia confidencial')
+    participar(mario, reto['id'], texto='La de Mario')
 
     de_mario = cliente_de(mario).get(f'{RUTA}/retos/{reto["id"]}/participaciones').json()
     de_people = cliente_de(people).get(f'{RUTA}/retos/{reto["id"]}/participaciones').json()
     de_ana = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/participaciones').json()
 
-    assert de_mario[0]['entregaTexto'] == ''
-    assert de_people[0]['entregaTexto'] == 'Mi evidencia confidencial'
-    # El dueño siempre ve lo suyo.
-    assert de_ana[0]['entregaTexto'] == 'Mi evidencia confidencial'
+    assert [fila['entregaTexto'] for fila in de_mario] == ['La de Mario']
+    assert len(de_people) == 2
+    assert [fila['entregaTexto'] for fila in de_ana] == ['Mi evidencia confidencial']
 
 
 # ── Valoración, descalificación y ganador (B3, B4, B9) ─────────────────────
 
 
-def test_tres_evaluadores_y_el_puntaje_final_es_su_promedio(gente):
+def test_si_califican_varias_personas_de_people_se_promedia(gente):
     people, uno, dos, ana, _mario = gente
     reto = crear_reto(people)
     publicar(people, reto['id'])
@@ -360,8 +402,6 @@ def test_tres_evaluadores_y_el_puntaje_final_es_su_promedio(gente):
     primero, segundo, tercero = los_tres_evaluadores(reto['id'])
 
     valorar(primero, participacion['id'], [8, 9, 7, 8, 9])  # 82
-    guardada = Participacion.objects.get(pk=participacion['id'])
-    assert guardada.estado == EstadoParticipacion.ENTREGADA
     valorar(segundo, participacion['id'], [9, 9, 9, 9, 9])  # 90
     ultima = valorar(tercero, participacion['id'], [8, 8, 8, 8, 8])  # 80
 
@@ -369,7 +409,7 @@ def test_tres_evaluadores_y_el_puntaje_final_es_su_promedio(gente):
     guardada = Participacion.objects.get(pk=participacion['id'])
     assert guardada.puntaje_final == Decimal('84.00')
     assert guardada.estado == EstadoParticipacion.VALORADA
-    assert Valoracion.objects.filter(participacion=guardada, es_jurado=True).count() == 1
+    assert Valoracion.objects.filter(participacion=guardada).count() == 3
 
 
 def test_nadie_valora_su_propia_participacion(gente):
@@ -482,6 +522,13 @@ def test_la_revision_solo_se_pide_con_un_nivel_de_siete_o_menos(gente):
     valorar(uno, alta['id'], [9, 9, 9, 9, 9])
     valorar(uno, baja['id'], [7, 8, 9, 9, 9])
 
+    # Antes de publicar el resultado no hay valoración que revisar.
+    antes = cliente_de(mario).post(
+        f'{RUTA}/participaciones/{baja["id"]}/revision', {'motivo': 'revisen'}, format='json'
+    )
+    assert antes.status_code == 403
+    cerrar_y_finalizar(people, reto['id'])
+
     sin_derecho = cliente_de(ana).post(
         f'{RUTA}/participaciones/{alta["id"]}/revision', {'motivo': 'quiero más'}, format='json'
     )
@@ -513,6 +560,13 @@ def test_el_colaborador_ve_el_detalle_de_su_valoracion(gente):
     participacion = participar(ana, reto['id']).json()
     valorar(uno, participacion['id'], [8, 9, 7, 8, 9], comentario='Suma un dato de impacto.')
 
+    # Mientras el reto no se finalice, el detalle no se publica.
+    antes = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/participaciones').json()
+    assert antes[0]['valoraciones'] == []
+    assert antes[0]['puntajeFinal'] is None
+    assert antes[0]['estado'] == EstadoParticipacion.ENTREGADA
+
+    cerrar_y_finalizar(people, reto['id'])
     filas = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/participaciones').json()
 
     valoracion = filas[0]['valoraciones'][0]
@@ -532,6 +586,11 @@ def test_mis_retos_resume_lo_propio(gente):
     for evaluador in (uno, dos):
         valorar(evaluador, participacion['id'], [9, 9, 9, 9, 9])
 
+    antes = cliente_de(ana).get(f'{RUTA}/mis-retos').json()
+    assert antes['ganados'] == 0
+    assert antes['participaciones'][0]['total'] is None
+
+    cerrar_y_finalizar(people, reto['id'])
     datos = cliente_de(ana).get(f'{RUTA}/mis-retos').json()
 
     assert datos['retos'] == 1
@@ -550,6 +609,10 @@ def test_el_top_ordena_por_puntos_y_dice_mi_posicion(gente):
         valorar(evaluador, de_mario['id'], [9, 9, 9, 9, 9])
     cliente_de(people).post(f'{RUTA}/retos/{reto["id"]}/cerrar', {}, format='json')
 
+    # Cerrado todavía no cuenta: el Top solo suma retos finalizados.
+    assert cliente_de(ana).get(f'{RUTA}/top').json()['ranking'] == []
+    cliente_de(people).post(f'{RUTA}/retos/{reto["id"]}/finalizar', {}, format='json')
+
     datos = cliente_de(ana).get(f'{RUTA}/top').json()
 
     assert [fila['nombre'] for fila in datos['ranking']] == [mario.full_name, ana.full_name]
@@ -566,11 +629,83 @@ def test_el_resultado_trae_al_ganador_y_el_ranking(gente):
         valorar(evaluador, de_ana['id'], [10, 10, 10, 10, 10])
         valorar(evaluador, de_mario['id'], [6, 6, 6, 6, 6])
 
+    # Ni siquiera People ve al ganador antes de finalizar.
+    antes = cliente_de(people).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    assert antes['publicado'] is False
+    assert antes['ganador'] is None
+    assert antes['ranking'] == []
+
+    cerrar_y_finalizar(people, reto['id'])
     datos = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    assert datos['publicado'] is True
 
     assert datos['ganador']['participanteNombre'] == ana.full_name
     assert datos['huboDesempate'] is False
     assert [fila['total'] for fila in datos['ranking']] == [100.0, 60.0]
+
+
+def test_publicado_el_resultado_la_calificacion_queda_en_firme(gente):
+    """Antes de finalizar People corrige su calificación; después, ya no."""
+    people, uno, _dos, ana, _mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    entrega = participar(ana, reto['id']).json()
+    valorar(uno, entrega['id'], [6, 6, 6, 6, 6])
+
+    # Con el reto cerrado pero sin publicar, todavía se corrige.
+    cliente_de(people).post(f'{RUTA}/retos/{reto["id"]}/cerrar', {}, format='json')
+    assert valorar(uno, entrega['id'], [8, 8, 8, 8, 8]).status_code == 200
+
+    cliente_de(people).post(f'{RUTA}/retos/{reto["id"]}/finalizar', {}, format='json')
+    tarde = valorar(uno, entrega['id'], [10, 10, 10, 10, 10])
+
+    assert tarde.status_code == 400
+    assert 'en firme' in tarde.json()['message']
+    assert Participacion.objects.get(pk=entrega['id']).puntaje_final == Decimal('80.00')
+    # Y tampoco se reabre para volver a calificar.
+    reabierto = cliente_de(people).post(
+        f'{RUTA}/retos/{reto["id"]}/reabrir', {'motivo': 'Corregir notas'}, format='json'
+    )
+    assert reabierto.status_code == 400
+    assert Reto.objects.get(pk=reto['id']).estado == EstadoReto.FINALIZADO
+
+
+def test_quien_participa_ve_el_top_10_y_su_propio_puesto(app_challenge, gente):
+    """El podio es público; el detalle de cómo calificaron a los demás, no."""
+    people, uno, _dos, ana, _mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    # Doce personas que le ganan a Ana, y una entrega descalificada.
+    for i in range(12):
+        persona = crear_usuario(f'mejor{i}@supli.tech', app_challenge)
+        entrega = participar(persona, reto['id']).json()
+        valorar(uno, entrega['id'], [9, 9, 9, 9, 9 if i else 10])
+    descalificada = participar(
+        crear_usuario('fuera@supli.tech', app_challenge), reto['id']
+    ).json()
+    cliente_de(uno).post(
+        f'{RUTA}/participaciones/{descalificada["id"]}/valorar',
+        {'noCumple': True, 'comentario': 'No corresponde.'},
+        format='json',
+    )
+    de_ana = participar(ana, reto['id']).json()
+    valorar(uno, de_ana['id'], [5, 5, 5, 5, 5])
+    cerrar_y_finalizar(people, reto['id'])
+
+    publico = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    completo = cliente_de(people).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+
+    assert len(publico['ranking']) == 10
+    assert [fila['posicion'] for fila in publico['ranking']] == list(range(1, 11))
+    assert all(fila['estado'] != 'descalificada' for fila in publico['ranking'])
+    # Ana quedó fuera del top, pero su puesto le llega aparte.
+    assert publico['miResultado']['participante'] == ana.pk
+    assert publico['miResultado']['posicion'] == 13
+    assert publico['totalParticipantes'] == 14
+    # El ganador llega resumido: sin evidencias ni valoraciones.
+    assert 'valoraciones' not in publico['ganador']
+    # People ve a todos, incluida la descalificada.
+    assert len(completo['ranking']) == 14
 
 
 def test_sin_el_modulo_no_se_entra():

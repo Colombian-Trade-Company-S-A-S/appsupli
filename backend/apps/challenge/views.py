@@ -6,7 +6,7 @@ evidencia (B9); valorar es poner un nivel por criterio, y de ahí sale el
 puntaje y el ganador, que el backend recalcula solo.
 """
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, permission_classes
@@ -45,8 +45,8 @@ from .models import (
     Valoracion,
     VisibilidadEvidencia,
 )
-from .puntajes import puntaje_de_niveles
-from .reglas import puede_pedir_revision, recalcular, sortear_jurado
+from .puntajes import puntaje_de_niveles, resolver_ganador
+from .reglas import guardar_ganador, puede_pedir_revision, recalcular
 from .serializers import (
     ParticipacionSerializer,
     RetoSerializer,
@@ -152,6 +152,27 @@ class RetoViewSet(viewsets.ModelViewSet):
 # ── Ciclo de vida del reto (B8) ────────────────────────────────────────────
 
 
+def _reto_con_publico(pk) -> Reto:
+    """
+    El reto con su jurado y su público ya cargados.
+
+    `es_jurado_de` y `es_del_publico` recorren esas relaciones: cargadas una
+    vez, se pueden preguntar por cada entrega sin otra consulta.
+    """
+    reto = Reto.objects.prefetch_related('jurados', 'areas', 'personas').filter(pk=pk).first()
+    if reto is None:
+        raise ValidationError('Ese reto no existe.')
+    return reto
+
+
+def _con_su_reto(filas, reto) -> list:
+    """Le pone a cada entrega el mismo reto, para que no lo pida cada una por su cuenta."""
+    filas = list(filas)
+    for fila in filas:
+        fila.reto = reto
+    return filas
+
+
 def _reto_o_404(pk) -> Reto:
     reto = Reto.objects.filter(pk=pk).first()
     if reto is None:
@@ -164,10 +185,9 @@ def _reto_o_404(pk) -> Reto:
 @transaction.atomic
 def publicar(request, pk):
     """
-    Abre el reto: desde acá sus reglas quedan fijas y se sortea el jurado.
+    Abre el reto: desde acá sus reglas quedan fijas.
 
-    El jurado se escoge una vez, al publicar, entre quienes tienen el módulo y
-    no participan en este reto.
+    Ya no se sortea jurado: califica solo People.
     """
     reto = _reto_o_404(pk)
     if reto.estado != EstadoReto.BORRADOR:
@@ -180,7 +200,6 @@ def publicar(request, pk):
     reto.estado = EstadoReto.PUBLICADO
     reto.publicado_en = timezone.now()
     reto.save(update_fields=['estado', 'publicado_en', 'updated_at'])
-    sortear_jurado(reto, User.objects.exclude(pk=request.user.pk))
     return Response(RetoSerializer(_con_conteos(Reto.objects.filter(pk=pk)).first()).data)
 
 
@@ -201,24 +220,79 @@ def cerrar(request, pk):
 @permission_classes([IsAuthenticated, HasChallengeApp, CanManageRetos])
 def finalizar(request, pk):
     """
-    El cierre definitivo: resultados validados y ganador en firme.
+    El cierre definitivo: ganador en firme y resultados publicados.
 
-    No se finaliza con entregas sin valorar, porque el ganador saldría de una
-    comparación incompleta.
+    Solo se exige que cada entrega tenga al menos una valoración: sin ninguna
+    no se puede comparar. Las que no alcanzaron las tres valoraciones (B9) se
+    cierran con las que tienen —su puntaje ya es el promedio de esas—, porque
+    si falta un evaluador el reto no puede quedar trabado para siempre.
     """
     reto = _reto_o_404(pk)
     if reto.estado != EstadoReto.CERRADO:
         raise ValidationError('Primero hay que cerrar el reto.')
-    pendientes = reto.participaciones.filter(estado=EstadoParticipacion.ENTREGADA).count()
-    if pendientes:
+    sin_ninguna = reto.participaciones.filter(
+        estado=EstadoParticipacion.ENTREGADA, valoraciones__isnull=True
+    ).count()
+    if sin_ninguna:
         raise ValidationError(
-            f'Quedan {pendientes} participación(es) sin valorar: el ganador saldría de una '
-            'comparación incompleta.'
+            f'Quedan {sin_ninguna} participación(es) sin ninguna valoración: valóralas (o '
+            'márcalas «no cumple») antes de publicar el resultado.'
         )
+    reto.participaciones.filter(estado=EstadoParticipacion.ENTREGADA).update(
+        estado=EstadoParticipacion.VALORADA, updated_at=timezone.now()
+    )
+    hermanas = list(
+        reto.participaciones.prefetch_related('valoraciones__puntajes__criterio')
+    )
+    guardar_ganador(resolver_ganador(hermanas))
+
     reto.estado = EstadoReto.FINALIZADO
     reto.finalizado_en = timezone.now()
     reto.save(update_fields=['estado', 'finalizado_en', 'updated_at'])
     return Response(RetoSerializer(_con_conteos(Reto.objects.filter(pk=pk)).first()).data)
+
+
+#: Cuántos puestos del ranking ve quien solo participa: el top 10.
+TOP_PUBLICO = 10
+
+
+def resultados_publicados(reto) -> bool:
+    """Puntajes, ganador y ranking se ven solo cuando el reto se finaliza."""
+    return reto.estado == EstadoReto.FINALIZADO
+
+
+def _ocultar_avance(fila: dict, reto, usuario) -> dict:
+    """
+    Le quita a una participación serializada lo que todavía no se publica.
+
+    Mientras el reto no se finalice nadie ve puntajes ni ganador. Quien valora
+    sigue viendo el estado de cada entrega (para saber qué le falta) y solo su
+    propia valoración, no la de los demás; el resto ve su entrega como
+    «entregada», sin el detalle.
+    """
+    if resultados_publicados(reto):
+        return fila
+    fila.update(
+        puntaje_final=None,
+        puntaje_con_bonus=None,
+        bonus=0,
+        es_ganador=False,
+        puede_pedir_revision=False,
+    )
+    if puede_valorar(usuario, reto):
+        fila['valoraciones'] = [
+            valoracion
+            for valoracion in fila.get('valoraciones', [])
+            if valoracion.get('evaluador') == usuario.id
+        ]
+    else:
+        fila.update(
+            valoraciones=[],
+            estado=EstadoParticipacion.ENTREGADA,
+            estado_label=EstadoParticipacion.ENTREGADA.label,
+            motivo_descalificacion='',
+        )
+    return fila
 
 
 @api_view(['POST'])
@@ -231,7 +305,11 @@ def reabrir(request, pk):
     motivo y queda en el historial que ve el colaborador.
     """
     reto = _reto_o_404(pk)
-    if reto.estado not in (EstadoReto.CERRADO, EstadoReto.FINALIZADO):
+    if reto.estado == EstadoReto.FINALIZADO:
+        # Publicado el resultado, todo queda en firme: reabrir volvería a dejar
+        # cambiar calificaciones y ganador que todos ya vieron.
+        raise ValidationError('El resultado de este reto ya se publicó: no se reabre.')
+    if reto.estado != EstadoReto.CERRADO:
         raise ValidationError('Este reto no está cerrado.')
     motivo = (request.data.get('motivo') or '').strip()
     if not motivo:
@@ -259,14 +337,20 @@ def participaciones(request, pk):
     Entregar la evidencia es participar: no hay inscripción previa. Quien no
     puede ver las evidencias igual ve la lista, pero sin el soporte.
     """
-    reto = _reto_o_404(pk)
+    reto = _reto_con_publico(pk)
 
     if request.method == 'GET':
         if not (puede_valorar(request.user, reto) or es_del_publico(request.user, reto)):
             raise PermissionDenied('Este reto no es de tu público.')
-        filas = reto.participaciones.select_related('participante').prefetch_related(
+        # El área va con el participante: People filtra y resume por área.
+        filas = reto.participaciones.select_related('participante__area').prefetch_related(
             'valoraciones__puntajes__criterio', 'valoraciones__evaluador'
         )
+        if not puede_valorar(request.user, reto):
+            # Quien solo participa ve su propia entrega, nunca la de los demás:
+            # ni sus evidencias ni cómo las calificaron.
+            filas = filas.filter(participante=request.user)
+        filas = _con_su_reto(filas, reto)
         participa = reto.participaciones.filter(participante=request.user).exists()
         datos = ParticipacionSerializer(
             filas, many=True, context={'request': request, 'participa': participa}
@@ -277,6 +361,7 @@ def participaciones(request, pk):
             if not fila['evidencia_visible']:
                 fila['entrega_texto'] = ''
                 fila['entrega_link'] = ''
+            _ocultar_avance(fila, reto, request.user)
         return Response(datos)
 
     if not puede_participar(request.user, reto):
@@ -298,7 +383,11 @@ def participaciones(request, pk):
     serializer.is_valid(raise_exception=True)
     participacion = serializer.save(reto=reto, participante=request.user)
     return Response(
-        ParticipacionSerializer(participacion, context={'request': request}).data,
+        _ocultar_avance(
+            ParticipacionSerializer(participacion, context={'request': request}).data,
+            reto,
+            request.user,
+        ),
         status=status.HTTP_201_CREATED if existente is None else status.HTTP_200_OK,
     )
 
@@ -312,6 +401,10 @@ def valorar(request, pk):
 
     Marcar «no cumple» descalifica la entrega con 0 y no se valoran criterios
     (B9). El puntaje final y el ganador los recalcula el backend.
+
+    Se puede calificar y corregir la calificación hasta que el reto se finaliza;
+    publicado el resultado, queda en firme: cambiarlo movería al ganador que
+    todos ya vieron, y por eso el reto tampoco se reabre.
     """
     participacion = (
         Participacion.objects.select_related('reto', 'participante').filter(pk=pk).first()
@@ -320,7 +413,11 @@ def valorar(request, pk):
         raise ValidationError('Esa participación no existe.')
     reto = participacion.reto
     if not puede_valorar(request.user, reto):
-        raise PermissionDenied('Valoran los evaluadores de Supli y el jurado del reto.')
+        raise PermissionDenied('En Supli Challenge califica solo People.')
+    if resultados_publicados(reto):
+        raise ValidationError(
+            'El resultado de este reto ya se publicó: las calificaciones quedaron en firme.'
+        )
     if participacion.participante_id == request.user.id:
         raise PermissionDenied('Nadie valora su propia participación.')
 
@@ -352,7 +449,13 @@ def valorar(request, pk):
     valoracion.save(update_fields=['puntaje', 'updated_at'])
 
     participacion = recalcular(participacion)
-    return Response(ParticipacionSerializer(participacion, context={'request': request}).data)
+    return Response(
+        _ocultar_avance(
+            ParticipacionSerializer(participacion, context={'request': request}).data,
+            reto,
+            request.user,
+        )
+    )
 
 
 def _leer_niveles(datos, reto) -> dict[int, int]:
@@ -388,10 +491,16 @@ def _leer_niveles(datos, reto) -> dict[int, int]:
 def pedir_revision(request, pk):
     """El colaborador pide que le revisen la valoración (B3)."""
     participacion = (
-        Participacion.objects.prefetch_related('valoraciones__puntajes').filter(pk=pk).first()
+        Participacion.objects.select_related('reto')
+        .prefetch_related('valoraciones__puntajes')
+        .filter(pk=pk)
+        .first()
     )
     if participacion is None:
         raise ValidationError('Esa participación no existe.')
+    if not resultados_publicados(participacion.reto):
+        # Antes de finalizar la valoración no se publica: no hay qué revisar.
+        raise PermissionDenied('La revisión se pide cuando el reto publica sus resultados.')
     if not puede_pedir_revision(request.user, participacion):
         raise PermissionDenied(
             'La revisión se habilita sobre tu propia valoración y solo cuando algún criterio '
@@ -432,42 +541,76 @@ def atender_revision(request, pk):
 @api_view(['GET'])
 @permission_classes(ACCESO)
 def resultado(request, pk):
-    """El ganador del reto y el ranking, con el detalle del desempate si lo hubo."""
-    reto = _reto_o_404(pk)
+    """
+    El ganador del reto y el ranking, con el detalle del desempate si lo hubo.
+
+    Hasta que el reto se finaliza no hay resultado que mostrar —a nadie—: el
+    ganador provisional cambiaría con cada valoración. Publicado, People ve el
+    ranking completo; quien participa, el ganador, el top 10 y su propio
+    puesto, nunca cómo calificaron a los demás.
+    """
+    reto = _reto_con_publico(pk)
     if not (puede_valorar(request.user, reto) or es_del_publico(request.user, reto)):
         raise PermissionDenied('Este reto no es de tu público.')
 
+    datos_reto = RetoSerializer(
+        _con_conteos(Reto.objects.filter(pk=pk))
+        .prefetch_related('criterios', 'jurados__usuario')
+        .first(),
+        context={'request': request},
+    ).data
+    if not resultados_publicados(reto):
+        return Response(
+            {
+                'reto': datos_reto,
+                'publicado': False,
+                'ganador': None,
+                'hubo_desempate': False,
+                'total_participantes': 0,
+                'ranking': [],
+                'mi_resultado': None,
+            }
+        )
+
     filas = list(
         reto.participaciones.select_related('participante').order_by(
-            '-es_ganador', '-puntaje_final', 'created_at'
+            '-es_ganador', F('puntaje_final').desc(nulls_last=True), 'created_at'
         )
     )
-    ganadora = next((fila for fila in filas if fila.es_ganador), None)
+
+    def fila_ranking(fila, posicion: int) -> dict:
+        return {
+            'posicion': posicion,
+            'participacion': fila.pk,
+            'participante': fila.participante_id,
+            'participante_nombre': fila.participante.full_name,
+            'cargo': fila.participante.position,
+            'estado': fila.estado,
+            'puntaje': fila.puntaje_final,
+            'bonus': fila.bonus,
+            'total': fila.puntaje_con_bonus,
+            'es_ganador': fila.es_ganador,
+        }
+
+    ranking = [fila_ranking(fila, i + 1) for i, fila in enumerate(filas)]
+    ganador = next((fila for fila in ranking if fila['es_ganador']), None)
+    mia = next((fila for fila in ranking if fila['participante'] == request.user.id), None)
+    if not puede_valorar(request.user, reto):
+        # Quien solo participa ve el podio público: el ganador y el top 10, sin
+        # las entregas descalificadas de otros. Su propio puesto le llega
+        # aparte, aunque no esté en el top.
+        ranking = [
+            fila for fila in ranking if fila['estado'] != EstadoParticipacion.DESCALIFICADA
+        ][:TOP_PUBLICO]
     return Response(
         {
-            'reto': RetoSerializer(
-                _con_conteos(Reto.objects.filter(pk=pk)).first(), context={'request': request}
-            ).data,
-            'ganador': ParticipacionSerializer(
-                ganadora, context={'request': request}
-            ).data
-            if ganadora
-            else None,
-            'hubo_desempate': bool(ganadora and ganadora.bonus),
-            'ranking': [
-                {
-                    'participacion': fila.pk,
-                    'participante': fila.participante_id,
-                    'participante_nombre': fila.participante.full_name,
-                    'cargo': fila.participante.position,
-                    'estado': fila.estado,
-                    'puntaje': fila.puntaje_final,
-                    'bonus': fila.bonus,
-                    'total': fila.puntaje_con_bonus,
-                    'es_ganador': fila.es_ganador,
-                }
-                for fila in filas
-            ],
+            'reto': datos_reto,
+            'publicado': True,
+            'ganador': ganador,
+            'hubo_desempate': bool(ganador and ganador['bonus']),
+            'total_participantes': len(filas),
+            'ranking': ranking,
+            'mi_resultado': mia,
         }
     )
 
@@ -475,36 +618,45 @@ def resultado(request, pk):
 @api_view(['GET'])
 @permission_classes(ACCESO)
 def mis_retos(request):
-    """Lo mío: en qué participé, con qué estado y cuánto sumé."""
-    filas = (
+    """
+    Lo mío: en qué participé, con qué estado y cuánto sumé.
+
+    Lo de un reto que todavía no se finaliza sale como «entregada», sin puntaje:
+    el resultado se publica junto para todos al finalizar.
+    """
+    filas = list(
         Participacion.objects.filter(participante=request.user)
         .select_related('reto')
         .prefetch_related('valoraciones__puntajes')
         .order_by('-created_at')
     )
+    publicadas = [fila for fila in filas if resultados_publicados(fila.reto)]
+
+    def detalle(fila) -> dict:
+        publicada = resultados_publicados(fila.reto)
+        estado = fila.estado if publicada else EstadoParticipacion.ENTREGADA
+        return {
+            'id': fila.pk,
+            'reto': fila.reto_id,
+            'reto_titulo': fila.reto.titulo,
+            'categoria': fila.reto.categoria,
+            'categoria_label': fila.reto.get_categoria_display(),
+            'estado_reto': fila.reto.estado,
+            'estado': estado,
+            'estado_label': EstadoParticipacion(estado).label,
+            'puntaje': fila.puntaje_final if publicada else None,
+            'total': fila.puntaje_con_bonus if publicada else None,
+            'es_ganador': fila.es_ganador if publicada else False,
+            'puede_pedir_revision': publicada and puede_pedir_revision(request.user, fila),
+            'created_at': fila.created_at,
+        }
+
     return Response(
         {
             'retos': len(filas),
-            'ganados': sum(1 for fila in filas if fila.es_ganador),
-            'puntos': float(sum((fila.puntaje_con_bonus or 0) for fila in filas)),
-            'participaciones': [
-                {
-                    'id': fila.pk,
-                    'reto': fila.reto_id,
-                    'reto_titulo': fila.reto.titulo,
-                    'categoria': fila.reto.categoria,
-                    'categoria_label': fila.reto.get_categoria_display(),
-                    'estado_reto': fila.reto.estado,
-                    'estado': fila.estado,
-                    'estado_label': fila.get_estado_display(),
-                    'puntaje': fila.puntaje_final,
-                    'total': fila.puntaje_con_bonus,
-                    'es_ganador': fila.es_ganador,
-                    'puede_pedir_revision': puede_pedir_revision(request.user, fila),
-                    'created_at': fila.created_at,
-                }
-                for fila in filas
-            ],
+            'ganados': sum(1 for fila in publicadas if fila.es_ganador),
+            'puntos': float(sum((fila.puntaje_con_bonus or 0) for fila in publicadas)),
+            'participaciones': [detalle(fila) for fila in filas],
         }
     )
 
@@ -515,13 +667,11 @@ def top(request):
     """
     El Top Challenge: quién suma más por participación y resultados.
 
-    Solo cuentan los retos finalizados o cerrados: un reto abierto todavía
-    puede cambiar de ganador.
+    Solo cuentan los retos finalizados: hasta entonces el resultado no se
+    publica y el ganador todavía puede cambiar.
     """
     filas = (
-        Participacion.objects.filter(
-            reto__estado__in=[EstadoReto.CERRADO, EstadoReto.FINALIZADO]
-        )
+        Participacion.objects.filter(reto__estado=EstadoReto.FINALIZADO)
         .exclude(estado=EstadoParticipacion.DESCALIFICADA)
         .select_related('participante')
     )
