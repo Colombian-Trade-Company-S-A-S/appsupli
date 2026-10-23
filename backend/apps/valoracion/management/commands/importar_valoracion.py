@@ -13,8 +13,10 @@ preguntas excluidas. Los resultados no se copian: se recalculan con el motor de
 este proyecto (el anterior guardaba el detalle con otras claves) y se comparan
 con los del origen para confirmar que cuadran.
 
-Las personas se emparejan por correo y, si no, por usuario. Quien no exista aquí
-se crea inactivo y sin contraseña, para no perder su historial.
+Las personas se emparejan por correo, por usuario y, si no, por nombre (quien
+llegó de Odoo no trae el correo personal que tenía en el sistema anterior).
+Quien no exista aquí se crea inactivo y sin contraseña, para no perder su
+historial.
 """
 import os
 
@@ -26,6 +28,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 from apps.accounts.models import Area, User
+from apps.odoo.sync import clave_nombre
 from apps.valoracion import scoring
 from apps.valoracion.models import (
     ActionPlan,
@@ -302,18 +305,57 @@ class Command(BaseCommand):
     # ── Personas ────────────────────────────────────────────────────────────
 
     def _emparejar_personas(self) -> dict[int, User]:
-        """ID de la persona en el origen → su usuario aquí (por correo o usuario)."""
+        """ID de la persona en el origen → su usuario aquí (por correo, usuario o nombre)."""
         usuarios = list(User.objects.all())
-        por_correo = {u.email.lower(): u for u in usuarios}
+        por_correo = {u.email.lower(): u for u in usuarios if u.email}
         por_usuario = {u.username.lower(): u for u in usuarios}
         personas = {}
+        sin_pareja = []
         for id_origen, fila in self.origen_usuarios.items():
             usuario = por_correo.get(fila['email'].lower()) or por_usuario.get(
                 fila['username'].lower()
             )
             if usuario:
                 personas[id_origen] = usuario
+            else:
+                sin_pareja.append(id_origen)
+
+        # El nombre va de último y solo contra quien nadie reclamó: cada usuario
+        # queda con una sola persona del origen.
+        reclamados = {u.pk for u in personas.values()}
+        por_pk = {u.pk: u for u in usuarios}
+        libres = {
+            u.pk: clave_nombre(f'{u.first_name} {u.last_name}')
+            for u in usuarios
+            if u.pk not in reclamados
+        }
+        for id_origen in sin_pareja:
+            fila = self.origen_usuarios[id_origen]
+            nombre = f'{fila["nombre"]} {fila["apellido"] or ""}'.strip()
+            pk = self._por_nombre(clave_nombre(nombre), libres)
+            if pk is not None:
+                usuario = personas[id_origen] = por_pk[pk]
+                del libres[pk]
+                self.stdout.write(
+                    f'  Emparejada por nombre: {nombre} → {usuario.first_name} {usuario.last_name}'
+                )
         return personas
+
+    @staticmethod
+    def _por_nombre(clave: frozenset[str], libres: dict[int, frozenset[str]]) -> int | None:
+        """
+        El mismo nombre; si no, uno que contenga al otro, porque a veces una de
+        las dos fichas lo tiene incompleto. Solo si hay un único candidato.
+        """
+        if len(clave) < 2:
+            return None
+        iguales = [pk for pk, otra in libres.items() if otra == clave]
+        if iguales:
+            return iguales[0] if len(iguales) == 1 else None
+        contenidos = [
+            pk for pk, otra in libres.items() if len(otra) >= 2 and (otra <= clave or clave <= otra)
+        ]
+        return contenidos[0] if len(contenidos) == 1 else None
 
     def _persona(self, id_origen: int | None) -> User | None:
         if id_origen is None:
