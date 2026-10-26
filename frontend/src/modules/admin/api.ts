@@ -60,6 +60,8 @@ export interface AdminUser {
   organizacion: string;
   regional: string;
   odooId: number | null;
+  /** El corporativo lo pone Odoo; a quien no tiene, aquí se le pone el personal. */
+  correoEditable: boolean;
   departamentoNombre: string;
   sincronizadoOdooAt: string | null;
   manager: number | null;
@@ -158,14 +160,20 @@ export const adminApi = {
   },
   odoo: {
     estado: () => api.get<EstadoOdoo>('/admin/odoo/estado'),
+    // Lee todo Odoo y lo guarda: puede pasar de los 30 s de espera normales y,
+    // si se corta, el servidor igual termina y la persona la repite sin saberlo.
     sincronizar: (opciones: OpcionesSincronizacion) =>
-      api.post<SincronizacionOdoo>('/admin/odoo/sincronizar', opciones),
+      httpClient
+        .post<SincronizacionOdoo>('/admin/odoo/sincronizar', opciones, { timeout: 120_000 })
+        .then((r) => r.data),
     sincronizaciones: () => api.get<SincronizacionOdoo[]>('/admin/odoo/sincronizaciones'),
     accesosPendientes: () => api.get<{ pendientes: number }>('/admin/odoo/accesos'),
     /** Genera la clave de quien no tiene y descarga el Excel. Solo se ve una vez. */
     descargarAccesos: async () => {
       const respuesta = await httpClient.post('/admin/odoo/accesos', undefined, {
         responseType: 'blob',
+        // Cada clave se cifra a propósito despacio: con muchas pendientes tarda.
+        timeout: 120_000,
       });
       const cabecera = String(respuesta.headers['content-disposition'] ?? '');
       const nombre = /filename="?([^"]+)"?/.exec(cabecera)?.[1] ?? 'accesos-appsupli.xlsx';

@@ -1,4 +1,4 @@
-import { api } from '@/shared/api/http-client';
+import { api, httpClient } from '@/shared/api/http-client';
 import type {
   ChangePasswordPayload,
   ConfigIngreso,
@@ -8,10 +8,23 @@ import type {
   User,
 } from './types';
 
+/**
+ * Lo que tarda en despertar el backend del plan gratis de Render. Entrar es lo
+ * primero que se le pide después de dormir, así que el ingreso espera más que
+ * los 30 s normales en vez de decir que falló.
+ */
+const ESPERA_INGRESO = 90_000;
+
 export const authApi = {
-  login: (credentials: LoginCredentials) => api.post<LoginResponse>('/auth/login', credentials),
+  login: (credentials: LoginCredentials) =>
+    httpClient
+      .post<LoginResponse>('/auth/login', credentials, { timeout: ESPERA_INGRESO })
+      .then((r) => r.data),
   ingreso: () => api.get<ConfigIngreso>('/auth/ingreso'),
-  microsoft: (idToken: string) => api.post<LoginResponse>('/auth/microsoft', { idToken }),
+  microsoft: (idToken: string) =>
+    httpClient
+      .post<LoginResponse>('/auth/microsoft', { idToken }, { timeout: ESPERA_INGRESO })
+      .then((r) => r.data),
   me: () => api.get<User>('/auth/me'),
   updatePreferences: (payload: PreferencesPayload) => api.patch<User>('/auth/preferences', payload),
   /**

@@ -1,11 +1,14 @@
 /**
  * Ingreso con Microsoft (Entra ID) por redirección, con PKCE y sin secreto.
  *
- * El inquilino y la aplicación los da el backend (`/auth/ingreso`): así no hay
- * que reconstruir el frontend para cambiarlos. MSAL solo se carga cuando se usa.
+ * El inquilino y la aplicación salen de la configuración del frontend, no del
+ * backend: el plan gratis de Render duerme el servidor y, si hubiera que
+ * preguntarle, el botón no saldría hasta que despertara. El backend solo entra
+ * al volver, para cambiar el token de Microsoft por la sesión de appsupli.
+ * MSAL solo se carga cuando se usa.
  */
 import type { PublicClientApplication } from '@azure/msal-browser';
-import { authApi } from './auth.api';
+import { env } from '@/shared/config/env';
 
 /** La URL que registró IT en Entra: tiene que coincidir exactamente. */
 export const RUTA_RETORNO = '/auth/microsoft';
@@ -16,15 +19,11 @@ let instancia: Promise<PublicClientApplication> | null = null;
 
 function msal(): Promise<PublicClientApplication> {
   instancia ??= (async () => {
-    const [{ PublicClientApplication }, config] = await Promise.all([
-      import('@azure/msal-browser'),
-      authApi.ingreso(),
-    ]);
-    if (!config.microsoft) throw new Error('El ingreso con Microsoft no está configurado.');
+    const { PublicClientApplication } = await import('@azure/msal-browser');
     const app = new PublicClientApplication({
       auth: {
-        clientId: config.microsoft.clientId,
-        authority: `https://login.microsoftonline.com/${config.microsoft.tenantId}`,
+        clientId: env.microsoft.clientId,
+        authority: `https://login.microsoftonline.com/${env.microsoft.tenantId}`,
         redirectUri: `${window.location.origin}${RUTA_RETORNO}`,
         // Al volver se queda en /auth/microsoft: ahí se termina el ingreso.
         navigateToLoginRequestUrl: false,

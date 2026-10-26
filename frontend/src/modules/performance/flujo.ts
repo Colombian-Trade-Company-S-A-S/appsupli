@@ -1,4 +1,4 @@
-import type { Objetivo, PasoHistorial, Resultado } from './api';
+import type { PasoHistorial, Resultado } from './api';
 
 /**
  * El flujo de aprobación tal como lo ve la gente, en cuatro estados.
@@ -47,20 +47,6 @@ export function versionDevuelta(resultado: Resultado): PasoHistorial | undefined
     if (paso.accion === 'cargado' || paso.accion === 'corregido') return paso;
   }
   return undefined;
-}
-
-/** El valor cargado, dicho como lo entiende la persona («Sí se cumplió», «8 unidades»). */
-export function valorLegible(objetivo: Objetivo, valor: string | null | undefined): string {
-  if (valor === null || valor === undefined) return '—';
-  const numero = Number(valor);
-  switch (objetivo.tipoMedicion) {
-    case 'binario':
-      return numero === 1 ? 'Sí se cumplió' : 'No se cumplió';
-    case 'cualitativa':
-      return `${numero} de ${objetivo.metaValor ? Number(objetivo.metaValor) : 2} criterios`;
-    default:
-      return `${numero}${objetivo.unidadLabel ? ` ${objetivo.unidadLabel.toLowerCase()}` : ''}`;
-  }
 }
 
 export const porcentajeLegible = (valor: string | null | undefined) =>

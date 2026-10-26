@@ -7,65 +7,37 @@ import {
   FieldLabel,
   Input,
   Spinner,
-  Switch,
   Textarea,
 } from '@/shared/components/ui';
-import type { Objetivo, ObjetivoPayload, OpcionesPerformance, Persona, TipoMedicion } from '../api';
+import type { Objetivo, ObjetivoPayload, Persona } from '../api';
 import { useCrearObjetivo, useEditarObjetivo } from '../hooks';
-import { Selector } from './Piezas';
 
 /** Todo se escribe como texto; el backend valida y convierte. */
 interface Campos {
   objetivo: string;
   kpi: string;
-  tipoMedicion: TipoMedicion | '';
-  unidad: string;
-  metaValor: string;
   peso: string;
-  umbralCumplimiento: string;
-  permiteSobrecumplimiento: boolean;
-  topeCumplimiento: string;
-  formula: string;
   fuenteDatos: string;
 }
 
-const VACIO: Campos = {
-  objetivo: '',
-  kpi: '',
-  tipoMedicion: '',
-  unidad: '',
-  metaValor: '',
-  peso: '',
-  umbralCumplimiento: '',
-  permiteSobrecumplimiento: false,
-  topeCumplimiento: '100',
-  formula: '',
-  fuenteDatos: '',
-};
+const VACIO: Campos = { objetivo: '', kpi: '', peso: '', fuenteDatos: '' };
 
 const desde = (objetivo: Objetivo): Campos => ({
   objetivo: objetivo.objetivo,
   kpi: objetivo.kpi,
-  tipoMedicion: objetivo.tipoMedicion,
-  unidad: objetivo.unidad,
-  metaValor: objetivo.metaValor ?? '',
   peso: objetivo.peso,
-  umbralCumplimiento: objetivo.umbralCumplimiento ?? '',
-  permiteSobrecumplimiento: objetivo.permiteSobrecumplimiento,
-  topeCumplimiento: objetivo.topeCumplimiento,
-  formula: objetivo.formula,
   fuenteDatos: objetivo.fuenteDatos,
 });
 
 /**
- * El formulario de definición de objetivos, tal como el mockup aprobado.
+ * El formulario de definición de objetivos.
  *
- * Los campos cambian según el tipo de medición: el binario no pide meta, la
- * fórmula sí pide la expresión. El % de cumplimiento no aparece por ninguna
- * parte, a propósito: nunca se digita, lo calcula el backend.
+ * Todos los objetivos se miden igual, con el % de cumplimiento de 0 a 100: no
+ * hay tipo de medición, unidad ni meta que escoger. El % lo registra el
+ * colaborador cuando empieza el mes —su jefe, con asesores y promotores— y lo
+ * aprueba quien corresponda después de revisar la evidencia.
  */
 export function FormularioObjetivo({
-  opciones,
   colaborador,
   periodo,
   disponible,
@@ -73,7 +45,6 @@ export function FormularioObjetivo({
   onListo,
   onCancelar,
 }: {
-  opciones: OpcionesPerformance;
   colaborador: Persona;
   periodo: string;
   disponible: number;
@@ -92,17 +63,10 @@ export function FormularioObjetivo({
     setDatos(objetivo ? desde(objetivo) : VACIO);
   }, [objetivo]);
 
-  const esBinario = datos.tipoMedicion === 'binario';
-  const esCualitativa = datos.tipoMedicion === 'cualitativa';
-  const esFormula = datos.tipoMedicion === 'formula';
-  const necesitaMeta =
-    datos.tipoMedicion === 'proporcional' || datos.tipoMedicion === 'proporcional_inverso';
-
   // El responsable del resultado no se escoge: es siempre el jefe directo del
-  // colaborador (sale de la jerarquía, y el backend lo impone igual). El
-  // colaborador carga su resultado y este responsable lo aprueba.
-  const responsableId = colaborador.jefeId ?? colaborador.id;
+  // colaborador (sale de la jerarquía, y el backend lo impone igual).
   const responsableNombre = colaborador.jefeId ? colaborador.jefe : colaborador.nombre;
+  const aprobador = colaborador.aprobador || 'su jefe';
 
   const onSubmit = async (evento: FormEvent) => {
     evento.preventDefault();
@@ -112,16 +76,7 @@ export function FormularioObjetivo({
       objetivo: datos.objetivo,
       kpi: datos.kpi,
       peso: datos.peso,
-      tipoMedicion: datos.tipoMedicion as TipoMedicion,
-      unidad: esBinario ? 'si_no' : datos.unidad,
-      // La cualitativa son siempre dos criterios: la meta la pone el backend.
-      metaValor: esBinario || esCualitativa || !datos.metaValor ? null : datos.metaValor,
-      umbralCumplimiento: datos.umbralCumplimiento || null,
-      permiteSobrecumplimiento: datos.permiteSobrecumplimiento,
-      topeCumplimiento: datos.topeCumplimiento || '100',
-      formula: esFormula ? datos.formula : '',
       fuenteDatos: datos.fuenteDatos,
-      responsableResultado: responsableId,
     };
     try {
       if (objetivo) await editar.mutateAsync({ id: objetivo.id, ...payload });
@@ -158,97 +113,10 @@ export function FormularioObjetivo({
             onChange={(e) => setDatos({ ...datos, kpi: e.target.value })}
             required
           />
-          <FieldDescription>Con qué se mide ese objetivo.</FieldDescription>
+          <FieldDescription>
+            Con qué se mide ese objetivo: es lo que el jefe revisa en la evidencia.
+          </FieldDescription>
         </Field>
-
-        <Selector
-          id="obj-tipo"
-          label="Tipo de medición"
-          placeholder="Selecciona cómo se mide"
-          value={datos.tipoMedicion}
-          onChange={(valor) =>
-            setDatos({
-              ...datos,
-              tipoMedicion: valor as TipoMedicion,
-              // Ni el binario ni la cualitativa llevan meta numérica.
-              ...(valor === 'binario' ? { metaValor: '', unidad: 'si_no' } : {}),
-              ...(valor === 'cualitativa'
-                ? { metaValor: '', unidad: '', permiteSobrecumplimiento: false }
-                : {}),
-            })
-          }
-          opciones={opciones.tiposMedicion}
-        />
-
-        <Selector
-          id="obj-unidad"
-          label="Unidad de medición"
-          placeholder="Selecciona la unidad"
-          value={datos.unidad}
-          onChange={(unidad) => setDatos({ ...datos, unidad })}
-          opciones={opciones.unidades}
-          disabled={esBinario || esCualitativa}
-        />
-
-        {necesitaMeta && (
-          <Field className="min-w-0">
-            <FieldLabel htmlFor="obj-meta">Meta</FieldLabel>
-            <Input
-              id="obj-meta"
-              type="number"
-              step="0.01"
-              min="0.01"
-              placeholder="8"
-              value={datos.metaValor}
-              onChange={(e) => setDatos({ ...datos, metaValor: e.target.value })}
-              required
-            />
-            <FieldDescription>
-              {datos.tipoMedicion === 'proporcional_inverso'
-                ? 'Menos es mejor: se cumple al llegar a este valor o por debajo.'
-                : 'Más es mejor: el cumplimiento es lo logrado sobre esta meta.'}
-            </FieldDescription>
-          </Field>
-        )}
-
-        {esCualitativa && (
-          <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground md:col-span-1">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
-            <span>
-              Se mide en criterios cumplidos, no en unidades:{' '}
-              <b className="text-foreground">2 de 2 → 100%</b> ·{' '}
-              <b className="text-foreground">1 de 2 → 50%</b> ·{' '}
-              <b className="text-foreground">0 de 2 → 0%</b>.
-            </span>
-          </div>
-        )}
-
-        {esBinario && (
-          <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground md:col-span-1">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
-            <span>
-              Resultado posible: <b className="text-foreground">Cumple → 100%</b> ·{' '}
-              <b className="text-foreground">No cumple → 0%</b>. No requiere meta numérica.
-            </span>
-          </div>
-        )}
-
-        {esFormula && (
-          <Field className="min-w-0 md:col-span-2">
-            <FieldLabel htmlFor="obj-formula">Fórmula de medición</FieldLabel>
-            <Input
-              id="obj-formula"
-              placeholder="logrado / meta * 100"
-              value={datos.formula}
-              onChange={(e) => setDatos({ ...datos, formula: e.target.value })}
-              required
-            />
-            <FieldDescription>
-              Solo aritmética con <code>logrado</code> y <code>meta</code>; también <code>min</code>
-              , <code>max</code>, <code>abs</code> y <code>round</code>. Se prueba al guardar.
-            </FieldDescription>
-          </Field>
-        )}
 
         <Field className="min-w-0">
           <FieldLabel htmlFor="obj-peso">% de ponderación (peso)</FieldLabel>
@@ -267,42 +135,6 @@ export function FormularioObjetivo({
         </Field>
 
         <Field className="min-w-0">
-          <FieldLabel htmlFor="obj-umbral">Umbral de cumplimiento (opcional)</FieldLabel>
-          <Input
-            id="obj-umbral"
-            type="number"
-            step="0.01"
-            value={datos.umbralCumplimiento}
-            onChange={(e) => setDatos({ ...datos, umbralCumplimiento: e.target.value })}
-          />
-          <FieldDescription>
-            Desde dónde cuenta como cumplido para este objetivo. El color del semáforo lo fijan los
-            cortes de People: verde ≥ 100%, naranja 85–99.9%, rojo &lt; 85%.
-          </FieldDescription>
-        </Field>
-
-        <Field className="min-w-0 md:col-span-2">
-          <FieldLabel htmlFor="obj-sobre">Sobrecumplimiento (&gt;100%)</FieldLabel>
-          <div className="flex items-center gap-3">
-            <Switch
-              id="obj-sobre"
-              checked={datos.permiteSobrecumplimiento}
-              // Ni el binario ni la cualitativa pueden pasar de 100: cumplir
-              // todo ya es el techo, no hay nada que superar.
-              disabled={esBinario || esCualitativa}
-              onCheckedChange={(valor) =>
-                setDatos({ ...datos, permiteSobrecumplimiento: Boolean(valor) })
-              }
-            />
-            <span className="text-sm">Permitir superar el 100%</span>
-          </div>
-          <FieldDescription>
-            Pendiente de definir con People — por ahora se configura por objetivo y viene topado a
-            100%.
-          </FieldDescription>
-        </Field>
-
-        <Field className="min-w-0">
           <FieldLabel htmlFor="obj-fuente">Fuente / origen de los datos</FieldLabel>
           <Input
             id="obj-fuente"
@@ -317,10 +149,28 @@ export function FormularioObjetivo({
           <Input id="obj-responsable" value={responsableNombre} readOnly disabled />
           <FieldDescription>
             {colaborador.jefeId
-              ? 'Su jefe directo: aprueba el resultado que cargue el colaborador.'
+              ? 'Su jefe directo.'
               : 'Esta persona no tiene jefe registrado: queda ella misma.'}
           </FieldDescription>
         </Field>
+
+        <div className="flex items-start gap-2 self-start rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground md:mt-6">
+          <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+          <span className="text-pretty">
+            Se mide en <b className="text-foreground">% de cumplimiento, de 0 a 100</b>.{' '}
+            {colaborador.asesorOPromotor ? (
+              <>
+                Por ser asesor o promotor, su jefe inmediato registra el % con la evidencia y lo
+                aprueba <b className="text-foreground">{aprobador}</b>.
+              </>
+            ) : (
+              <>
+                Cuando empiece el mes, el colaborador registra su % con la evidencia y lo aprueba{' '}
+                <b className="text-foreground">{aprobador}</b>.
+              </>
+            )}
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-t pt-4">

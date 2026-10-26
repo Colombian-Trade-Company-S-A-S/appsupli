@@ -6,9 +6,11 @@ con un área, un área sin dirección y empleados de cada tipo. Nunca se llama a
 la red.
 """
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Area, Departamento, User
+from apps.core.consultas import Medicion, mismo_costo
 from apps.odoo.client import EstadoOdoo, OdooError
 from apps.odoo.models import Sincronizacion
 from apps.odoo.sync import separar_nombre, sincronizar
@@ -128,6 +130,34 @@ def test_es_idempotente():
     assert registro.resumen['sin_cambios'] == 4
     assert User.objects.filter(odoo_id__isnull=False).count() == 4
     assert Departamento.objects.count() == 3
+
+
+def test_sincronizar_no_consulta_por_persona():
+    """
+    Con 4 o con 24 personas ya sincronizadas cuesta lo mismo.
+
+    Contra el Postgres de Render cada consulta tarda; una por persona hacía que
+    la sincronización pasara del tiempo de espera del navegador.
+    """
+    def medir(cliente):
+        todo(cliente)  # la primera vez crea; se mide la siguiente, que es la de todos los días
+        with Medicion() as medicion:
+            todo(cliente)
+        return medicion
+
+    pocos = medir(OdooFalso())
+    base = OdooFalso()._empleados
+    extra = [
+        empleado(100 + i, f'PERSONA PRUEBA NUMERO{i}', cedula=str(1000 + i), jefe=2, depto=22)
+        for i in range(20)
+    ]
+    muchos = medir(OdooFalso(empleados=base + extra))
+
+    mismo_costo(pocos, muchos)
+    # A quien no cambió igual se le marca la fecha de la sincronización.
+    antes = timezone.now()
+    todo(OdooFalso(empleados=base + extra))
+    assert not User.objects.filter(odoo_id__isnull=False, sincronizado_odoo_at__lt=antes).exists()
 
 
 def test_actualiza_lo_que_cambia_en_odoo():

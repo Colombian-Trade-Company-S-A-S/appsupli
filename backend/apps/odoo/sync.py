@@ -127,6 +127,9 @@ def clave_nombre(nombre: str) -> frozenset[str]:
 
 
 class Sincronizador:
+    #: Las relaciones del usuario que copia la sincronización.
+    RELACIONES = ('manager', 'departamento', 'area')
+
     def __init__(
         self, *, crear: bool, actualizar: bool, desactivar: bool, eliminar: bool = False,
         ejecutada_por: User | None = None,
@@ -167,8 +170,11 @@ class Sincronizador:
         for fila in filas:
             dep = self.departamentos[fila['id']]
             padre = self.departamentos.get(_id(fila['parent_id']))
-            if dep.padre_id != (padre.pk if padre else None):
-                dep.padre = padre
+            cambio = dep.padre_id != (padre.pk if padre else None)
+            # Asignarlo aunque no cambie lo deja en memoria: `ruta()` sube por
+            # el árbol sin ir a la base en cada salto.
+            dep.padre = padre
+            if cambio:
                 dep.save(update_fields=['padre', 'updated_at'])
 
         self.con_hijos = {_id(f['parent_id']) for f in filas if f['active'] and f['parent_id']}
@@ -269,11 +275,17 @@ class Sincronizador:
             else:
                 self.resumen['nuevos_sin_crear'] += 1
 
-        # 2. Datos y jefe.
+        # 2. Datos y jefe. A quien no cambió se le marca la fecha de una sola
+        #    vez: guardarlos uno por uno era una consulta por persona.
+        sin_cambios: list[int] = []
         for usuario, fila, nuevo in por_actualizar:
             cambio = self._aplicar(usuario, fila)
+            if not cambio:
+                sin_cambios.append(usuario.pk)
             if not nuevo:
                 self.resumen['actualizados' if cambio else 'sin_cambios'] += 1
+        if sin_cambios:
+            User.objects.filter(pk__in=sin_cambios).update(sincronizado_odoo_at=self.ahora)
 
         # 3. Bajas.
         for fila in archivados:
@@ -393,14 +405,29 @@ class Sincronizador:
         if usuario.kind != User.Kind.ADMIN:
             valores['kind'] = User.Kind.LEADER if fila['id'] in self.con_personas else User.Kind.COLLABORATOR
 
-        cambios = [campo for campo, valor in valores.items() if getattr(usuario, campo) != valor]
+        cambios = [
+            campo for campo, valor in valores.items() if self._distinto(usuario, campo, valor)
+        ]
+        if not cambios:
+            return False
         for campo in cambios:
             setattr(usuario, campo, valores[campo])
         if 'email' in cambios:
             self.por_correo[usuario.email] = usuario
         usuario.sincronizado_odoo_at = self.ahora
         usuario.save()
-        return bool(cambios)
+        return True
+
+    def _distinto(self, usuario: User, campo: str, valor) -> bool:
+        """
+        Si el dato de Odoo difiere del de acá.
+
+        Las relaciones se comparan por id: leer `usuario.area` para comparar
+        traería el área de la base, una consulta por persona y por relación.
+        """
+        if campo in self.RELACIONES:
+            return getattr(usuario, f'{campo}_id') != valor.pk
+        return getattr(usuario, campo) != valor
 
     def _dar_de_baja(self, fila: dict) -> None:
         usuario = self.por_odoo.get(fila['id'])

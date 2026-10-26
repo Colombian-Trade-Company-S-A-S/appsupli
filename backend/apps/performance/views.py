@@ -10,7 +10,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -26,7 +26,10 @@ from apps.core.excel import ErrorDeFila, construir_plantilla, leer_archivo
 from .api_permissions import (
     CanManagePeriodos,
     HasPerformanceApp,
+    aprobador_de,
+    asesores_y_promotores,
     capacidades,
+    es_asesor_o_promotor,
     es_lider,
     puede_cargar_resultado,
     puede_dar_feedback,
@@ -36,14 +39,9 @@ from .api_permissions import (
     puede_ver,
     puede_ver_todo,
 )
-from .cumplimiento import (
-    calcular_cumplimiento,
-    cortes_semaforo,
-    cumplimiento_total,
-    semaforo,
-)
+from .cumplimiento import cortes_semaforo, cumplimiento_total, semaforo
 from .models import (
-    CRITERIOS_CUALITATIVOS,
+    CUMPLIMIENTO_MAXIMO,
     MAXIMO_OBJETIVOS,
     PONDERACION_COMPLETA,
     AccionHistorial,
@@ -57,8 +55,6 @@ from .models import (
     Resultado,
     Semaforo,
     TipoEvidencia,
-    TipoMedicion,
-    Unidad,
 )
 from .periodos import (
     ETIQUETA_CORTE,
@@ -142,10 +138,11 @@ def objetivos_para_serializar():
 
     Las personas del resultado (quién cargó, validó y comentó) van con
     `select_related`; evidencias e historial, con `prefetch_related`. Sin esto
-    cada fila pide tres usuarios más por su cuenta (N+1).
+    cada fila pide tres usuarios más por su cuenta (N+1). El jefe del jefe del
+    colaborador también: es quien aprueba a asesores y promotores.
     """
     return Objetivo.objects.select_related(
-        'colaborador',
+        'colaborador__manager__manager',
         'registrado_por',
         'responsable_resultado',
         'resultado__cargado_por',
@@ -185,6 +182,16 @@ def _equipo_de(user):
     return user.team.filter(is_active=True)
 
 
+def _aprueba_sin_ser_jefe(user):
+    """
+    Los asesores y promotores de los equipos de sus líderes.
+
+    No son sus directos —no les define objetivos—, pero es quien aprueba su
+    resultado: el Trade Marketing Manager con los asesores de sus Trade Leaders.
+    """
+    return User.objects.filter(asesores_y_promotores(), manager__manager=user, is_active=True)
+
+
 # ── Objetivos ──────────────────────────────────────────────────────────────
 
 
@@ -204,8 +211,12 @@ class ObjetivoViewSet(viewsets.ModelViewSet):
         user = self.request.user
         consulta = objetivos_para_serializar()
         if not puede_ver_todo(user):
+            # Los propios, los de su equipo y los de quienes aprueba (asesores
+            # y promotores de sus líderes).
             consulta = consulta.filter(
-                colaborador__in=[user.pk, *user.team.values_list('pk', flat=True)]
+                Q(colaborador=user)
+                | Q(colaborador__manager=user)
+                | (Q(colaborador__manager__manager=user) & asesores_y_promotores('colaborador__'))
             )
         colaborador = self.request.query_params.get('colaborador')
         if colaborador:
@@ -270,7 +281,7 @@ def mis_objetivos(request):
     consulta = objetivos_para_serializar().filter(colaborador=request.user)
     if periodo:
         consulta = consulta.filter(periodo=_a_periodo(periodo))
-    return Response(ObjetivoSerializer(consulta, many=True).data)
+    return Response(ObjetivoSerializer(consulta, many=True, context={'request': request}).data)
 
 
 # ── Periodos ───────────────────────────────────────────────────────────────
@@ -403,25 +414,28 @@ def opciones(request):
     # `equipo` son las personas a cargo directo: con quien se trabaja uno por
     # uno. People además puede definirle a cualquiera, pero eso no llena el
     # desplegable por defecto: lo pide con `compania`.
+    relaciones = ('area', 'manager__manager')
     a_cargo = request.user.team.filter(is_active=True)
-    equipo = a_cargo.select_related('area', 'manager').order_by('first_name')
+    equipo = a_cargo.select_related(*relaciones).order_by('first_name')
     compania = (
-        _equipo_de(request.user).select_related('area', 'manager').order_by('first_name')
+        _equipo_de(request.user).select_related(*relaciones).order_by('first_name')
         if puede_definir_a_cualquiera(request.user)
         else []
+    )
+    aprueba = _aprueba_sin_ser_jefe(request.user).select_related(*relaciones).order_by(
+        'first_name'
     )
     return Response(
         {
             'periodos': _periodos_disponibles(),
-            'tipos_medicion': [
-                {'value': valor, 'label': etiqueta} for valor, etiqueta in TipoMedicion.choices
-            ],
-            'unidades': [{'value': valor, 'label': etiqueta} for valor, etiqueta in Unidad.choices],
             'equipo': PersonaSerializer(equipo, many=True).data,
             'compania': PersonaSerializer(compania, many=True).data,
+            # A quiénes les aprueba el resultado sin ser su jefe: el Trade
+            # Marketing Manager con los asesores y promotores de sus líderes.
+            'aprueba_resultados': PersonaSerializer(aprueba, many=True).data,
             'maximo_objetivos': MAXIMO_OBJETIVOS,
             'ponderacion_completa': PONDERACION_COMPLETA,
-            'criterios_cualitativos': CRITERIOS_CUALITATIVOS,
+            'cumplimiento_maximo': CUMPLIMIENTO_MAXIMO,
             # Los cortes del año en curso y del anterior: con eso el tablero
             # arma su selector de mes, Q, semestre y año sin inventarse nada.
             'cortes': [
@@ -474,14 +488,16 @@ def resumen(request):
 
 # ── Resultados y evidencias ────────────────────────────────────────────────
 #
-# Lo ejecutado de cada objetivo. El porcentaje nunca llega del frontend: lo
-# calcula el motor con el tipo de medición, y de ahí sale el color del
+# El % de cumplimiento de cada objetivo, de 0 a 100: lo registra el
+# colaborador (o su jefe, con asesores y promotores) y de ahí sale el color del
 # semáforo. Las evidencias son enlaces a SharePoint u OneDrive (A5).
 
 
 def _objetivo_visible(request, pk) -> Objetivo:
     objetivo = (
-        Objetivo.objects.select_related('colaborador', 'responsable_resultado', 'resultado')
+        Objetivo.objects.select_related(
+            'colaborador__manager__manager', 'responsable_resultado', 'resultado'
+        )
         .filter(pk=pk)
         .first()
     )
@@ -495,14 +511,18 @@ def _objetivo_visible(request, pk) -> Objetivo:
 @transaction.atomic
 def cargar_resultado(request, pk):
     """
-    Carga o corrige lo ejecutado de un objetivo, con sus evidencias.
+    Registra o corrige el % de cumplimiento de un objetivo, con sus evidencias.
 
-    Lo hace el colaborador; su jefe o People también pueden hacerlo por él, y
-    el Trade Leader cuando se trata de un asesor. El mes tiene que haber
-    empezado: no se carga el resultado de un mes que todavía no ocurre.
+    Lo hace el colaborador; su jefe o People también pueden hacerlo por él. Con
+    asesores y promotores lo hace siempre su jefe inmediato. El mes tiene que
+    haber empezado: no se carga el resultado de un mes que todavía no ocurre.
     """
     objetivo = _objetivo_visible(request, pk)
     if not puede_cargar_resultado(request.user, objetivo):
+        if es_asesor_o_promotor(objetivo.colaborador):
+            raise PermissionDenied(
+                'El resultado de asesores y promotores lo registra su jefe inmediato.'
+            )
         raise PermissionDenied('El resultado lo carga el colaborador, su jefe o People.')
     if primer_dia(timezone.localdate()) < objetivo.periodo:
         raise ValidationError(
@@ -534,16 +554,15 @@ def cargar_resultado(request, pk):
         objetivo=objetivo,
         cargado_por=request.user,
         fecha_carga=timezone.now(),
+        # Lo ejecutado era de la metodología anterior: con el % registrado a
+        # mano, un valor viejo al lado solo confundiría.
+        resultado_ejecutado=None,
         # Cambiar el resultado devuelve la validación a pendiente: lo que el
         # jefe validó ya no es lo que dice la fila.
         estado_validacion=EstadoValidacion.PENDIENTE,
         validado_por=None,
         fecha_validacion=None,
     )
-    resultado.porcentaje_cumplimiento = calcular_cumplimiento(
-        objetivo, resultado.resultado_ejecutado
-    )
-    resultado.save(update_fields=['porcentaje_cumplimiento', 'updated_at'])
 
     if evidencias is not None:
         resultado.evidencias.all().delete()
@@ -574,20 +593,23 @@ def validar_resultado(request, pk):
     """
     El jefe o People dan por bueno el resultado, o lo devuelven con una razón.
 
-    Quien cargó el resultado no se lo valida a sí mismo: el sentido de este
-    paso es que alguien más mire la evidencia.
+    Con asesores y promotores lo aprueba el Trade Marketing Manager, porque su
+    jefe inmediato es quien registró el %. Quien cargó el resultado no se lo
+    valida a sí mismo: el sentido de este paso es que alguien más mire la
+    evidencia.
     """
     objetivo = _objetivo_visible(request, pk)
     resultado = getattr(objetivo, 'resultado', None)
     if resultado is None:
         raise ValidationError('Este objetivo todavía no tiene resultado cargado.')
     if not puede_validar_resultado(request.user, objetivo):
+        aprobador = aprobador_de(objetivo.colaborador)
+        quien = f'{aprobador.full_name} o People' if aprobador else 'People'
         if resultado.cargado_por_id == request.user.id:
             raise PermissionDenied(
-                'No puedes validar un resultado que cargaste tú: lo valida otra persona '
-                '(el jefe del colaborador o People).'
+                f'No puedes validar un resultado que cargaste tú: lo valida {quien}.'
             )
-        raise PermissionDenied('La validación la hace el jefe del colaborador o People.')
+        raise PermissionDenied(f'Este resultado lo valida {quien}.')
 
     estado = (request.data.get('estado') or '').strip()
     if estado not in (EstadoValidacion.VALIDADO, EstadoValidacion.RECHAZADO):
@@ -620,13 +642,12 @@ def validar_resultado(request, pk):
 
 
 def _registrar(resultado, accion: str, autor, comentario: str = '') -> None:
-    """Deja el paso en el historial, con el valor y el % de ese momento."""
+    """Deja el paso en el historial, con el % y las evidencias de ese momento."""
     HistorialResultado.objects.create(
         resultado=resultado,
         accion=accion,
         autor=autor,
         comentario=comentario or '',
-        resultado_ejecutado=resultado.resultado_ejecutado,
         porcentaje_cumplimiento=resultado.porcentaje_cumplimiento,
         evidencias=[
             {'nombre': nombre, 'link_soporte': link}
@@ -1056,23 +1077,16 @@ def _fila_a_objetivo(fila: dict, colaborador, periodo) -> dict:
     Traduce una fila de la plantilla al payload del serializer.
 
     El responsable no sale del archivo: es siempre el jefe directo del
-    colaborador. Si un archivo viejo trae la columna «responsable_correo», se
-    ignora.
+    colaborador. Un archivo viejo puede traer además «responsable_correo» o las
+    columnas de la metodología anterior (tipo de medición, meta, fórmula…): no
+    se leen, el objetivo se mide en % igual que los demás.
     """
-    meta = fila.get('meta')
-    umbral = fila.get('umbral_cumplimiento')
     return {
         'colaborador': colaborador.pk,
         'periodo': periodo.isoformat(),
         'objetivo': fila.get('objetivo', ''),
         'kpi': fila.get('kpi', ''),
         'peso': fila.get('peso'),
-        'tipo_medicion': fila.get('tipo_medicion'),
-        'unidad': fila.get('unidad') or '',
-        'meta_valor': str(meta) if meta is not None else None,
-        'umbral_cumplimiento': str(umbral) if umbral is not None else None,
-        'permite_sobrecumplimiento': bool(fila.get('permite_sobrecumplimiento')),
-        'formula': fila.get('formula') or '',
         'fuente_datos': fila.get('fuente_datos') or '',
         'responsable_resultado': responsable_de(colaborador).pk,
     }

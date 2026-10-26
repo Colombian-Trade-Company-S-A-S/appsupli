@@ -45,8 +45,10 @@ interface UserDialogProps {
 }
 
 export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) {
-  // Nombre y correo de quien viene de Odoo se cambian allá, no aquí.
+  // Nombre y correo de quien viene de Odoo se cambian allá, no aquí. La
+  // excepción: sin correo corporativo, aquí se le pone su correo personal.
   const deOdoo = !!usuario?.odooId;
+  const correoPersonal = deOdoo && !!usuario?.correoEditable;
   const [datos, setDatos] = useState<AdminUserPayload>(VACIO);
 
   const { data: apps = [] } = useApplications();
@@ -131,15 +133,23 @@ export function UserDialog({ abierto, onOpenChange, usuario }: UserDialogProps) 
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="email">Correo corporativo</FieldLabel>
+                <FieldLabel htmlFor="email">
+                  {correoPersonal ? 'Correo personal' : 'Correo corporativo'}
+                </FieldLabel>
                 <Input
                   id="email"
                   type="email"
-                  disabled={deOdoo}
+                  disabled={deOdoo && !correoPersonal}
                   value={datos.email ?? ''}
                   onChange={(e) => set('email', e.target.value)}
                   required
                 />
+                {correoPersonal && (
+                  <FieldDescription>
+                    No tiene correo corporativo en Odoo. Con este correo y una contraseña
+                    puede entrar.
+                  </FieldDescription>
+                )}
               </Field>
               <Field>
                 <FieldLabel htmlFor="username">Usuario</FieldLabel>

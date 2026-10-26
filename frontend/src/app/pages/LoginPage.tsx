@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertCircleIcon, MailIcon } from 'lucide-react';
 import { irAMicrosoft, useAuth } from '@/core/auth';
 import { authApi } from '@/core/auth/auth.api';
+import { useTarda } from '@/shared/hooks';
 import {
   Alert,
   AlertDescription,
@@ -29,14 +30,17 @@ export default function LoginPage() {
   const [yendo, setYendo] = useState(false);
   const [errorMicrosoft, setErrorMicrosoft] = useState<string | null>(null);
 
+  // Además de decir si se entra con contraseña, esta consulta despierta el
+  // backend de Render: cuando la persona vuelva de Microsoft ya estará arriba.
   const { data: ingreso, isError: sinConfig } = useQuery({
     queryKey: ['auth', 'ingreso'],
     queryFn: authApi.ingreso,
     staleTime: Infinity,
   });
-  // Si no se pudo saber cómo se entra, se deja la contraseña: mejor que nada.
-  const conMicrosoft = !!ingreso?.microsoft;
+  // El botón de Microsoft no depende del backend: siempre está. Si no se pudo
+  // saber cómo se entra, también se deja la contraseña: mejor que nada.
   const conContrasena = sinConfig || !ingreso || ingreso.contrasena || respaldo;
+  const despertando = useTarda(isSubmitting);
 
   const entrarConMicrosoft = async () => {
     setYendo(true);
@@ -72,31 +76,30 @@ export default function LoginPage() {
         </p>
       </div>
 
-      {conMicrosoft && (
-        <div className="flex flex-col gap-2">
-          <Button size="lg" onClick={entrarConMicrosoft} disabled={yendo}>
-            {yendo ? <Spinner data-icon="inline-start" /> : <LogoMicrosoft />}
-            Ingresar con Microsoft
-          </Button>
-          {errorMicrosoft && (
-            <Alert variant="destructive">
-              <AlertCircleIcon />
-              <AlertDescription>{errorMicrosoft}</AlertDescription>
-            </Alert>
-          )}
-          {!ingreso?.contrasena && !respaldo && (
-            <button
-              type="button"
-              onClick={() => setRespaldo(true)}
-              className="self-center text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              Ingreso de respaldo del administrador
-            </button>
-          )}
-        </div>
-      )}
+      <div className="flex flex-col gap-2">
+        <Button size="lg" onClick={entrarConMicrosoft} disabled={yendo}>
+          {yendo ? <Spinner data-icon="inline-start" /> : <LogoMicrosoft />}
+          Ingresar con Microsoft
+        </Button>
+        {errorMicrosoft && (
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertDescription>{errorMicrosoft}</AlertDescription>
+          </Alert>
+        )}
+        {/* Solo cuando el backend ya dijo que la contraseña está apagada. */}
+        {ingreso && !ingreso.contrasena && !respaldo && (
+          <button
+            type="button"
+            onClick={() => setRespaldo(true)}
+            className="self-center text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Ingreso de respaldo del administrador
+          </button>
+        )}
+      </div>
 
-      {conMicrosoft && conContrasena && (
+      {conContrasena && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <Separator className="flex-1" />o con contraseña
           <Separator className="flex-1" />
@@ -116,7 +119,6 @@ export default function LoginPage() {
                   id="email"
                   type="email"
                   autoComplete="email"
-                  autoFocus={!conMicrosoft}
                   placeholder="nombre@empresa.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -151,6 +153,11 @@ export default function LoginPage() {
                 {isSubmitting && <Spinner data-icon="inline-start" />}
                 {isSubmitting ? 'Iniciando sesión…' : 'Iniciar sesión'}
               </Button>
+              {despertando && (
+                <p className="text-center text-xs text-muted-foreground text-pretty">
+                  El servidor se está despertando; puede tardar hasta un minuto.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setOlvido((v) => !v)}

@@ -1,5 +1,5 @@
 """
-Pruebas de Objetivos y KPIs: permisos, reglas de negocio y motor de cálculo.
+Pruebas de Objetivos y KPIs: permisos, reglas de negocio y medición en %.
 
 Las reglas que se prueban acá son las del §6 de la especificación técnica; el
 número de cada una va en el nombre de la prueba cuando aplica.
@@ -14,19 +14,14 @@ from django.core.management import call_command
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Application, Permission, Role, User
-from apps.performance.cumplimiento import (
-    FormulaInvalida,
-    calcular_cumplimiento,
-    cumplimiento_total,
-    evaluar_formula,
-    semaforo,
-)
+from apps.performance.cumplimiento import cumplimiento_total, semaforo
 from apps.performance.models import (
     EstadoObjetivo,
     EstadoPeriodo,
     EstadoValidacion,
     Objetivo,
     Periodo,
+    Resultado,
     Semaforo,
     TipoMedicion,
     Unidad,
@@ -98,8 +93,8 @@ def objetivo_de(colaborador, jefe, peso, **extra) -> Objetivo:
         'objetivo': 'Entregar el portal de autogestión',
         'kpi': 'Portal en producción',
         'peso': Decimal(peso),
-        'tipo_medicion': TipoMedicion.BINARIO,
-        'unidad': Unidad.SI_NO,
+        'tipo_medicion': TipoMedicion.PORCENTAJE,
+        'unidad': Unidad.PORCENTAJE,
         'periodo': OCTUBRE,
     }
     datos.update(extra)
@@ -115,52 +110,30 @@ def equipo(app_performance):
     return jefe, julian, daniel
 
 
-# ── Motor de cálculo (§5) ──────────────────────────────────────────────────
-
-
-def test_el_binario_es_todo_o_nada():
-    objetivo = Objetivo(tipo_medicion=TipoMedicion.BINARIO, tope_cumplimiento=100)
-    assert calcular_cumplimiento(objetivo, 1) == Decimal('100.00')
-    assert calcular_cumplimiento(objetivo, 0) == Decimal('0.00')
-
-
-def test_el_proporcional_divide_lo_logrado_entre_la_meta():
-    objetivo = Objetivo(
-        tipo_medicion=TipoMedicion.PROPORCIONAL, meta_valor=Decimal('8'), tope_cumplimiento=100
+@pytest.fixture
+def punto_de_venta(app_performance):
+    """
+    La jerarquía de punto de venta: Trade Marketing Manager → Trade Leader →
+    asesores y promotores. Con ellos el % lo registra el Trade Leader y lo
+    aprueba el Trade Marketing Manager.
+    """
+    tmm = crear_usuario('tmm@supli.tech', app_performance, cargo='Trade Marketing Manager')
+    lider = crear_usuario(
+        'lider@supli.tech', app_performance, jefe=tmm, cargo='Trade Marketing Leader - Telcom'
     )
-    assert calcular_cumplimiento(objetivo, 6) == Decimal('75.00')
-    # Sin sobrecumplimiento, pasarse de la meta se topa en 100.
-    assert calcular_cumplimiento(objetivo, 10) == Decimal('100.00')
-
-    objetivo.permite_sobrecumplimiento = True
-    assert calcular_cumplimiento(objetivo, 10) == Decimal('125.00')
-
-
-def test_el_proporcional_inverso_premia_el_valor_mas_bajo():
-    """Menos es mejor: días, costos, tickets."""
-    objetivo = Objetivo(
-        tipo_medicion=TipoMedicion.PROPORCIONAL_INVERSO,
-        meta_valor=Decimal('2'),
-        tope_cumplimiento=100,
+    asesor = crear_usuario(
+        'asesor@supli.tech',
+        app_performance,
+        jefe=lider,
+        cargo='Asesor Comercial - CAV Bogota Venecia, C105',
     )
-    assert calcular_cumplimiento(objetivo, 2) == Decimal('100.00')
-    assert calcular_cumplimiento(objetivo, 4) == Decimal('50.00')
-    # Ejecutar cero es el mejor resultado posible, no una división por cero.
-    assert calcular_cumplimiento(objetivo, 0) == Decimal('100.00')
+    promotora = crear_usuario(
+        'promotora@supli.tech', app_performance, jefe=lider, cargo='Promotora Calle 80'
+    )
+    return tmm, lider, asesor, promotora
 
 
-def test_la_formula_solo_evalua_aritmetica_con_logrado_y_meta():
-    assert evaluar_formula('logrado / meta * 100', {'logrado': 5, 'meta': 10}) == 50
-    assert evaluar_formula('min(logrado / meta * 100, 120)', {'logrado': 20, 'meta': 10}) == 120
-
-    for peligrosa in (
-        '__import__("os").system("dir")',
-        'open("password.txt").read()',
-        'otra_variable * 2',
-        'logrado.__class__',
-    ):
-        with pytest.raises(FormulaInvalida):
-            evaluar_formula(peligrosa, {'logrado': 1, 'meta': 1})
+# ── Cumplimiento ponderado ─────────────────────────────────────────────────
 
 
 def test_el_cumplimiento_de_la_persona_pondera_sus_objetivos():
@@ -182,8 +155,6 @@ def test_el_jefe_define_los_objetivos_de_su_equipo(equipo):
             'objetivo': 'Entregar el portal de autogestión BI',
             'kpi': 'Portal en producción',
             'peso': '30',
-            'tipoMedicion': 'binario',
-            'unidad': 'si_no',
         },
         format='json',
     )
@@ -192,6 +163,7 @@ def test_el_jefe_define_los_objetivos_de_su_equipo(equipo):
     creado = Objetivo.objects.get()
     assert creado.registrado_por == jefe
     assert creado.estado == EstadoObjetivo.BORRADOR
+    assert creado.tipo_medicion == TipoMedicion.PORCENTAJE
     # El responsable del resultado es siempre el jefe directo del colaborador.
     assert creado.responsable_resultado == jefe
     # El mes se abre solo con el primer objetivo.
@@ -210,7 +182,6 @@ def test_nadie_define_sus_propios_objetivos(equipo):
             'objetivo': 'Auto-asignarme algo fácil',
             'kpi': 'Lo que yo diga',
             'peso': '100',
-            'tipoMedicion': 'binario',
         },
         format='json',
     )
@@ -231,7 +202,6 @@ def test_un_jefe_no_toca_el_equipo_de_otro(app_performance, equipo):
             'objetivo': 'Objetivo de otro equipo',
             'kpi': 'KPI',
             'peso': '10',
-            'tipoMedicion': 'binario',
         },
         format='json',
     )
@@ -253,7 +223,6 @@ def test_people_define_objetivos_de_cualquiera(app_performance, equipo):
             'objetivo': 'Objetivo transversal de People',
             'kpi': 'KPI',
             'peso': '20',
-            'tipoMedicion': 'binario',
         },
         format='json',
     )
@@ -275,7 +244,6 @@ def test_no_se_pueden_pasar_de_seis_objetivos(equipo):
             'objetivo': 'El séptimo',
             'kpi': 'KPI',
             'peso': '10',
-            'tipoMedicion': 'binario',
         },
         format='json',
     )
@@ -297,7 +265,6 @@ def test_la_ponderacion_no_se_pasa_de_cien(equipo):
             'objetivo': 'Uno que se pasa',
             'kpi': 'KPI',
             'peso': '30',
-            'tipoMedicion': 'binario',
         },
         format='json',
     )
@@ -306,50 +273,56 @@ def test_la_ponderacion_no_se_pasa_de_cien(equipo):
     assert 'Solo queda 20%' in str(respuesta.data)
 
 
-def test_la_meta_es_obligatoria_salvo_en_binario(equipo):
+def test_todo_objetivo_se_mide_en_porcentaje(equipo):
+    """Un único criterio: aunque llegue un tipo, una meta o una fórmula, no se guardan."""
     jefe, julian, _ = equipo
-    cliente = cliente_de(jefe)
-    base = {
-        'colaborador': julian.pk,
-        'periodo': OCTUBRE.isoformat(),
-        'objetivo': 'Publicar tableros validados',
-        'kpi': 'Tableros publicados',
-        'peso': '25',
-        'tipoMedicion': 'proporcional',
-        'unidad': 'unidades',
-    }
 
-    sin_meta = cliente.post(f'{RUTA}/objetivos', base, format='json')
-    assert sin_meta.status_code == 400
+    respuesta = cliente_de(jefe).post(
+        f'{RUTA}/objetivos',
+        {
+            'colaborador': julian.pk,
+            'periodo': OCTUBRE.isoformat(),
+            'objetivo': 'Índice compuesto',
+            'kpi': 'Índice',
+            'peso': '25',
+            'tipoMedicion': 'formula',
+            'metaValor': '10',
+            'formula': '__import__("os")',
+            'permiteSobrecumplimiento': True,
+        },
+        format='json',
+    )
 
-    en_cero = cliente.post(f'{RUTA}/objetivos', {**base, 'metaValor': '0'}, format='json')
-    assert en_cero.status_code == 400
+    assert respuesta.status_code == 201, respuesta.data
+    creado = Objetivo.objects.get()
+    assert creado.tipo_medicion == TipoMedicion.PORCENTAJE
+    assert (creado.meta_valor, creado.formula, creado.permite_sobrecumplimiento) == (
+        None,
+        '',
+        False,
+    )
 
-    con_meta = cliente.post(f'{RUTA}/objetivos', {**base, 'metaValor': '8'}, format='json')
-    assert con_meta.status_code == 201, con_meta.data
 
-
-def test_la_formula_se_valida_al_guardarla(equipo):
+def test_un_objetivo_viejo_que_se_edita_queda_en_porcentaje(equipo):
     jefe, julian, _ = equipo
-    base = {
-        'colaborador': julian.pk,
-        'periodo': OCTUBRE.isoformat(),
-        'objetivo': 'Índice compuesto',
-        'kpi': 'Índice',
-        'peso': '25',
-        'tipoMedicion': 'formula',
-        'metaValor': '10',
-    }
-
-    mala = cliente_de(jefe).post(
-        f'{RUTA}/objetivos', {**base, 'formula': '__import__("os")'}, format='json'
+    viejo = objetivo_de(
+        julian,
+        jefe,
+        '40',
+        tipo_medicion=TipoMedicion.PROPORCIONAL,
+        unidad=Unidad.UNIDADES,
+        meta_valor=Decimal('8'),
     )
-    assert mala.status_code == 400
 
-    buena = cliente_de(jefe).post(
-        f'{RUTA}/objetivos', {**base, 'formula': 'logrado / meta * 100'}, format='json'
+    respuesta = cliente_de(jefe).patch(
+        f'{RUTA}/objetivos/{viejo.pk}', {'peso': '50'}, format='json'
     )
-    assert buena.status_code == 201, buena.data
+
+    assert respuesta.status_code == 200, respuesta.data
+    viejo.refresh_from_db()
+    assert viejo.tipo_medicion == TipoMedicion.PORCENTAJE
+    assert viejo.meta_valor is None
+    assert viejo.peso == Decimal('50')
 
 
 # ── Periodo (§6, reglas 1 y 5) ─────────────────────────────────────────────
@@ -483,10 +456,14 @@ def test_las_opciones_traen_el_equipo_y_los_catalogos(equipo):
 
     assert {persona['id'] for persona in datos['equipo']} == {julian.pk, daniel.pk}
     assert datos['maximoObjetivos'] == 6
-    assert len(datos['tiposMedicion']) == len(TipoMedicion.choices)
+    # Ya no hay tipos de medición que escoger: todo se mide en % de 0 a 100.
+    assert 'tiposMedicion' not in datos
+    assert datos['cumplimientoMaximo'] == 100
     assert datos['capacidades']['esLider'] is True
-    # Un líder común no recibe a la compañía.
+    # Un líder común no recibe a la compañía, ni aprueba a nadie fuera de su equipo.
     assert datos['compania'] == []
+    assert datos['apruebaResultados'] == []
+    assert {p['aprobador'] for p in datos['equipo']} == {jefe.full_name}
 
 
 def test_people_ve_solo_sus_directos_y_aparte_la_compania(equipo, app_performance):
@@ -549,59 +526,25 @@ def test_el_semaforo_usa_los_cortes_de_people():
     assert semaforo(None) is None
 
 
-def test_la_meta_cualitativa_vale_cien_cincuenta_o_cero():
-    """A2: 2 de 2 criterios = 100%, 1 de 2 = 50%, 0 de 2 = 0%."""
-    objetivo = Objetivo(
-        tipo_medicion=TipoMedicion.CUALITATIVA,
-        meta_valor=Decimal('2'),
-        tope_cumplimiento=Decimal('100'),
-        permite_sobrecumplimiento=False,
-    )
-    assert calcular_cumplimiento(objetivo, 2) == Decimal('100.00')
-    assert calcular_cumplimiento(objetivo, 1) == Decimal('50.00')
-    assert calcular_cumplimiento(objetivo, 0) == Decimal('0.00')
-
-
-def test_la_cualitativa_se_guarda_con_dos_criterios_sin_pedir_meta(equipo):
+def test_el_porcentaje_va_de_cero_a_cien_y_es_obligatorio(equipo):
+    """Sin sobrecumplimiento: el % que se registra no pasa de 100 ni baja de 0."""
     jefe, julian, _daniel = equipo
-
-    respuesta = cliente_de(jefe).post(
-        f'{RUTA}/objetivos',
-        {
-            'colaborador': julian.pk,
-            'periodo': OCTUBRE.isoformat(),
-            'objetivo': 'Documentar el modelo de datos',
-            'kpi': 'Documento publicado y socializado',
-            'peso': '100',
-            'tipoMedicion': TipoMedicion.CUALITATIVA,
-            'unidad': '',
-            'metaValor': None,
-        },
-        format='json',
-    )
-
-    assert respuesta.status_code == 201, respuesta.data
-    objetivo = Objetivo.objects.get()
-    assert objetivo.meta_valor == Decimal('2.00')
-    # Una meta cualitativa nunca sobrecumple: dos de dos ya es todo.
-    assert objetivo.permite_sobrecumplimiento is False
-
-
-def test_el_resultado_cualitativo_no_pasa_de_dos_criterios(equipo):
-    jefe, julian, _daniel = equipo
-    objetivo = objetivo_de(
-        julian, jefe, '100', tipo_medicion=TipoMedicion.CUALITATIVA, meta_valor=Decimal('2')
-    )
+    objetivo = objetivo_de(julian, jefe, '100')
     _empezar_el_mes(objetivo.periodo)
+    ruta = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
+    cliente = cliente_de(julian)
 
-    respuesta = cliente_de(julian).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
-        {'resultadoEjecutado': '3', 'evidencias': [{'linkSoporte': 'https://supli.sharepoint.com/x'}]},
-        format='json',
-    )
+    for fuera_de_rango in ('101', '-1'):
+        respuesta = cliente.put(ruta, {'porcentajeCumplimiento': fuera_de_rango}, format='json')
+        assert respuesta.status_code == 400
+        assert 'de 0 a 100' in str(respuesta.data)
 
-    assert respuesta.status_code == 400
-    assert 'criterios' in str(respuesta.data).lower()
+    sin_porcentaje = cliente.put(ruta, {'observacion': 'Ya está'}, format='json')
+    assert sin_porcentaje.status_code == 400
+    assert not Resultado.objects.exists()
+
+    assert cliente.put(ruta, {'porcentajeCumplimiento': '100'}, format='json').status_code == 200
+    assert cliente.put(ruta, {'porcentajeCumplimiento': '0'}, format='json').status_code == 200
 
 
 # ── Congelamiento por calendario (A9) ──────────────────────────────────────
@@ -693,22 +636,15 @@ def test_people_habilita_la_edicion_de_un_mes_congelado(app_performance, equipo)
 # ── Resultados y evidencias (A5) ───────────────────────────────────────────
 
 
-def test_el_responsable_carga_el_resultado_y_el_sistema_calcula_el_porcentaje(equipo):
+def test_el_colaborador_registra_su_porcentaje_con_la_evidencia(equipo):
     jefe, julian, _daniel = equipo
-    objetivo = objetivo_de(
-        julian,
-        jefe,
-        '100',
-        tipo_medicion=TipoMedicion.PROPORCIONAL,
-        unidad=Unidad.UNIDADES,
-        meta_valor=Decimal('10'),
-    )
+    objetivo = objetivo_de(julian, jefe, '100')
     _empezar_el_mes(objetivo.periodo)
 
     respuesta = cliente_de(julian).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
         {
-            'resultadoEjecutado': '9',
+            'porcentajeCumplimiento': '90',
             'evidencias': [
                 {'nombre': 'Tablero', 'linkSoporte': 'https://supli.sharepoint.com/tablero'}
             ],
@@ -718,26 +654,30 @@ def test_el_responsable_carga_el_resultado_y_el_sistema_calcula_el_porcentaje(eq
 
     assert respuesta.status_code == 200, respuesta.data
     datos = respuesta.json()
-    # El porcentaje no se digita: lo calcula el motor, y de ahí sale el color.
+    # El % es el que registró la persona, y de ahí sale el color.
     assert datos['porcentajeCumplimiento'] == '90.00'
     assert datos['semaforo'] == Semaforo.NARANJA
+    # Queda pendiente hasta que el jefe revise la evidencia y lo apruebe.
     assert datos['estadoValidacion'] == EstadoValidacion.PENDIENTE
     assert datos['evidencias'][0]['linkSoporte'] == 'https://supli.sharepoint.com/tablero'
 
 
 def test_el_resultado_lo_carga_el_responsable_no_cualquiera(app_performance, equipo):
-    """Para los asesores de PDV el responsable es su Trade Leader, no ellos."""
     jefe, julian, daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100', responsable_resultado=jefe)
     _empezar_el_mes(objetivo.periodo)
 
     ajeno = cliente_de(daniel).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
     assert ajeno.status_code == 403
 
     del_responsable = cliente_de(jefe).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
     assert del_responsable.status_code == 200, del_responsable.data
 
@@ -747,7 +687,9 @@ def test_no_se_carga_el_resultado_de_un_mes_que_no_ha_empezado(equipo):
     objetivo = objetivo_de(julian, jefe, '100')
 
     respuesta = cliente_de(julian).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
 
     assert respuesta.status_code == 400
@@ -759,7 +701,9 @@ def test_el_jefe_valida_el_resultado_y_quien_lo_cargo_no(equipo):
     objetivo = objetivo_de(julian, jefe, '100')
     _empezar_el_mes(objetivo.periodo)
     cliente_de(julian).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
 
     propio = cliente_de(julian).post(
@@ -788,7 +732,7 @@ def test_el_colaborador_carga_su_resultado_y_el_jefe_tambien_puede(equipo, app_p
     objetivo = objetivo_de(julian, jefe, '100')
     _empezar_el_mes(objetivo.periodo)
     ruta = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
-    cuerpo = {'resultadoEjecutado': '1'}
+    cuerpo = {'porcentajeCumplimiento': '100'}
 
     assert cliente_de(julian).put(ruta, cuerpo, format='json').status_code == 200
     assert cliente_de(jefe).put(ruta, cuerpo, format='json').status_code == 200
@@ -802,7 +746,9 @@ def test_el_jefe_que_cargo_el_resultado_tambien_lo_valida(equipo):
     objetivo = objetivo_de(julian, jefe, '100', responsable_resultado=jefe)
     _empezar_el_mes(objetivo.periodo)
     cliente_de(jefe).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
 
     validado = cliente_de(jefe).post(
@@ -818,7 +764,7 @@ def test_el_jefe_deja_feedback_sin_pisar_la_observacion_del_colaborador(equipo):
     _empezar_el_mes(objetivo.periodo)
     cliente_de(julian).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
-        {'resultadoEjecutado': '1', 'observacion': 'Entregado el viernes.'},
+        {'porcentajeCumplimiento': '100', 'observacion': 'Entregado el viernes.'},
         format='json',
     )
     ruta = f'{RUTA}/objetivos/{objetivo.pk}/feedback'
@@ -860,13 +806,13 @@ def test_el_historial_guarda_cada_paso_con_su_motivo(equipo):
     resultado = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
     validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
 
-    cliente_de(julian).put(resultado, {'resultadoEjecutado': '0'}, format='json')
+    cliente_de(julian).put(resultado, {'porcentajeCumplimiento': '0'}, format='json')
     cliente_de(jefe).post(
         validar, {'estado': 'rechazado', 'observacion': 'Falta el acta.'}, format='json'
     )
     acta = {'nombre': 'Acta', 'linkSoporte': 'https://supli.sharepoint.com/acta'}
     cliente_de(julian).put(
-        resultado, {'resultadoEjecutado': '1', 'evidencias': [acta]}, format='json'
+        resultado, {'porcentajeCumplimiento': '100', 'evidencias': [acta]}, format='json'
     )
     cliente_de(jefe).post(
         f'{RUTA}/objetivos/{objetivo.pk}/feedback', {'feedback': 'Ahora sí.'}, format='json'
@@ -885,9 +831,9 @@ def test_el_historial_guarda_cada_paso_con_su_motivo(equipo):
     rechazo = historial[1]
     assert rechazo['comentario'] == 'Falta el acta.'
     assert rechazo['autorNombre'] == jefe.full_name
-    # Cada paso guarda el valor de ese momento, aunque después se corrija.
-    assert float(historial[0]['resultadoEjecutado']) == 0
-    assert float(historial[2]['resultadoEjecutado']) == 1
+    # Cada paso guarda el % de ese momento, aunque después se corrija.
+    assert float(historial[0]['porcentajeCumplimiento']) == 0
+    assert float(historial[2]['porcentajeCumplimiento']) == 100
     # Y las evidencias de ese momento: así el jefe ve «antes → ahora».
     assert historial[0]['evidencias'] == []
     assert historial[2]['evidencias'] == [acta]
@@ -899,18 +845,110 @@ def test_corregir_el_resultado_devuelve_la_validacion_a_pendiente(equipo):
     _empezar_el_mes(objetivo.periodo)
     cliente = cliente_de(julian)
     cliente.put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
     cliente_de(jefe).post(
         f'{RUTA}/objetivos/{objetivo.pk}/validar', {'estado': 'validado'}, format='json'
     )
 
     corregido = cliente.put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '0'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'porcentajeCumplimiento': '0'}, format='json'
     )
 
     assert corregido.json()['estadoValidacion'] == EstadoValidacion.PENDIENTE
     assert corregido.json()['porcentajeCumplimiento'] == '0.00'
+
+
+# ── Asesores y promotores: carga el jefe, aprueba el Trade Marketing Manager ─
+
+
+def _con_resultado_de(objetivo, quien, porcentaje='95'):
+    return cliente_de(quien).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': porcentaje},
+        format='json',
+    )
+
+
+def test_el_asesor_no_registra_su_resultado_lo_registra_su_jefe(punto_de_venta):
+    tmm, lider, asesor, promotora = punto_de_venta
+    del_asesor = objetivo_de(asesor, lider, '100')
+    de_la_promotora = objetivo_de(promotora, lider, '100')
+    _empezar_el_mes(del_asesor.periodo)
+
+    propio = _con_resultado_de(del_asesor, asesor)
+    assert propio.status_code == 403
+    assert 'jefe inmediato' in str(propio.data)
+    assert _con_resultado_de(de_la_promotora, promotora).status_code == 403
+    # Tampoco lo registra el Trade Marketing Manager: él lo aprueba.
+    assert _con_resultado_de(del_asesor, tmm).status_code == 403
+
+    assert _con_resultado_de(del_asesor, lider).status_code == 200
+    assert _con_resultado_de(de_la_promotora, lider).status_code == 200
+
+
+def test_el_resultado_del_asesor_lo_aprueba_el_trade_marketing_manager(punto_de_venta):
+    tmm, lider, asesor, _promotora = punto_de_venta
+    objetivo = objetivo_de(asesor, lider, '100')
+    _empezar_el_mes(objetivo.periodo)
+    _con_resultado_de(objetivo, lider)
+    validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
+
+    # El Trade Leader registró el %: no lo aprueba él.
+    del_lider = cliente_de(lider).post(validar, {'estado': 'validado'}, format='json')
+    assert del_lider.status_code == 403
+    assert tmm.full_name in str(del_lider.data)
+
+    del_tmm = cliente_de(tmm).post(
+        validar, {'estado': 'validado', 'observacion': 'Evidencia revisada.'}, format='json'
+    )
+    assert del_tmm.status_code == 200, del_tmm.data
+    assert del_tmm.json()['validadoPorNombre'] == tmm.full_name
+
+
+def test_el_tmm_ve_a_los_asesores_que_aprueba_pero_no_les_define_objetivos(punto_de_venta):
+    tmm, lider, asesor, promotora = punto_de_venta
+    objetivo_de(asesor, lider, '100')
+    cliente = cliente_de(tmm)
+
+    opciones = cliente.get(f'{RUTA}/opciones').json()
+    assert {p['id'] for p in opciones['equipo']} == {lider.pk}
+    assert {p['id'] for p in opciones['apruebaResultados']} == {asesor.pk, promotora.pk}
+    ficha = next(p for p in opciones['apruebaResultados'] if p['id'] == asesor.pk)
+    assert ficha['asesorOPromotor'] is True
+    assert ficha['aprobador'] == tmm.full_name
+
+    filas = cliente.get(f'{RUTA}/objetivos?colaborador={asesor.pk}&periodo={MES}').json()
+    assert len(filas) == 1
+    assert (filas[0]['puedeCargar'], filas[0]['puedeValidar']) == (False, True)
+    assert filas[0]['aprobadorNombre'] == tmm.full_name
+
+    nuevo = cliente.post(
+        f'{RUTA}/objetivos',
+        {
+            'colaborador': promotora.pk,
+            'periodo': OCTUBRE.isoformat(),
+            'objetivo': 'Vender 20 líneas',
+            'kpi': 'Líneas activadas',
+            'peso': '10',
+        },
+        format='json',
+    )
+    assert nuevo.status_code == 403
+
+
+def test_el_lider_ve_quien_carga_y_quien_aprueba_a_su_asesor(punto_de_venta):
+    _tmm, lider, asesor, _promotora = punto_de_venta
+    objetivo_de(asesor, lider, '100')
+
+    filas = cliente_de(lider).get(f'{RUTA}/objetivos?colaborador={asesor.pk}&periodo={MES}')
+
+    assert (filas.json()[0]['puedeCargar'], filas.json()[0]['puedeValidar']) == (True, False)
+    # Y el asesor, en «Mis objetivos», ve que no le toca cargar.
+    propios = cliente_de(asesor).get(f'{RUTA}/mis-objetivos?periodo={MES}').json()
+    assert propios[0]['puedeCargar'] is False
 
 
 # ── Cortes de tiempo (A8) ──────────────────────────────────────────────────
@@ -928,16 +966,10 @@ def test_el_q_es_trimestral_no_de_cuatro_meses():
 def test_el_acumulado_pondera_lo_medido_y_pinta_el_semaforo(equipo):
     jefe, julian, _daniel = equipo
     mes = primer_dia(date.today())
-    dos = objetivo_de(
-        julian, jefe, '50', periodo=mes, tipo_medicion=TipoMedicion.PROPORCIONAL,
-        meta_valor=Decimal('10'),
-    )
-    objetivo_de(
-        julian, jefe, '50', periodo=mes, tipo_medicion=TipoMedicion.PROPORCIONAL,
-        meta_valor=Decimal('10'),
-    )
+    dos = objetivo_de(julian, jefe, '50', periodo=mes)
+    objetivo_de(julian, jefe, '50', periodo=mes, objetivo='Otro objetivo')
     cliente_de(julian).put(
-        f'{RUTA}/objetivos/{dos.pk}/resultado', {'resultadoEjecutado': '8'}, format='json'
+        f'{RUTA}/objetivos/{dos.pk}/resultado', {'porcentajeCumplimiento': '80'}, format='json'
     )
 
     datos = cliente_de(jefe).get(
@@ -982,7 +1014,9 @@ def test_el_top_lo_ve_todo_el_mundo_y_solo_lleva_a_los_medidos(equipo):
     objetivo_de(daniel, jefe, '100', periodo=mes)
     _empezar_el_mes(mes)
     cliente_de(julian).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado', {'resultadoEjecutado': '1'}, format='json'
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
     )
 
     # Daniel es un colaborador sin equipo: el tablero no es para él…
@@ -996,7 +1030,11 @@ def test_el_top_lo_ve_todo_el_mundo_y_solo_lleva_a_los_medidos(equipo):
 # ── Carga de objetivos por Excel ───────────────────────────────────────────
 
 
-ENCABEZADOS_EXCEL = (
+ENCABEZADOS_EXCEL = ('objetivo', 'kpi', 'peso', 'fuente_datos')
+
+#: Una plantilla de la metodología anterior, con tipo de medición, meta y
+#: fórmula, y con el responsable por correo: se sigue leyendo, sin esas columnas.
+ENCABEZADOS_VIEJOS = (
     'objetivo',
     'kpi',
     'tipo_medicion',
@@ -1026,13 +1064,13 @@ def _xlsx(filas, encabezados=ENCABEZADOS_EXCEL):
     return buffer
 
 
-def _fila(objetivo='Entregar el portal', peso='50', tipo='proporcional', meta='10', **extra):
+def _fila(objetivo='Entregar el portal', peso='50', encabezados=ENCABEZADOS_EXCEL, **extra):
     valores = {
         'objetivo': objetivo,
         'kpi': 'Portal en producción',
-        'tipo_medicion': tipo,
-        'unidad': 'porcentaje',
-        'meta': meta,
+        'tipo_medicion': 'proporcional',
+        'unidad': 'unidades',
+        'meta': '10',
         'peso': peso,
         'umbral_cumplimiento': None,
         'permite_sobrecumplimiento': 'No',
@@ -1041,14 +1079,14 @@ def _fila(objetivo='Entregar el portal', peso='50', tipo='proporcional', meta='1
         'responsable_correo': None,
     }
     valores.update(extra)
-    return tuple(valores[columna] for columna in ENCABEZADOS_EXCEL)
+    return tuple(valores[columna] for columna in encabezados)
 
 
-def _importar(cliente, colaborador, filas, modo='agregar'):
+def _importar(cliente, colaborador, filas, modo='agregar', encabezados=ENCABEZADOS_EXCEL):
     return cliente.post(
         f'{RUTA}/objetivos/importar',
         {
-            'archivo': _xlsx(filas),
+            'archivo': _xlsx(filas, encabezados),
             'colaborador': colaborador.pk,
             'periodo': OCTUBRE.isoformat(),
             'modo': modo,
@@ -1066,11 +1104,8 @@ def test_la_plantilla_de_objetivos_trae_encabezados_e_instrucciones(equipo):
     assert respuesta['Content-Disposition'].endswith('.xlsx"')
     libro = openpyxl.load_workbook(BytesIO(respuesta.content))
     assert libro.sheetnames == ['Datos', 'Instrucciones']
-    # La plantilla ya no trae «responsable_correo» (el responsable es siempre el jefe);
-    # los archivos de prueba la conservan para comprobar que uno viejo se sigue leyendo.
-    assert [celda.value for celda in libro['Datos'][1]] == [
-        columna for columna in ENCABEZADOS_EXCEL if columna != 'responsable_correo'
-    ]
+    # Sin tipo de medición, meta ni fórmula: todo se mide en % de cumplimiento.
+    assert [celda.value for celda in libro['Datos'][1]] == list(ENCABEZADOS_EXCEL)
     texto = ' '.join(
         str(celda.value)
         for fila in libro['Instrucciones'].iter_rows()
@@ -1078,7 +1113,7 @@ def test_la_plantilla_de_objetivos_trae_encabezados_e_instrucciones(equipo):
         if celda.value
     )
     assert 'deben sumar 100' in texto
-    assert 'proporcional_inverso' in texto
+    assert '% de cumplimiento' in texto
 
 
 def test_el_jefe_carga_los_objetivos_de_su_equipo_por_excel(equipo):
@@ -1087,10 +1122,7 @@ def test_el_jefe_carga_los_objetivos_de_su_equipo_por_excel(equipo):
     respuesta = _importar(
         cliente_de(jefe),
         julian,
-        [
-            _fila('Entregar el portal', peso='60'),
-            _fila('Publicar tableros', peso='40', tipo='binario', meta=None, unidad='si_no'),
-        ],
+        [_fila('Entregar el portal', peso='60'), _fila('Publicar tableros', peso='40')],
     )
 
     assert respuesta.status_code == 200, respuesta.data
@@ -1102,8 +1134,7 @@ def test_el_jefe_carga_los_objetivos_de_su_equipo_por_excel(equipo):
     assert objetivos.count() == 2
     # El registrado_por es quien sube el archivo, no quien lo llenó.
     assert objetivos.first().registrado_por == jefe
-    # El binario no guarda meta, como en el formulario.
-    assert objetivos.get(tipo_medicion='binario').meta_valor is None
+    assert set(objetivos.values_list('tipo_medicion', flat=True)) == {TipoMedicion.PORCENTAJE}
 
 
 def test_el_excel_no_pasa_de_cien_entre_todas_las_filas(equipo):
@@ -1152,25 +1183,38 @@ def test_una_fila_mala_cancela_toda_la_carga(equipo):
     respuesta = _importar(
         cliente_de(jefe),
         julian,
-        [
-            _fila('Buena', peso='50'),
-            _fila('Sin meta', peso='50', tipo='proporcional', meta=None),
-        ],
+        [_fila('Buena', peso='50'), _fila('Sin peso', peso='0')],
     )
 
     assert respuesta.status_code == 400
     assert respuesta.data['filas'][0]['fila'] == 3
-    assert 'meta' in str(respuesta.data['filas'][0]['errores']).lower()
+    assert 'peso' in str(respuesta.data['filas'][0]['errores']).lower()
     assert Objetivo.objects.count() == 0
 
 
-def test_el_excel_avisa_si_el_tipo_de_medicion_no_existe(equipo):
+def test_un_excel_viejo_se_sigue_leyendo_y_queda_en_porcentaje(equipo):
+    """Las columnas de la metodología anterior no rompen la carga ni se guardan."""
     jefe, julian, _daniel = equipo
 
-    respuesta = _importar(cliente_de(jefe), julian, [_fila('Uno', tipo='a-ojo')])
+    respuesta = _importar(
+        cliente_de(jefe),
+        julian,
+        [
+            _fila(
+                'Uno',
+                peso='100',
+                encabezados=ENCABEZADOS_VIEJOS,
+                tipo_medicion='a-ojo',
+                formula='logrado * 2',
+            )
+        ],
+        encabezados=ENCABEZADOS_VIEJOS,
+    )
 
-    assert respuesta.status_code == 400
-    assert 'tipo_medicion' in str(respuesta.data)
+    assert respuesta.status_code == 200, respuesta.data
+    objetivo = Objetivo.objects.get()
+    assert objetivo.tipo_medicion == TipoMedicion.PORCENTAJE
+    assert (objetivo.meta_valor, objetivo.formula) == (None, '')
 
 
 def test_el_responsable_del_resultado_es_siempre_el_jefe_directo(equipo):
@@ -1179,7 +1223,17 @@ def test_el_responsable_del_resultado_es_siempre_el_jefe_directo(equipo):
 
     # Un archivo viejo que todavía trae la columna no la impone.
     respuesta = _importar(
-        cliente_de(jefe), julian, [_fila('Uno', peso='100', responsable_correo=daniel.email)]
+        cliente_de(jefe),
+        julian,
+        [
+            _fila(
+                'Uno',
+                peso='100',
+                encabezados=ENCABEZADOS_VIEJOS,
+                responsable_correo=daniel.email,
+            )
+        ],
+        encabezados=ENCABEZADOS_VIEJOS,
     )
     assert respuesta.status_code == 200, respuesta.data
     assert Objetivo.objects.get().responsable_resultado == jefe
@@ -1231,10 +1285,7 @@ def test_la_plantilla_se_llena_y_se_sube_tal_cual(equipo):
     libro = openpyxl.load_workbook(BytesIO(descargada.content))
     hoja = libro['Datos']
     hoja.delete_rows(2)  # la fila de ejemplo
-    hoja.append(
-        ['Entregar el portal', 'Portal en producción', 'proporcional', 'porcentaje',
-         90, 100, None, 'No', None, 'Tablero de BI', None]
-    )
+    hoja.append(['Entregar el portal', 'Portal en producción', 100, 'Tablero de BI'])
     buffer = BytesIO()
     libro.save(buffer)
     buffer.seek(0)
@@ -1248,5 +1299,6 @@ def test_la_plantilla_se_llena_y_se_sube_tal_cual(equipo):
 
     assert respuesta.status_code == 200, respuesta.data
     objetivo = Objetivo.objects.get()
-    assert objetivo.meta_valor == Decimal('90.00')
     assert objetivo.peso == Decimal('100.00')
+    assert objetivo.fuente_datos == 'Tablero de BI'
+    assert objetivo.tipo_medicion == TipoMedicion.PORCENTAJE

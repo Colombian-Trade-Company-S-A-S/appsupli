@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import type { AccionHistorial, Objetivo } from '../api';
-import { esEnlaceSeguro, fechaHora, porcentajeLegible, valorLegible } from '../flujo';
+import { esEnlaceSeguro, fechaHora, porcentajeLegible } from '../flujo';
 
 /**
  * Cómo se nombra y se pinta cada paso. Se usan las mismas palabras del flujo
@@ -55,7 +55,7 @@ const ESTILO: Record<
 /**
  * El historial del resultado, del más reciente al más viejo.
  *
- * Muestra quién cargó o corrigió (con el valor, el % y las evidencias de ese
+ * Muestra quién cargó o corrigió (con el % y las evidencias de ese
  * momento), quién aprobó o devolvió y por qué. Lo ven el colaborador, su jefe,
  * People y admin: los mismos que pueden ver el objetivo.
  */
@@ -94,13 +94,7 @@ export function HistorialResultado({ objetivo }: { objetivo: Objetivo }) {
               </p>
               <p className="text-xs text-muted-foreground">
                 {paso.autorNombre || 'Sin autor registrado'}
-                {esCarga && (
-                  <>
-                    {' '}
-                    · {valorLegible(objetivo, paso.resultadoEjecutado)} ·{' '}
-                    {porcentajeLegible(paso.porcentajeCumplimiento)}
-                  </>
-                )}
+                {esCarga && <> · {porcentajeLegible(paso.porcentajeCumplimiento)}</>}
               </p>
               {paso.comentario && (
                 <p className="mt-1.5 text-pretty whitespace-pre-line">

@@ -90,10 +90,17 @@ export default function ObjetivosEquipoPage() {
   const compania = opciones?.compania ?? [];
   const puedeVerCompania = compania.length > 0;
   const mostrarCompania = puedeVerCompania && (verCompania || aCargo.length === 0);
-  const equipo = mostrarCompania ? compania : aCargo;
+  const base = mostrarCompania ? compania : aCargo;
+  // Asesores y promotores de sus líderes: el Trade Marketing Manager no les
+  // define objetivos, pero aprueba su resultado, así que también los ve.
+  const soloAprueba = (opciones?.apruebaResultados ?? []).filter(
+    (persona) => !base.some((otra) => otra.id === persona.id),
+  );
+  const equipo = [...base, ...soloAprueba];
   const periodoElegido = periodo || periodoPorDefecto(periodos);
   // Sin el seleccionado explícito se trabaja sobre el primero del equipo.
   const colaborador = equipo.find((persona) => String(persona.id) === colaboradorId) ?? equipo[0];
+  const soloRevision = soloAprueba.some((persona) => persona.id === colaborador?.id);
 
   const { data: objetivos = [], isLoading } = useObjetivos({
     colaborador: colaborador?.id,
@@ -145,14 +152,16 @@ export default function ObjetivosEquipoPage() {
   const completos = ponderacion?.objetivos ?? 0;
   // El mes se congela solo cuando empieza (A9). Lo dice el backend, que es
   // quien conoce la fecha y la excepción que haya autorizado People.
-  const editable = resumen?.editable ?? true;
+  // Al asesor de otro líder solo se le revisa el resultado: sus objetivos los
+  // define su jefe directo.
+  const editable = (resumen?.editable ?? true) && !soloRevision;
   const empezado = periodoElegido.slice(0, 7) <= mesEnCurso();
 
   return (
     <div className="flex flex-col gap-6">
       <Encabezado
         titulo="Registrar objetivos y KPIs"
-        descripcion="Los objetivos los define el jefe. El colaborador los consulta y, cuando el mes empieza, carga su resultado con la evidencia."
+        descripcion="Los objetivos los define el jefe. Cuando el mes empieza, el colaborador registra su % de cumplimiento (0 a 100) con la evidencia y el jefe lo aprueba."
       >
         <EstadoDelMes estado={estadoPeriodo} label={resumen?.estadoLabel ?? 'En definición'} />
         {opciones.capacidades.puedeGestionarPeriodos && enDefinicion && (
@@ -174,10 +183,13 @@ export default function ObjetivosEquipoPage() {
               setColaboradorId(valor);
               setEditando(undefined);
             }}
-            opciones={equipo.map((persona) => ({
-              value: String(persona.id),
-              label: persona.cargo ? `${persona.nombre} — ${persona.cargo}` : persona.nombre,
-            }))}
+            opciones={equipo.map((persona) => {
+              const nombre = persona.cargo ? `${persona.nombre} — ${persona.cargo}` : persona.nombre;
+              return {
+                value: String(persona.id),
+                label: soloAprueba.includes(persona) ? `${nombre} · apruebas su resultado` : nombre,
+              };
+            })}
           />
           {puedeVerCompania && aCargo.length > 0 && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -211,8 +223,13 @@ export default function ObjetivosEquipoPage() {
           {colaborador?.area && <>Área: {colaborador.area} · </>}
           {colaborador?.direccion && <>Dirección: {colaborador.direccion} · </>}
           Jefe: {colaborador?.jefe || '—'}
+          {colaborador?.asesorOPromotor && colaborador.aprobador && (
+            <> · Aprueba: {colaborador.aprobador}</>
+          )}
           <br />
-          Al iniciar la medición, los objetivos del mes se congelan.
+          {soloRevision
+            ? 'Sus objetivos los define su jefe directo; tú apruebas el % que él registra.'
+            : 'Al iniciar la medición, los objetivos del mes se congelan.'}
         </p>
       </div>
 
@@ -233,8 +250,8 @@ export default function ObjetivosEquipoPage() {
       <BannerPonderacion ponderacion={ponderacion} />
 
       <AvisoCongelado
-        motivo={resumen?.motivo ?? ''}
-        edicionHabilitada={!!resumen?.edicionHabilitada}
+        motivo={soloRevision ? '' : (resumen?.motivo ?? '')}
+        edicionHabilitada={!soloRevision && !!resumen?.edicionHabilitada}
       >
         {opciones.capacidades.puedeGestionarPeriodos && (
           <Button
@@ -261,14 +278,13 @@ export default function ObjetivosEquipoPage() {
               {editando ? 'Editar objetivo' : 'Nuevo objetivo'}
             </CardTitle>
             <CardDescription>
-              Campos mínimos según el framework. El % de cumplimiento nunca se digita: lo calcula el
-              sistema según el tipo de medición.
+              Todos los objetivos se miden igual: con el % de cumplimiento, de 0 a 100, que se
+              registra con su evidencia y aprueba el jefe.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {colaborador && (
               <FormularioObjetivo
-                opciones={opciones}
                 colaborador={colaborador}
                 periodo={periodoElegido}
                 disponible={disponible}
@@ -302,14 +318,17 @@ export default function ObjetivosEquipoPage() {
         >
           <TablaObjetivos
             objetivos={objetivos}
+            soloLectura={soloRevision}
             onEditar={setEditando}
             onEliminar={setPorBorrar}
             onCargar={setCargando}
-            // El colaborador carga su resultado; el jefe lo revisa acá (ve lo
-            // cargado, deja feedback, valida o devuelve) y también puede
-            // cargarlo por él. Antes de que empiece el mes no hay qué cargar.
+            // El colaborador registra su %; el jefe lo revisa acá (ve lo
+            // cargado, deja feedback, aprueba o devuelve) y también puede
+            // registrarlo por él. Con asesores y promotores lo registra el
+            // jefe y lo aprueba el Trade Marketing Manager: el backend dice
+            // quién puede qué. Antes de que empiece el mes no hay qué cargar.
             onRevisar={(objetivo) => setRevisandoId(objetivo.id)}
-            puedeCargar={() => empezado}
+            puedeCargar={(objetivo) => empezado && objetivo.puedeCargar}
           />
         </EstadoTabla>
         <div className="px-6 pb-6">
@@ -320,9 +339,9 @@ export default function ObjetivosEquipoPage() {
       <Dialog open={!!cargando} onOpenChange={(abierto) => !abierto && setCargando(null)}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Cargar resultado</DialogTitle>
+            <DialogTitle>Registrar cumplimiento</DialogTitle>
             <DialogDescription>
-              Lo ejecutado del mes y sus soportes. El % de cumplimiento lo calcula el sistema.
+              El % de cumplimiento del mes, de 0 a 100, con los soportes que lo respaldan.
             </DialogDescription>
           </DialogHeader>
           {cargando && (
@@ -336,8 +355,8 @@ export default function ObjetivosEquipoPage() {
           <DialogHeader>
             <DialogTitle>Revisar resultado — {colaborador?.nombre}</DialogTitle>
             <DialogDescription>
-              Lo que cargó y sus evidencias; si es una corrección, qué cambió desde que lo
-              devolviste. Apruébalo o devuélvelo explicando qué corregir.
+              El % registrado y sus evidencias; si es una corrección, qué cambió desde que se
+              devolvió. Verifica que la evidencia respalde el % antes de aprobarlo.
             </DialogDescription>
           </DialogHeader>
           {enRevision && (

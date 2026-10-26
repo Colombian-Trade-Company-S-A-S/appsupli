@@ -9,7 +9,7 @@ sirve para varias personas.
 """
 from apps.core.excel import Columna
 
-from .models import MAXIMO_OBJETIVOS, TipoMedicion, Unidad
+from .models import MAXIMO_OBJETIVOS
 
 #: Los encabezados de la plantilla, en el orden en que se llenan.
 COLUMNAS = [
@@ -20,63 +20,14 @@ COLUMNAS = [
     ),
     Columna(
         'kpi',
-        ayuda='Con qué se mide ese objetivo.',
+        ayuda='Con qué se mide ese objetivo: lo que el jefe revisa en la evidencia.',
         ejemplo='Portal en producción',
-    ),
-    Columna(
-        'tipo_medicion',
-        tipo='opcion',
-        opciones=list(TipoMedicion.values),
-        ayuda=(
-            'binario: cumple o no cumple · proporcional: meta a alcanzar (más es mejor) · '
-            'proporcional_inverso: meta a reducir (menos es mejor) · cualitativa: 2 criterios · '
-            'formula: cálculo personalizado.'
-        ),
-        ejemplo=TipoMedicion.PROPORCIONAL.value,
-    ),
-    Columna(
-        'unidad',
-        tipo='opcion',
-        obligatoria=False,
-        opciones=list(Unidad.values),
-        ayuda='Opcional. Los binarios y las cualitativas no la necesitan.',
-        ejemplo=Unidad.PORCENTAJE.value,
-    ),
-    Columna(
-        'meta',
-        tipo='decimal',
-        obligatoria=False,
-        ayuda=(
-            'Obligatoria en proporcional y proporcional_inverso. '
-            'Los binarios y las cualitativas se dejan en blanco.'
-        ),
-        ejemplo='90',
     ),
     Columna(
         'peso',
         tipo='decimal',
         ayuda='% de ponderación. Entre todos los objetivos del mes deben sumar 100.',
         ejemplo='40',
-    ),
-    Columna(
-        'umbral_cumplimiento',
-        tipo='decimal',
-        obligatoria=False,
-        ayuda='Opcional. Desde dónde cuenta como cumplido para este objetivo.',
-        ejemplo='',
-    ),
-    Columna(
-        'permite_sobrecumplimiento',
-        tipo='si_no',
-        obligatoria=False,
-        ayuda='Sí solo donde aplique (ventas, unidades). Por defecto queda topado en 100%.',
-        ejemplo='No',
-    ),
-    Columna(
-        'formula',
-        obligatoria=False,
-        ayuda='Solo para el tipo «formula». Se escribe con logrado y meta.',
-        ejemplo='',
     ),
     Columna(
         'fuente_datos',
@@ -89,7 +40,8 @@ COLUMNAS = [
 NOTA = (
     f'Una fila por objetivo, máximo {MAXIMO_OBJETIVOS} por persona y mes. La suma de la '
     'columna «peso» debe dar exactamente 100: si no llega, el mes no se puede poner en '
-    'medición. El % de cumplimiento no va en el archivo, lo calcula el sistema con el tipo '
-    'de medición. Los objetivos se cargan hasta el último día del mes anterior; después el '
-    'mes queda congelado.'
+    'medición. Todos los objetivos se miden igual, con el % de cumplimiento: no va en el '
+    'archivo, se registra en la plataforma de 0 a 100 cuando empieza el mes, con su '
+    'evidencia, y lo aprueba el jefe. Los objetivos se cargan hasta el último día del mes '
+    'anterior; después el mes queda congelado.'
 )

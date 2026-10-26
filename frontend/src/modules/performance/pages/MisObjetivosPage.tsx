@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ListChecksIcon, LockIcon } from 'lucide-react';
+import { InfoIcon, ListChecksIcon, LockIcon } from 'lucide-react';
 import {
   Badge,
   Card,
@@ -9,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/components/ui';
-import { useAuth } from '@/core/auth';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
 import { etiquetaMes, mesDe, mesEnCurso, periodoPorDefecto, type Objetivo } from '../api';
 import { useMisObjetivos, useOpcionesPerformance } from '../hooks';
@@ -24,7 +23,6 @@ import { TablaObjetivos } from '../components/TablaObjetivos';
  * botón de editar, porque el objetivo lo define el jefe.
  */
 export default function MisObjetivosPage() {
-  const { user } = useAuth();
   const { data: opciones } = useOpcionesPerformance();
   const periodos = opciones?.periodos ?? [];
   const [periodo, setPeriodo] = useState('');
@@ -35,11 +33,10 @@ export default function MisObjetivosPage() {
   const asignado = objetivos.reduce((total, objetivo) => total + Number(objetivo.peso), 0);
   const congelados = objetivos.some((objetivo) => !objetivo.editable);
   const empezado = elegido.slice(0, 7) <= mesEnCurso();
-  // En «Mis objetivos» el colaborador siempre carga su resultado y su evidencia
-  // (su jefe los aprueba). Si se designó a otra persona como responsable, esa
-  // persona también puede, y lo ve en esta lista cuando le toca.
-  const mio = (objetivo: Objetivo) =>
-    empezado && (objetivo.colaborador === user?.id || objetivo.responsableResultado === user?.id);
+  // En «Mis objetivos» el colaborador registra su % y su evidencia (su jefe los
+  // aprueba). Asesores y promotores no: a ellos se los registra su jefe.
+  const mio = (objetivo: Objetivo) => empezado && objetivo.puedeCargar;
+  const loRegistraElJefe = objetivos.length > 0 && objetivos.every((o) => !o.puedeCargar);
 
   return (
     <div className="flex flex-col gap-6">
@@ -84,6 +81,16 @@ export default function MisObjetivosPage() {
         />
       )}
 
+      {loRegistraElJefe && (
+        <p className="flex items-start gap-2 text-sm text-muted-foreground">
+          <InfoIcon className="mt-0.5 size-4 shrink-0" />
+          <span className="text-pretty">
+            El % de cumplimiento de tus objetivos lo registra tu jefe inmediato con la evidencia
+            {objetivos[0].aprobadorNombre ? ` y lo aprueba ${objetivos[0].aprobadorNombre}` : ''}.
+          </span>
+        </p>
+      )}
+
       <Card className="py-0">
         <EstadoTabla
           cargando={isLoading}
@@ -107,10 +114,10 @@ export default function MisObjetivosPage() {
       <Dialog open={!!cargando} onOpenChange={(abierto) => !abierto && setCargando(null)}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Cargar mi resultado</DialogTitle>
+            <DialogTitle>Registrar mi cumplimiento</DialogTitle>
             <DialogDescription>
-              Lo ejecutado del mes y el enlace del soporte. El % de cumplimiento lo calcula el
-              sistema; tu jefe lo valida después.
+              Tu % de cumplimiento del mes, de 0 a 100, con el enlace de la evidencia. Tu jefe la
+              revisa y lo aprueba.
             </DialogDescription>
           </DialogHeader>
           {cargando && (

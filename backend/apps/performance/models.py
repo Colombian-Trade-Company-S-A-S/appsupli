@@ -8,8 +8,8 @@ para la auditoría de fechas.
 
     Periodo    → el mes de medición y su estado (definición → medición → cerrado)
     Objetivo   → lo que se define para una persona en un mes (Fase 1)
-    Resultado  → lo ejecutado y su % de cumplimiento (Fase 2, modelado desde ya)
-    Evidencia  → el soporte de ese resultado (Fase 2, modelado desde ya)
+    Resultado  → el % de cumplimiento registrado y su validación (Fase 2)
+    Evidencia  → el soporte de ese resultado (Fase 2)
 
 La jerarquía no se reconstruye: quién es jefe de quién sale de `User.manager`,
 igual que en el módulo de valoración.
@@ -29,21 +29,21 @@ class EstadoPeriodo(models.TextChoices):
 
 class TipoMedicion(models.TextChoices):
     """
-    Cómo se calcula el cumplimiento. Agregar uno es agregar un caso al motor.
+    Cómo se mide el cumplimiento.
 
-    Las etiquetas son para el jefe que llena el formulario, sin términos
-    técnicos; el código es lo que usan el motor y la plantilla de Excel.
+    Desde octubre de 2026 hay un único criterio para toda la organización: el
+    % de cumplimiento, de 0 a 100, que registra el colaborador con su evidencia
+    y aprueba su jefe. Las métricas no son homogéneas entre operaciones, así
+    que el sistema ya no lo calcula. Los otros tipos quedan solo para leer los
+    objetivos que se definieron con la metodología anterior.
     """
 
+    PORCENTAJE = 'porcentaje', 'Porcentaje de cumplimiento'
     BINARIO = 'binario', 'Cumple o no cumple'
     PROPORCIONAL = 'proporcional', 'Meta a alcanzar'
     PROPORCIONAL_INVERSO = 'proporcional_inverso', 'Meta a reducir'
     CUALITATIVA = 'cualitativa', 'Cualitativa — entregables / hitos (2 criterios)'
     FORMULA = 'formula', 'Cálculo personalizado'
-
-
-#: Criterios de una meta cualitativa (A2): 2 de 2 = 100%, 1 de 2 = 50%, 0 = 0%.
-CRITERIOS_CUALITATIVOS = 2
 
 
 class Semaforo(models.TextChoices):
@@ -89,6 +89,9 @@ MAXIMO_OBJETIVOS = 6
 
 #: La ponderación de una persona en un mes debe sumar esto para poder medir.
 PONDERACION_COMPLETA = 100
+
+#: El % de cumplimiento que se registra va de 0 a esto: no hay sobrecumplimiento.
+CUMPLIMIENTO_MAXIMO = 100
 
 
 class Periodo(TimeStampedModel):
@@ -150,6 +153,9 @@ class Objetivo(TimeStampedModel):
     Objetivo y KPI viven en la misma fila, como en la especificación y en el
     mockup aprobado: un objetivo se mide con un indicador. El peso pondera la
     fila, y la suma de los pesos de una persona en un mes debe dar 100.
+
+    Unidad, meta, umbral, sobrecumplimiento y fórmula son de la metodología
+    anterior: los objetivos nuevos se miden en % y los dejan vacíos.
     """
 
     colaborador = models.ForeignKey(
@@ -172,7 +178,10 @@ class Objetivo(TimeStampedModel):
         'peso (%)', max_digits=5, decimal_places=2, validators=[MinValueValidator(0.01)]
     )
     tipo_medicion = models.CharField(
-        'tipo de medición', max_length=30, choices=TipoMedicion.choices
+        'tipo de medición',
+        max_length=30,
+        choices=TipoMedicion.choices,
+        default=TipoMedicion.PORCENTAJE,
     )
     unidad = models.CharField('unidad', max_length=20, choices=Unidad.choices, blank=True)
     meta_valor = models.DecimalField(
@@ -199,7 +208,7 @@ class Objetivo(TimeStampedModel):
         blank=True,
         related_name='objetivos_a_cargo',
         verbose_name='responsable del resultado',
-        help_text='Por defecto el colaborador; para asesores y promotores, su Trade Leader.',
+        help_text='Siempre el jefe directo del colaborador.',
     )
     estado = models.CharField(
         'estado', max_length=20, choices=EstadoObjetivo.choices, default=EstadoObjetivo.BORRADOR
@@ -221,10 +230,12 @@ class Objetivo(TimeStampedModel):
 
 class Resultado(TimeStampedModel):
     """
-    Lo ejecutado del objetivo. **Fase 2**: la tabla queda lista desde ahora.
+    El cumplimiento del objetivo en el mes.
 
-    `porcentaje_cumplimiento` nunca se digita: lo calcula el motor de cálculo a
-    partir del tipo de medición del objetivo.
+    `porcentaje_cumplimiento` lo registra quien carga el resultado, de 0 a 100,
+    con la evidencia que lo soporta; el jefe revisa esa evidencia y lo aprueba.
+    `resultado_ejecutado` es de la metodología anterior, cuando el sistema
+    calculaba el % a partir de lo ejecutado: solo queda en los registros viejos.
     """
 
     objetivo = models.OneToOneField(

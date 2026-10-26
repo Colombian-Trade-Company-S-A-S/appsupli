@@ -12,7 +12,6 @@ import {
   UploadIcon,
 } from 'lucide-react';
 import {
-  Badge,
   Button,
   Dialog,
   DialogContent,
@@ -37,28 +36,6 @@ import {
 } from '../flujo';
 import { HistorialResultado } from './HistorialResultado';
 import { SemaforoBadge } from './Piezas';
-
-/** Cómo se lee la meta según el tipo de medición, como en el mockup. */
-function metaLegible(objetivo: Objetivo): string {
-  const valor = objetivo.metaValor ? Number(objetivo.metaValor) : null;
-  const unidad =
-    objetivo.unidadLabel && objetivo.unidad !== 'si_no'
-      ? ` ${objetivo.unidadLabel.toLowerCase()}`
-      : '';
-  switch (objetivo.tipoMedicion) {
-    case 'binario':
-      return 'Cumple';
-    case 'cualitativa':
-      // Siempre son dos criterios: 2 de 2 es 100%, 1 de 2 es 50%.
-      return `${valor ?? 2} de ${valor ?? 2} criterios`;
-    case 'proporcional_inverso':
-      return valor === null ? '—' : `≤ ${valor}${unidad}`;
-    case 'formula':
-      return objetivo.formula || '—';
-    default:
-      return valor === null ? '—' : `${valor}${unidad}`;
-  }
-}
 
 /** El color de cada estado del flujo: lo que pide una acción se nota. */
 const ESTILO_REVISION: Record<EstadoRevision, { icono: LucideIcon; clase: string }> = {
@@ -120,19 +97,11 @@ function ComentarioDeLaDecision({ objetivo }: { objetivo: Objetivo }) {
   );
 }
 
-const TIPO_CORTO: Record<Objetivo['tipoMedicion'], string> = {
-  binario: 'Cumple o no',
-  proporcional: 'Meta a alcanzar',
-  proporcional_inverso: 'Meta a reducir',
-  cualitativa: 'Cualitativa',
-  formula: 'Cálculo personalizado',
-};
-
 /**
  * La tabla de objetivos del mes.
  *
- * Muestra el cumplimiento cuando ya hay resultado cargado; mientras no lo
- * haya, la columna dice «sin cargar» y no se pinta de rojo: no es una brecha,
+ * Muestra el % de cumplimiento cuando ya está registrado; mientras no lo
+ * esté, la columna dice «sin cargar» y no se pinta de rojo: no es una brecha,
  * es un dato que todavía no está.
  */
 export function TablaObjetivos({
@@ -149,9 +118,9 @@ export function TablaObjetivos({
   onEditar?: (objetivo: Objetivo) => void;
   onEliminar?: (objetivo: Objetivo) => void;
   onCargar?: (objetivo: Objetivo) => void;
-  /** Abre la revisión del jefe: ver lo cargado (o qué cambió) y aprobar o devolver. */
+  /** Abre la revisión: ver lo cargado (o qué cambió) y, si le toca, aprobar o devolver. */
   onRevisar?: (objetivo: Objetivo) => void;
-  /** Quién puede cargar el resultado de esta fila (el colaborador, su jefe o el responsable). */
+  /** Si en esta fila se ofrece registrar el % (el backend dice quién puede; acá se suma el mes). */
   puedeCargar?: (objetivo: Objetivo) => boolean;
 }) {
   const [historialDe, setHistorialDe] = useState<Objetivo | null>(null);
@@ -167,8 +136,6 @@ export function TablaObjetivos({
         <TableHeader>
           <TableRow>
             <TableHead>Objetivo</TableHead>
-            <TableHead>Tipo</TableHead>
-            <TableHead>Meta</TableHead>
             <TableHead className="text-right">Peso</TableHead>
             <TableHead>Cumplimiento</TableHead>
             {conAcciones && <TableHead className="w-32" />}
@@ -183,14 +150,12 @@ export function TablaObjetivos({
                 {objetivo.fuenteDatos && (
                   <p className="text-xs text-muted-foreground">Fuente: {objetivo.fuenteDatos}</p>
                 )}
-              </TableCell>
-              <TableCell>
-                <Badge variant="secondary">{TIPO_CORTO[objetivo.tipoMedicion]}</Badge>
-                {objetivo.permiteSobrecumplimiento && (
-                  <p className="mt-1 text-xs text-muted-foreground">Permite &gt;100%</p>
+                {objetivo.aprobadorNombre && (
+                  <p className="text-xs text-muted-foreground">
+                    Aprueba: {objetivo.aprobadorNombre}
+                  </p>
                 )}
               </TableCell>
-              <TableCell className="tabular-nums">{metaLegible(objetivo)}</TableCell>
               <TableCell className="text-right font-medium tabular-nums">
                 {Number(objetivo.peso)}%
               </TableCell>
@@ -222,8 +187,8 @@ export function TablaObjetivos({
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label={`Cargar resultado de ${objetivo.objetivo}`}
-                        title="Cargar resultado y evidencia"
+                        aria-label={`Registrar el % de ${objetivo.objetivo}`}
+                        title="Registrar % de cumplimiento y evidencia"
                         onClick={() => onCargar(objetivo)}
                       >
                         <UploadIcon />
@@ -242,8 +207,8 @@ export function TablaObjetivos({
                   )}
                   {onRevisar &&
                     objetivo.resultado &&
-                    (porRevisar(objetivo.resultado) ? (
-                      // Le toca decidir al jefe: botón con texto, que se vea.
+                    (porRevisar(objetivo.resultado) && objetivo.puedeValidar ? (
+                      // Le toca decidir a quien aprueba: botón con texto, que se vea.
                       <Button size="sm" onClick={() => onRevisar(objetivo)}>
                         <EyeIcon data-icon="inline-start" />
                         Revisar

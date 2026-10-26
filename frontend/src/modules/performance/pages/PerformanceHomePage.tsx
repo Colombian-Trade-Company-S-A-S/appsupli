@@ -116,9 +116,10 @@ export default function PerformanceHomePage() {
           </CardTitle>
           <CardDescription>
             Los objetivos se definen antes de que el mes empiece; cuando arranca, quedan congelados.
-            Ya en curso, cada quien registra lo ejecutado con el enlace del soporte y el sistema
-            calcula solo el % de cumplimiento. De ahí salen el semáforo —verde ≥ 100%, naranja
-            85–99.9%, rojo &lt; 85%— y el Top Performance.
+            Ya en curso, cada quien registra su % de cumplimiento (0 a 100) con el enlace de la
+            evidencia, y su jefe la revisa y lo aprueba. Con asesores y promotores lo registra el
+            jefe inmediato y lo aprueba el Trade Marketing Manager. De ahí salen el semáforo —verde
+            ≥ 100%, naranja 85–99.9%, rojo &lt; 85%— y el Top Performance.
           </CardDescription>
         </CardHeader>
       </Card>

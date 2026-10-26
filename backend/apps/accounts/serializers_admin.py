@@ -1,4 +1,5 @@
 """Serializers del módulo de Administración (gestión de usuarios y accesos)."""
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.crypto import get_random_string
@@ -87,9 +88,10 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     Lo que describe a la persona en la organización —área, cargo, jefe,
     dirección, regional, cédula— viene de Odoo y aquí es de solo lectura. A
-    quien viene de Odoo tampoco se le cambia el nombre ni el correo. Desde
-    Administración se manejan los accesos: aplicaciones, roles, permisos,
-    contraseña, si está activo y si es admin.
+    quien viene de Odoo tampoco se le cambia el nombre ni el correo
+    corporativo; si no tiene corporativo, aquí se le pone su correo personal
+    para que pueda entrar. Desde Administración se manejan los accesos:
+    aplicaciones, roles, permisos, contraseña, si está activo y si es admin.
     """
 
     full_name = serializers.CharField(read_only=True)
@@ -119,6 +121,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         ],
     )
     puede_iniciar_sesion = serializers.BooleanField(read_only=True)
+    correo_editable = serializers.SerializerMethodField()
     departamento_nombre = serializers.CharField(source='departamento', read_only=True, default='')
 
     class Meta:
@@ -149,6 +152,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'is_active',
             'is_admin',
             'puede_iniciar_sesion',
+            'correo_editable',
             'last_login_at',
             'applications',
             'application_names',
@@ -164,7 +168,17 @@ class AdminUserSerializer(serializers.ModelSerializer):
         )
 
     #: Lo que manda Odoo de la persona misma; solo se edita en quien no viene de allá.
-    CAMPOS_PERSONALES_ODOO = ('first_name', 'last_name', 'email')
+    CAMPOS_PERSONALES_ODOO = ('first_name', 'last_name')
+
+    def get_correo_editable(self, usuario: User) -> bool:
+        """
+        El correo corporativo lo pone Odoo. Quien no tiene uno —asesores y
+        promotores de punto de venta— entra con su correo personal, y ese se
+        pone aquí. La sincronización no lo borra: solo lo reemplaza si Odoo
+        llega a tener un correo corporativo para esa persona.
+        """
+        dominio = settings.ODOO_DOMINIO_INGRESO.lower().lstrip('@')
+        return not usuario.odoo_id or not (usuario.email or '').lower().endswith(f'@{dominio}')
 
     def validate_kind(self, value):
         """
@@ -208,6 +222,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if instance.odoo_id:
             for campo in self.CAMPOS_PERSONALES_ODOO:
                 validated_data.pop(campo, None)
+        if not self.get_correo_editable(instance):
+            validated_data.pop('email', None)
         password = validated_data.pop('password', '')
         user = super().update(instance, validated_data)
         if password:

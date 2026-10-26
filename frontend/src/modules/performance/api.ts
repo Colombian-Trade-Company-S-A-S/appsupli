@@ -2,8 +2,6 @@ import { api, httpClient } from '@/shared/api/http-client';
 
 const RUTA = '/performance';
 
-export type TipoMedicion =
-  'binario' | 'proporcional' | 'proporcional_inverso' | 'cualitativa' | 'formula';
 export type EstadoPeriodo = 'definicion' | 'en_medicion' | 'cerrado';
 export type EstadoObjetivo = 'borrador' | 'activo' | 'congelado';
 /** El color del cumplimiento: verde ≥ 100, naranja 85–99.9, rojo < 85. */
@@ -20,13 +18,17 @@ export interface Persona {
   area: string;
   jefe: string;
   jefeId: number | null;
+  /** Asesores y promotores: su % lo registra el jefe y lo aprueba el jefe de su jefe. */
+  asesorOPromotor: boolean;
+  /** Quién aprueba su resultado. */
+  aprobador: string;
   direccion: string;
   organizacion: string;
   regional: string;
   puntoVenta: string;
 }
 
-/** Un objetivo con su KPI: la fila que se define y se pondera. */
+/** Un objetivo con su KPI: la fila que se define y se pondera. Se mide en % de cumplimiento. */
 export interface Objetivo {
   id: number;
   colaborador: number;
@@ -38,20 +40,17 @@ export interface Objetivo {
   objetivo: string;
   kpi: string;
   peso: string;
-  tipoMedicion: TipoMedicion;
-  tipoMedicionLabel: string;
-  unidad: string;
-  unidadLabel: string;
-  metaValor: string | null;
-  umbralCumplimiento: string | null;
-  permiteSobrecumplimiento: boolean;
-  topeCumplimiento: string;
-  formula: string;
   fuenteDatos: string;
   responsableResultado: number | null;
   responsableNombre: string;
+  /** Quién aprueba el resultado: el jefe, o el Trade Marketing Manager con asesores y promotores. */
+  aprobadorNombre: string;
   estado: EstadoObjetivo;
   editable: boolean;
+  /** Si quien consulta puede registrar el % de este objetivo. */
+  puedeCargar: boolean;
+  /** Si quien consulta puede aprobarlo o devolverlo. */
+  puedeValidar: boolean;
   resultado: Resultado | null;
   cumplimiento: number | null;
   semaforo: Semaforo | null;
@@ -66,11 +65,10 @@ export interface Evidencia {
   createdAt?: string;
 }
 
-/** Lo ejecutado de un objetivo. El porcentaje lo calcula el backend. */
+/** El % de cumplimiento de un objetivo (0 a 100), registrado con su evidencia. */
 export interface Resultado {
   id: number;
   objetivo: number;
-  resultadoEjecutado: string | null;
   porcentajeCumplimiento: string | null;
   semaforo: Semaforo | null;
   cargadoPor: number | null;
@@ -102,7 +100,6 @@ export interface PasoHistorial {
   autor: number | null;
   autorNombre: string;
   comentario: string;
-  resultadoEjecutado: string | null;
   porcentajeCumplimiento: string | null;
   /** Las evidencias de ese momento; `null` en registros viejos, donde no se sabe. */
   evidencias: Array<{ nombre: string; linkSoporte: string }> | null;
@@ -110,26 +107,20 @@ export interface PasoHistorial {
 }
 
 export interface ResultadoPayload {
-  resultadoEjecutado: string;
+  /** De 0 a 100. */
+  porcentajeCumplimiento: string;
   observacion?: string;
   evidencias?: Array<{ nombre?: string; linkSoporte: string }>;
 }
 
+/** El responsable no va: el backend pone siempre al jefe directo. */
 export interface ObjetivoPayload {
   colaborador: number;
   periodo: string;
   objetivo: string;
   kpi: string;
   peso: string;
-  tipoMedicion: TipoMedicion;
-  unidad: string;
-  metaValor: string | null;
-  umbralCumplimiento: string | null;
-  permiteSobrecumplimiento: boolean;
-  topeCumplimiento: string;
-  formula: string;
   fuenteDatos: string;
-  responsableResultado: number | null;
 }
 
 export interface PeriodoDisponible {
@@ -200,15 +191,19 @@ export interface Opcion {
 
 export interface OpcionesPerformance {
   periodos: PeriodoDisponible[];
-  tiposMedicion: Opcion[];
-  unidades: Opcion[];
   /** Las personas a cargo directo: con quienes se trabaja uno por uno. */
   equipo: Persona[];
   /** Toda la compañía; solo la trae quien puede definirle a cualquiera (People). */
   compania: Persona[];
+  /**
+   * A quiénes les aprueba el resultado sin ser su jefe: el Trade Marketing
+   * Manager con los asesores y promotores de sus líderes. No les define objetivos.
+   */
+  apruebaResultados: Persona[];
   maximoObjetivos: number;
   ponderacionCompleta: number;
-  criteriosCualitativos: number;
+  /** El % de cumplimiento va de 0 a este valor. */
+  cumplimientoMaximo: number;
   cortes: Corte[];
   semaforo: CortesSemaforo;
   capacidades: Capacidades;

@@ -13,7 +13,12 @@ reparte con roles desde Administración.
 
 Consultar los objetivos propios no necesita permiso: basta con tener el
 sub-módulo asignado.
+
+El resultado lo registra el colaborador y lo aprueba su jefe inmediato. Con
+asesores y promotores cambia: lo registra su jefe inmediato y lo aprueba el
+Trade Marketing Manager, que en el organigrama es el jefe de su jefe.
 """
+from django.db.models import Q
 from rest_framework.permissions import BasePermission
 
 #: El sub-módulo dentro del contenedor «Supli Performance».
@@ -22,6 +27,10 @@ APP_CODE = 'objetivos-kpis'
 MANAGE_ALL = 'performance:objetivos:manage_all'
 VIEW_ALL = 'performance:objetivos:view_all'
 PERIODOS = 'performance:periodos:manage'
+
+#: Cómo empieza el cargo (de Odoo) de los asesores y promotores de punto de
+#: venta: «Asesor Comercial - CAV …», «Asesora Comercial …», «Promotor …».
+CARGOS_DE_PUNTO_DE_VENTA = ('asesor', 'promotor')
 
 
 def _codes(user) -> set[str]:
@@ -61,6 +70,48 @@ def es_jefe_de(user, colaborador) -> bool:
     return bool(colaborador and colaborador.manager_id == user.id)
 
 
+def es_asesor_o_promotor(colaborador) -> bool:
+    """Si es fuerza de ventas en punto: su resultado lo registra el jefe, no él."""
+    return (colaborador.position or '').strip().lower().startswith(CARGOS_DE_PUNTO_DE_VENTA)
+
+
+def asesores_y_promotores(prefijo: str = '') -> Q:
+    """El mismo filtro que `es_asesor_o_promotor`, para una consulta."""
+    filtro = Q()
+    for cargo in CARGOS_DE_PUNTO_DE_VENTA:
+        filtro |= Q(**{f'{prefijo}position__istartswith': cargo})
+    return filtro
+
+
+def aprobador_id(colaborador) -> int | None:
+    """
+    Quién aprueba el resultado de alguien: su jefe inmediato.
+
+    Para asesores y promotores es el jefe de su jefe —el Trade Marketing
+    Manager—, porque el jefe inmediato es quien registra el resultado y no se
+    aprueba a sí mismo. Si ese jefe no tiene a nadie arriba, aprueba él.
+    """
+    if colaborador.manager_id is None:
+        return None
+    if es_asesor_o_promotor(colaborador):
+        return colaborador.manager.manager_id or colaborador.manager_id
+    return colaborador.manager_id
+
+
+def aprobador_de(colaborador):
+    """La persona de `aprobador_id`, para mostrar su nombre."""
+    jefe = colaborador.manager
+    if jefe is None:
+        return None
+    if es_asesor_o_promotor(colaborador) and jefe.manager_id:
+        return jefe.manager
+    return jefe
+
+
+def es_aprobador_de(user, colaborador) -> bool:
+    return bool(colaborador and aprobador_id(colaborador) == user.id)
+
+
 def es_lider(user) -> bool:
     """Tiene personas a cargo (o está marcado como líder en su cuenta)."""
     if user is None or not user.is_authenticated:
@@ -83,50 +134,60 @@ def puede_definir(user, colaborador) -> bool:
 
 
 def puede_ver(user, colaborador) -> bool:
-    """Los propios siempre; los del equipo si es su jefe; todos si tiene el permiso."""
+    """
+    Los propios siempre; los del equipo si es su jefe; todos si tiene el permiso.
+
+    Quien aprueba el resultado de alguien también lo ve: el Trade Marketing
+    Manager no es jefe directo de los asesores, pero aprueba lo de ellos.
+    """
     if colaborador is None:
         return False
     if colaborador.id == user.id or puede_ver_todo(user):
         return True
-    return es_jefe_de(user, colaborador)
+    return es_jefe_de(user, colaborador) or es_aprobador_de(user, colaborador)
 
 
 def puede_cargar_resultado(user, objetivo) -> bool:
     """
-    Quién carga lo ejecutado: el colaborador, su jefe o People.
+    Quién registra el % de cumplimiento: el colaborador, su jefe o People.
 
-    Lo normal es que el colaborador suba su resultado y su evidencia, y que el
-    jefe los apruebe. El jefe también puede cargarlos por él (si está
-    incapacitado, por ejemplo). Si se designó otro responsable —asesores y
-    promotores, que carga su Trade Leader—, esa persona también puede.
+    Lo normal es que el colaborador registre su % y su evidencia, y que el jefe
+    los apruebe. El jefe también puede registrarlos por él (si está
+    incapacitado, por ejemplo). Con asesores y promotores lo registra siempre
+    su jefe inmediato, no ellos.
     """
     if puede_definir_a_cualquiera(user):
         return True
-    return (
-        user.id == objetivo.colaborador_id
-        or user.id == objetivo.responsable_resultado_id
-        or es_jefe_de(user, objetivo.colaborador)
-    )
+    colaborador = objetivo.colaborador
+    if user.id == objetivo.responsable_resultado_id or es_jefe_de(user, colaborador):
+        return True
+    return user.id == colaborador.id and not es_asesor_o_promotor(colaborador)
 
 
 def puede_validar_resultado(user, objetivo) -> bool:
     """
-    Quién da por bueno el resultado: el jefe del colaborador o People.
+    Quién aprueba el resultado: quien aprueba al colaborador, o People.
 
-    Nadie valida lo que él mismo cargó, salvo el jefe directo: como el
-    responsable del resultado es el jefe por defecto, es él quien lo carga y
-    quien lo da por bueno. People, si lo cargó, no se lo valida a sí mismo.
+    Es el jefe inmediato, salvo con asesores y promotores (el Trade Marketing
+    Manager). Nadie valida lo que él mismo cargó, salvo ese aprobador: el jefe
+    puede registrar el % por un colaborador incapacitado y darlo por bueno.
+    People, si lo cargó, no se lo valida a sí mismo.
     """
-    es_jefe = es_jefe_de(user, objetivo.colaborador)
+    aprueba = es_aprobador_de(user, objetivo.colaborador)
     resultado = getattr(objetivo, 'resultado', None)
-    if resultado and resultado.cargado_por_id == user.id and not es_jefe:
+    if resultado and resultado.cargado_por_id == user.id and not aprueba:
         return False
-    return puede_definir_a_cualquiera(user) or es_jefe
+    return puede_definir_a_cualquiera(user) or aprueba
 
 
 def puede_dar_feedback(user, objetivo) -> bool:
-    """El jefe del colaborador o People pueden comentar lo cargado."""
-    return puede_definir_a_cualquiera(user) or es_jefe_de(user, objetivo.colaborador)
+    """El jefe del colaborador, quien lo aprueba o People pueden comentar lo cargado."""
+    colaborador = objetivo.colaborador
+    return (
+        puede_definir_a_cualquiera(user)
+        or es_jefe_de(user, colaborador)
+        or es_aprobador_de(user, colaborador)
+    )
 
 
 def capacidades(user) -> dict:

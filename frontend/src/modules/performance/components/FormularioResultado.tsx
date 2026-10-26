@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { CircleXIcon, InfoIcon, LinkIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import {
   Button,
-  Checkbox,
   Field,
   FieldDescription,
   FieldLabel,
@@ -20,41 +19,16 @@ interface Soporte {
   linkSoporte: string;
 }
 
-/** Cómo se pide el resultado según cómo se mide el objetivo. */
-function comoSeCarga(objetivo: Objetivo) {
-  switch (objetivo.tipoMedicion) {
-    case 'binario':
-      return { etiqueta: '¿Se cumplió?', ayuda: '', max: 1, paso: '1' };
-    case 'cualitativa':
-      return {
-        etiqueta: 'Criterios cumplidos',
-        ayuda: 'De 0 a 2. Dos de dos es 100%, uno es 50%.',
-        max: 2,
-        paso: '1',
-      };
-    case 'proporcional_inverso':
-      return {
-        etiqueta: 'Resultado ejecutado',
-        ayuda: 'Menos es mejor: cero cuenta como cumplimiento pleno.',
-        max: undefined,
-        paso: '0.01',
-      };
-    default:
-      return {
-        etiqueta: 'Resultado ejecutado',
-        ayuda: 'Lo logrado en el mes, en la unidad del objetivo.',
-        max: undefined,
-        paso: '0.01',
-      };
-  }
-}
+/** El % de cumplimiento va de 0 a 100: no hay sobrecumplimiento. */
+const MAXIMO = 100;
 
 /**
- * La carga de lo ejecutado y sus soportes.
+ * El registro del % de cumplimiento y sus soportes.
  *
- * El porcentaje no se digita nunca: lo calcula el backend con el tipo de
- * medición, y de ahí sale el color. Las evidencias son enlaces a SharePoint o
- * OneDrive, que es donde la compañía ya guarda sus soportes (A5).
+ * Un único criterio para toda la organización: quien carga escribe el % de 0
+ * a 100 y adjunta la evidencia; el jefe la revisa y lo aprueba. Las evidencias
+ * son enlaces a SharePoint u OneDrive, donde la compañía ya guarda sus
+ * soportes (A5).
  */
 export function FormularioResultado({
   objetivo,
@@ -67,10 +41,8 @@ export function FormularioResultado({
   const [observacion, setObservacion] = useState('');
   const [soportes, setSoportes] = useState<Soporte[]>([{ nombre: '', linkSoporte: '' }]);
   const cargar = useCargarResultado();
-  const como = comoSeCarga(objetivo);
-  // El binario no se digita: es una casilla. Sin marcar es 0, no «vacío».
-  const esBinario = objetivo.tipoMedicion === 'binario';
-  const cumplido = Number(valor) === 1;
+  const numero = Number(valor);
+  const fueraDeRango = valor !== '' && (Number.isNaN(numero) || numero < 0 || numero > MAXIMO);
 
   // Si el jefe lo devolvió, el motivo va arriba —es lo que hay que corregir—
   // y el formulario arranca limpio: lo devuelto queda en el historial, no
@@ -83,7 +55,9 @@ export function FormularioResultado({
 
   useEffect(() => {
     const resultado = corrigiendo ? null : objetivo.resultado;
-    setValor(resultado?.resultadoEjecutado ?? '');
+    setValor(
+      resultado?.porcentajeCumplimiento ? String(Number(resultado.porcentajeCumplimiento)) : '',
+    );
     setObservacion(resultado?.observacion ?? '');
     setSoportes(
       resultado?.evidencias.length
@@ -103,7 +77,7 @@ export function FormularioResultado({
     try {
       const resultado = await cargar.mutateAsync({
         objetivo: objetivo.id,
-        resultadoEjecutado: esBinario ? (cumplido ? '1' : '0') : valor,
+        porcentajeCumplimiento: valor,
         observacion,
         evidencias: soportes
           .filter((fila) => fila.linkSoporte.trim())
@@ -154,41 +128,42 @@ export function FormularioResultado({
         )
       )}
 
-      {esBinario ? (
-        <Field className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="res-valor"
-              checked={cumplido}
-              onCheckedChange={(marcado) => setValor(marcado ? '1' : '0')}
-            />
-            <FieldLabel htmlFor="res-valor">Se cumplió</FieldLabel>
-          </div>
-          <FieldDescription>
-            Marcado cuenta como cumplido (100%); sin marcar, como no cumplido (0%).
-          </FieldDescription>
-        </Field>
-      ) : (
-        <Field className="min-w-0">
-          <FieldLabel htmlFor="res-valor">{como.etiqueta}</FieldLabel>
+      <Field className="min-w-0 sm:max-w-56" data-invalid={fueraDeRango || undefined}>
+        <FieldLabel htmlFor="res-valor">% de cumplimiento</FieldLabel>
+        <div className="relative">
           <Input
             id="res-valor"
             type="number"
+            inputMode="decimal"
             min="0"
-            max={como.max}
-            step={como.paso}
+            max={MAXIMO}
+            step="1"
+            placeholder="85"
+            className="pr-8"
+            aria-invalid={fueraDeRango || undefined}
             value={valor}
             onChange={(e) => setValor(e.target.value)}
             required
           />
-          <FieldDescription>{como.ayuda}</FieldDescription>
-        </Field>
-      )}
+          <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">
+            %
+          </span>
+        </div>
+        <FieldDescription className={fueraDeRango ? 'text-destructive' : undefined}>
+          {fueraDeRango ? `Debe estar entre 0 y ${MAXIMO}.` : `De 0 a ${MAXIMO}.`}
+        </FieldDescription>
+      </Field>
 
       <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
-        <span>
-          El % de cumplimiento no se digita: lo calcula el sistema.{' '}
+        <span className="text-pretty">
+          Adjunta la evidencia que soporta el %:{' '}
+          {objetivo.aprobadorNombre ? (
+            <b className="text-foreground">{objetivo.aprobadorNombre}</b>
+          ) : (
+            'el jefe'
+          )}{' '}
+          la revisa y aprueba el cumplimiento.{' '}
           {objetivo.resultado && !corrigiendo && (
             <>
               Hoy va en{' '}
@@ -266,7 +241,7 @@ export function FormularioResultado({
         <Button type="button" variant="ghost" onClick={onListo}>
           Cancelar
         </Button>
-        <Button type="submit" disabled={cargar.isPending}>
+        <Button type="submit" disabled={cargar.isPending || valor === '' || fueraDeRango}>
           Guardar resultado
         </Button>
       </div>

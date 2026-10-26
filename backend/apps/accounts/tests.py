@@ -73,6 +73,38 @@ def test_sin_correo_no_se_entra_aunque_exista_la_cuenta():
     assert respuesta.status_code == 400
 
 
+def test_al_asesor_de_odoo_se_le_pone_su_correo_personal_y_entra():
+    cliente = cliente_admin()
+    asesor = User.objects.create(username='asesor', first_name='Asesor', odoo_id=500)
+    asesor.set_unusable_password()
+    asesor.save()
+
+    respuesta = cliente.patch(
+        f'{RUTA}/{asesor.id}', {'email': 'Asesor.Norte@Gmail.com', 'password': 'Clave-temporal-9'}, format='json'
+    )
+
+    assert respuesta.status_code == 200, respuesta.data
+    assert respuesta.json()['correoEditable'] is True
+    asesor.refresh_from_db()
+    assert asesor.email == 'asesor.norte@gmail.com'
+    ingreso = APIClient().post(
+        '/api/auth/login', {'email': 'asesor.norte@gmail.com', 'password': 'Clave-temporal-9'}, format='json'
+    )
+    assert ingreso.status_code == 200
+
+
+def test_el_correo_corporativo_de_odoo_no_se_cambia_desde_administracion():
+    cliente = cliente_admin()
+    ana = User.objects.create(username='ana', first_name='Ana', email='ana@supli.tech', odoo_id=501)
+
+    respuesta = cliente.patch(f'{RUTA}/{ana.id}', {'email': 'ana@gmail.com'}, format='json')
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()['correoEditable'] is False
+    ana.refresh_from_db()
+    assert ana.email == 'ana@supli.tech'
+
+
 # ── Aviso de instalar la app ─────────────────────────────────────────────────
 
 

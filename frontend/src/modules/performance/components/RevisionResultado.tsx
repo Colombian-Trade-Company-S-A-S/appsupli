@@ -5,6 +5,7 @@ import {
   CircleXIcon,
   ExternalLinkIcon,
   HistoryIcon,
+  InfoIcon,
   Undo2Icon,
 } from 'lucide-react';
 import {
@@ -23,7 +24,6 @@ import {
   fechaHora,
   porcentajeLegible,
   ultimoRechazo,
-  valorLegible,
   versionDevuelta,
 } from '../flujo';
 import { useValidarResultado } from '../hooks';
@@ -98,10 +98,11 @@ function FilaCambio({
  * La revisión del jefe, en una sola ventana.
  *
  * Si es una corrección, arriba va el motivo con que se devolvió y el «antes →
- * ahora» de lo que cambió; si es una carga nueva, lo cargado. Abajo, dos
- * decisiones: aprobar (comentario opcional) o devolver (motivo obligatorio).
- * Ya resuelto, solo se muestra la decisión. El historial completo queda
- * plegado al final.
+ * ahora» de lo que cambió; si es una carga nueva, el % registrado y su
+ * evidencia. Abajo, dos decisiones: aprobar (comentario opcional) o devolver
+ * (motivo obligatorio), solo para quien aprueba —con asesores y promotores, el
+ * Trade Marketing Manager, no el jefe que registró el %—. Ya resuelto, solo se
+ * muestra la decisión. El historial completo queda plegado al final.
  */
 export function RevisionResultado({
   objetivo,
@@ -190,12 +191,6 @@ export function RevisionResultado({
               </thead>
               <tbody className="divide-y">
                 <FilaCambio
-                  etiqueta="Resultado"
-                  antes={valorLegible(objetivo, antes?.resultadoEjecutado)}
-                  ahora={valorLegible(objetivo, resultado.resultadoEjecutado)}
-                  cambio={antes?.resultadoEjecutado !== resultado.resultadoEjecutado}
-                />
-                <FilaCambio
                   etiqueta="Cumplimiento"
                   antes={porcentajeLegible(antes?.porcentajeCumplimiento)}
                   ahora={
@@ -225,11 +220,7 @@ export function RevisionResultado({
       ) : (
         <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
           <div>
-            <dt className="text-xs text-muted-foreground">Resultado cargado</dt>
-            <dd className="font-medium">{valorLegible(objetivo, resultado.resultadoEjecutado)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Cumplimiento</dt>
+            <dt className="text-xs text-muted-foreground">% de cumplimiento registrado</dt>
             <dd>
               <SemaforoBadge
                 semaforo={resultado.semaforo}
@@ -252,7 +243,24 @@ export function RevisionResultado({
         </dl>
       )}
 
+      {(estado === 'por_revisar' || estado === 'corregido') && !objetivo.puedeValidar && (
+        <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+          <span className="text-pretty">
+            Pendiente de aprobación
+            {objetivo.aprobadorNombre ? (
+              <>
+                {' '}
+                de <b className="text-foreground">{objetivo.aprobadorNombre}</b>
+              </>
+            ) : null}
+            , que revisa la evidencia y aprueba o devuelve el cumplimiento.
+          </span>
+        </div>
+      )}
+
       {(estado === 'por_revisar' || estado === 'corregido') &&
+        objetivo.puedeValidar &&
         (devolviendo ? (
           <div className="flex flex-col gap-3 rounded-lg border border-red-500/40 bg-red-500/5 p-3">
             <Field className="min-w-0">

@@ -4,6 +4,7 @@ import { AlertCircleIcon, ArrowLeftIcon } from 'lucide-react';
 import { tokenDeRegreso, useAuth } from '@/core/auth';
 import { ApiError } from '@/shared/api/http-client';
 import { Alert, AlertDescription, Spinner } from '@/shared/components/ui';
+import { useTarda } from '@/shared/hooks';
 
 // En desarrollo React monta dos veces: el regreso de Microsoft se procesa una sola.
 let enCurso: Promise<string | null> | null = null;
@@ -11,11 +12,14 @@ let enCurso: Promise<string | null> | null = null;
 /**
  * Adonde vuelve Microsoft (`/auth/microsoft`, la URL registrada en Entra).
  * Toma el token, lo cambia por la sesión de appsupli y el guard lleva adentro.
+ * Es el primer momento en que se necesita el backend, que puede estar
+ * despertando: si tarda, se dice por qué.
  */
 export default function MicrosoftCallbackPage() {
   const { loginMicrosoft } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const despertando = useTarda(!error);
 
   useEffect(() => {
     enCurso ??= tokenDeRegreso();
@@ -44,6 +48,11 @@ export default function MicrosoftCallbackPage() {
       <div className="flex flex-col items-center gap-3 py-12 text-sm text-muted-foreground">
         <Spinner />
         Entrando con tu cuenta de Microsoft…
+        {despertando && (
+          <span className="text-center text-xs text-pretty">
+            El servidor se está despertando; puede tardar hasta un minuto.
+          </span>
+        )}
       </div>
     );
   }
