@@ -6,7 +6,9 @@ accesos que ya tiene la plataforma: cada capacidad es un `Permission` que se
 reparte con roles desde Administración.
 
     People Manager  → define objetivos de cualquiera, abre y cierra el mes
-    CEO             → ve toda la organización, en solo lectura
+    Dirección       → ve toda la organización, en solo lectura
+    CEO             → además define los suyos y su resultado queda aprobado
+                      al cargarlo (no tiene jefe); People lo audita después
     Líder / Jefe    → define y ve los de su equipo; no necesita permiso, sale
                       de `User.manager`, igual que en valoración
     Miembro         → ve los propios
@@ -27,6 +29,7 @@ APP_CODE = 'objetivos-kpis'
 MANAGE_ALL = 'performance:objetivos:manage_all'
 VIEW_ALL = 'performance:objetivos:view_all'
 PERIODOS = 'performance:periodos:manage'
+AUTOGESTION = 'performance:objetivos:autogestion'
 
 #: Cómo empieza el cargo (de Odoo) de los asesores y promotores de punto de
 #: venta: «Asesor Comercial - CAV …», «Asesora Comercial …», «Promotor …».
@@ -61,8 +64,28 @@ def puede_ver_todo(user) -> bool:
 
 
 def puede_gestionar_periodos(user) -> bool:
-    """Abrir el mes, activarlo (congelando los objetivos) y cerrarlo."""
+    """People: abrir el mes, habilitar su edición por unos días, activarlo y cerrarlo."""
     return has_perm(user, PERIODOS)
+
+
+def puede_autogestionar(user) -> bool:
+    """
+    El CEO: define sus propios objetivos y su resultado queda aprobado al cargarlo.
+
+    A diferencia del resto, no lo hereda el admin: tiene que estar asignado en
+    un rol (o como permiso extra). Si no, cada administrador se aprobaría sus
+    propios resultados sin que nadie los mire.
+    """
+    if user is None or not user.is_authenticated:
+        return False
+    cache = getattr(user, '_performance_autogestion', None)
+    if cache is None:
+        cache = (
+            user.roles.filter(permissions__code=AUTOGESTION).exists()
+            or user.extra_permissions.filter(code=AUTOGESTION).exists()
+        )
+        user._performance_autogestion = cache
+    return cache
 
 
 def es_jefe_de(user, colaborador) -> bool:
@@ -126,10 +149,12 @@ def puede_definir(user, colaborador) -> bool:
     Quién puede crear o editar el objetivo de alguien.
 
     Regla 3 de la especificación: el objetivo lo define el jefe o People. El
-    colaborador nunca edita el suyo, ni siquiera el de su propia cuenta.
+    colaborador nunca edita el suyo, salvo el CEO, que no tiene jefe.
     """
     if puede_definir_a_cualquiera(user):
         return True
+    if colaborador is not None and colaborador.id == user.id:
+        return puede_autogestionar(user)
     return es_jefe_de(user, colaborador)
 
 
@@ -196,6 +221,7 @@ def capacidades(user) -> dict:
         'puede_definir_a_cualquiera': puede_definir_a_cualquiera(user),
         'puede_ver_todo': puede_ver_todo(user),
         'puede_gestionar_periodos': puede_gestionar_periodos(user),
+        'puede_autogestionar': puede_autogestionar(user),
         'es_lider': es_lider(user),
     }
 

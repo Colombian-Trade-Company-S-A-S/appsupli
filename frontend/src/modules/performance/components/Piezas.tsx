@@ -12,7 +12,13 @@ import {
   SelectValue,
 } from '@/shared/components/ui';
 import { cn } from '@/shared/lib/utils';
-import type { CortesSemaforo, EstadoPeriodo, Ponderacion, Semaforo } from '../api';
+import {
+  diaLegible,
+  type CortesSemaforo,
+  type EstadoPeriodo,
+  type Ponderacion,
+  type Semaforo,
+} from '../api';
 
 /** Un desplegable con su etiqueta. Todos los del módulo son obligatorios. */
 export function Selector({
@@ -200,7 +206,9 @@ export function AnilloCumplimiento({
   return (
     <div
       role="img"
-      aria-label={valor === null ? 'Sin cumplimiento cargado' : `${valor.toFixed(0)}% de cumplimiento`}
+      aria-label={
+        valor === null ? 'Sin cumplimiento cargado' : `${valor.toFixed(0)}% de cumplimiento`
+      }
       className={cn('relative inline-flex shrink-0 items-center justify-center', className)}
       style={{ width: tamano, height: tamano }}
     >
@@ -256,17 +264,18 @@ export function LeyendaSemaforo({ cortes }: { cortes?: CortesSemaforo }) {
  * El aviso de que el mes está congelado, y por qué (A9).
  *
  * Los objetivos se editan hasta el último día del mes anterior. Cuando el mes
- * empieza se bloquean solos; People puede reabrirlos en un caso excepcional
- * autorizado por el CEO, y entonces el aviso cambia de tono para que quede
- * claro que se está trabajando bajo una excepción.
+ * empieza se bloquean solos; People puede reabrirlos hasta un día, y entonces
+ * el aviso cambia de tono y dice hasta cuándo se puede editar.
  */
 export function AvisoCongelado({
   motivo,
   edicionHabilitada,
+  edicionHasta,
   children,
 }: {
   motivo: string;
   edicionHabilitada: boolean;
+  edicionHasta?: string | null;
   children?: ReactNode;
 }) {
   if (!motivo && !edicionHabilitada) return null;
@@ -287,7 +296,9 @@ export function AvisoCongelado({
       )}
       <span className="min-w-0 flex-1 text-pretty">
         {edicionHabilitada
-          ? 'Este mes está abierto por una excepción autorizada: los cambios quedan registrados.'
+          ? `People abrió la edición de este mes${
+              edicionHasta ? ` hasta el ${diaLegible(edicionHasta)}` : ''
+            }: después se vuelve a congelar sola.`
           : motivo}
       </span>
       {children}

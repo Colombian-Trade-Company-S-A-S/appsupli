@@ -130,7 +130,10 @@ export interface PeriodoDisponible {
   /** Los objetivos se editan hasta el último día del mes anterior (A9). */
   editable: boolean;
   motivo: string;
+  /** Si la edición que habilitó People sigue abierta hoy. */
   edicionHabilitada: boolean;
+  /** Último día de esa edición, incluido; `null` si no tiene fecha. */
+  edicionHasta: string | null;
   motivoHabilitacion: string;
   ultimoDiaParaEditar: string;
 }
@@ -193,7 +196,7 @@ export interface OpcionesPerformance {
   periodos: PeriodoDisponible[];
   /** Las personas a cargo directo: con quienes se trabaja uno por uno. */
   equipo: Persona[];
-  /** Toda la compañía; solo la trae quien puede definirle a cualquiera (People). */
+  /** Toda la compañía: la trae quien la ve (People y el CEO); solo People le define a todos. */
   compania: Persona[];
   /**
    * A quiénes les aprueba el resultado sin ser su jefe: el Trade Marketing
@@ -213,6 +216,8 @@ export interface Capacidades {
   puedeDefinirACualquiera: boolean;
   puedeVerTodo: boolean;
   puedeGestionarPeriodos: boolean;
+  /** El CEO: define sus propios objetivos y su resultado queda aprobado al cargarlo. */
+  puedeAutogestionar: boolean;
   esLider: boolean;
 }
 
@@ -235,6 +240,7 @@ export interface ResumenPeriodo {
   editable: boolean;
   motivo: string;
   edicionHabilitada: boolean;
+  edicionHasta: string | null;
   ponderacionCompleta: number;
   colaboradores: Ponderacion[];
 }
@@ -246,6 +252,7 @@ export interface ResumenModulo {
   editable: boolean;
   motivo: string;
   edicionHabilitada: boolean;
+  edicionHasta: string | null;
   misObjetivos: number;
   miPonderacion: number;
   equipo: number;
@@ -319,10 +326,11 @@ export const performanceApi = {
     ),
   activarPeriodo: (periodo: string) =>
     api.post<ResultadoActivacion>(`${RUTA}/periodos/${periodo}/activar`),
-  /** La excepción del A9: People reabre un mes ya congelado, con su motivo. */
-  habilitarEdicion: (periodo: string, habilitada: boolean, motivo = '') =>
+  /** La excepción del A9: People reabre un mes ya congelado hasta un día (`AAAA-MM-DD`). */
+  habilitarEdicion: (periodo: string, habilitada: boolean, hasta = '', motivo = '') =>
     api.post<PeriodoDisponible & { mensaje: string }>(`${RUTA}/periodos/${periodo}/edicion`, {
       habilitada,
+      hasta,
       motivo,
     }),
   cargarResultado: (objetivo: number, payload: ResultadoPayload) =>
@@ -403,4 +411,10 @@ const MESES = [
 export const etiquetaMes = (periodo: string) => {
   const [anio, mes] = periodo.split('-');
   return `${MESES[Number(mes) - 1] ?? mes} ${anio}`;
+};
+
+/** `2026-11-05` → `5 de noviembre`, partiendo el texto por la misma razón. */
+export const diaLegible = (dia: string) => {
+  const [, mes, numero] = dia.split('-');
+  return `${Number(numero)} de ${(MESES[Number(mes) - 1] ?? mes).toLowerCase()}`;
 };

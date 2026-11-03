@@ -119,9 +119,15 @@ class Periodo(TimeStampedModel):
 
     # ── Excepción de edición (A9) ────────────────────────────────────────
     # Los objetivos de un mes se congelan solos cuando el mes empieza. People
-    # puede reabrir la edición en casos excepcionales autorizados por el CEO;
-    # queda registrado quién la habilitó, cuándo y con qué motivo.
+    # puede reabrir la edición hasta una fecha (y ampliarla si hace falta), sin
+    # autorización del CEO; queda registrado quién la habilitó, cuándo y por qué.
     edicion_habilitada = models.BooleanField('edición habilitada por excepción', default=False)
+    edicion_hasta = models.DateField(
+        'edición habilitada hasta',
+        null=True,
+        blank=True,
+        help_text='Último día de la excepción, incluido. Después el mes se vuelve a congelar solo.',
+    )
     habilitada_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

@@ -26,7 +26,9 @@ import {
   DialogHeader,
   DialogTitle,
   Field,
+  FieldDescription,
   FieldLabel,
+  Input,
   Switch,
   Textarea,
 } from '@/shared/components/ui';
@@ -81,11 +83,13 @@ export default function ObjetivosEquipoPage() {
   const [cargando, setCargando] = useState<Objetivo | null>(null);
   const [revisandoId, setRevisandoId] = useState<number | null>(null);
   const [excepcion, setExcepcion] = useState(false);
+  const [hasta, setHasta] = useState('');
   const [motivo, setMotivo] = useState('');
 
   const periodos = opciones?.periodos ?? [];
-  // Por defecto, solo las personas a cargo directo. People puede ampliar a toda
-  // la compañía; si no tiene a nadie a cargo, arranca ahí.
+  // Por defecto, solo las personas a cargo directo (y el CEO a sí mismo). Quien
+  // ve toda la organización —People, el CEO— puede ampliar a la compañía; si
+  // no tiene a nadie a cargo, arranca ahí.
   const aCargo = opciones?.equipo ?? [];
   const compania = opciones?.compania ?? [];
   const puedeVerCompania = compania.length > 0;
@@ -100,7 +104,13 @@ export default function ObjetivosEquipoPage() {
   const periodoElegido = periodo || periodoPorDefecto(periodos);
   // Sin el seleccionado explícito se trabaja sobre el primero del equipo.
   const colaborador = equipo.find((persona) => String(persona.id) === colaboradorId) ?? equipo[0];
-  const soloRevision = soloAprueba.some((persona) => persona.id === colaborador?.id);
+  const apruebaSuResultado = soloAprueba.some((persona) => persona.id === colaborador?.id);
+  // A quien no le define objetivos (el asesor de otro líder, o cualquiera de
+  // la compañía si no es People) solo se le consulta y se le revisa.
+  const soloRevision =
+    !!colaborador &&
+    !opciones?.capacidades.puedeDefinirACualquiera &&
+    !aCargo.some((persona) => persona.id === colaborador.id);
 
   const { data: objetivos = [], isLoading } = useObjetivos({
     colaborador: colaborador?.id,
@@ -129,7 +139,8 @@ export default function ObjetivosEquipoPage() {
     },
   });
 
-  if (cargandoOpciones || !opciones) return <EsqueletoPagina forma="lista" label="Abriendo Objetivos y KPIs…" />;
+  if (cargandoOpciones || !opciones)
+    return <EsqueletoPagina forma="lista" label="Abriendo Objetivos y KPIs…" />;
 
   if (equipo.length === 0) {
     return (
@@ -184,7 +195,9 @@ export default function ObjetivosEquipoPage() {
               setEditando(undefined);
             }}
             opciones={equipo.map((persona) => {
-              const nombre = persona.cargo ? `${persona.nombre} — ${persona.cargo}` : persona.nombre;
+              const nombre = persona.cargo
+                ? `${persona.nombre} — ${persona.cargo}`
+                : persona.nombre;
               return {
                 value: String(persona.id),
                 label: soloAprueba.includes(persona) ? `${nombre} · apruebas su resultado` : nombre,
@@ -201,7 +214,7 @@ export default function ObjetivosEquipoPage() {
                   setEditando(undefined);
                 }}
               />
-              Ver toda la compañía (People)
+              Ver toda la compañía
             </label>
           )}
         </div>
@@ -227,9 +240,11 @@ export default function ObjetivosEquipoPage() {
             <> · Aprueba: {colaborador.aprobador}</>
           )}
           <br />
-          {soloRevision
+          {apruebaSuResultado
             ? 'Sus objetivos los define su jefe directo; tú apruebas el % que él registra.'
-            : 'Al iniciar la medición, los objetivos del mes se congelan.'}
+            : soloRevision
+              ? 'Solo consulta: sus objetivos los define y aprueba su jefe directo.'
+              : 'Al iniciar la medición, los objetivos del mes se congelan.'}
         </p>
       </div>
 
@@ -252,21 +267,36 @@ export default function ObjetivosEquipoPage() {
       <AvisoCongelado
         motivo={soloRevision ? '' : (resumen?.motivo ?? '')}
         edicionHabilitada={!soloRevision && !!resumen?.edicionHabilitada}
+        edicionHasta={resumen?.edicionHasta}
       >
+        {/* Solo People abre la edición, hasta un día; si hace falta, la amplía. */}
         {opciones.capacidades.puedeGestionarPeriodos && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={() =>
-              resumen?.edicionHabilitada
-                ? habilitarEdicion.mutate({ periodo: periodoElegido, habilitada: false })
-                : setExcepcion(true)
-            }
-          >
-            {resumen?.edicionHabilitada ? <LockIcon /> : <UnlockIcon />}
-            {resumen?.edicionHabilitada ? 'Volver a congelar' : 'Habilitar edición'}
-          </Button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setHasta(resumen?.edicionHasta ?? '');
+                setMotivo('');
+                setExcepcion(true);
+              }}
+            >
+              <UnlockIcon />
+              {resumen?.edicionHabilitada ? 'Ampliar plazo' : 'Habilitar edición'}
+            </Button>
+            {resumen?.edicionHabilitada && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  habilitarEdicion.mutate({ periodo: periodoElegido, habilitada: false })
+                }
+              >
+                <LockIcon />
+                Volver a congelar
+              </Button>
+            )}
+          </div>
         )}
       </AvisoCongelado>
 
@@ -374,16 +404,30 @@ export default function ObjetivosEquipoPage() {
           <DialogHeader>
             <DialogTitle>Habilitar la edición de {etiquetaMes(periodoElegido)}</DialogTitle>
             <DialogDescription>
-              Es una excepción: los objetivos de un mes se editan hasta el último día del mes
-              anterior. Queda registrado quién la habilitó, cuándo y por qué.
+              Los objetivos de un mes se editan hasta el último día del mes anterior. People puede
+              abrir la edición unos días más; al pasar la fecha se vuelve a congelar sola. Queda
+              registrado quién la habilitó y cuándo.
             </DialogDescription>
           </DialogHeader>
           <Field className="min-w-0">
-            <FieldLabel htmlFor="excepcion-motivo">Motivo y quién lo autorizó</FieldLabel>
+            <FieldLabel htmlFor="excepcion-hasta">Abierta hasta el</FieldLabel>
+            <Input
+              id="excepcion-hasta"
+              type="date"
+              min={hoyLocal()}
+              value={hasta}
+              onChange={(e) => setHasta(e.target.value)}
+            />
+            <FieldDescription>
+              Ese día incluido. Si hace falta más, se amplía después.
+            </FieldDescription>
+          </Field>
+          <Field className="min-w-0">
+            <FieldLabel htmlFor="excepcion-motivo">Motivo (opcional)</FieldLabel>
             <Textarea
               id="excepcion-motivo"
-              rows={3}
-              placeholder="Reestructuración del área, autorizada por el CEO el 2 de octubre."
+              rows={2}
+              placeholder="Ampliación del plazo para cargar objetivos."
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
             />
@@ -393,10 +437,10 @@ export default function ObjetivosEquipoPage() {
               Cancelar
             </Button>
             <Button
-              disabled={!motivo.trim() || habilitarEdicion.isPending}
+              disabled={!hasta || hasta < hoyLocal() || habilitarEdicion.isPending}
               onClick={() =>
                 habilitarEdicion.mutate(
-                  { periodo: periodoElegido, habilitada: true, motivo },
+                  { periodo: periodoElegido, habilitada: true, hasta, motivo },
                   { onSuccess: () => setExcepcion(false) },
                 )
               }
@@ -419,4 +463,11 @@ export default function ObjetivosEquipoPage() {
       />
     </div>
   );
+}
+
+/** Hoy como `AAAA-MM-DD`, con la fecha local (no UTC), para el campo de fecha. */
+function hoyLocal() {
+  const hoy = new Date();
+  const dos = (n: number) => String(n).padStart(2, '0');
+  return `${hoy.getFullYear()}-${dos(hoy.getMonth() + 1)}-${dos(hoy.getDate())}`;
 }

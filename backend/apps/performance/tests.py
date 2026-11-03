@@ -4,7 +4,7 @@ Pruebas de Objetivos y KPIs: permisos, reglas de negocio y medición en %.
 Las reglas que se prueban acá son las del §6 de la especificación técnica; el
 número de cada una va en el nombre de la prueba cuando aplica.
 """
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -588,36 +588,34 @@ def test_el_mes_entrante_si_se_edita(equipo):
 
 
 def test_people_habilita_la_edicion_de_un_mes_congelado(app_performance, equipo):
-    """A9: la excepción autorizada por el CEO, con registro de quién y por qué."""
+    """A9: solo People la habilita, sin pedir al CEO, y siempre hasta una fecha."""
     jefe, julian, _daniel = equipo
     people = crear_usuario(
         'people@supli.tech', app_performance, ['performance:periodos:manage']
     )
     objetivo = objetivo_de(julian, jefe, '100')
     mes = _empezar_el_mes(objetivo.periodo)
+    ruta = f'{RUTA}/periodos/{mes:%Y-%m}/edicion'
+    hasta = date.today() + timedelta(days=2)
 
-    sin_permiso = cliente_de(jefe).post(
-        f'{RUTA}/periodos/{mes:%Y-%m}/edicion', {'motivo': 'porque sí'}, format='json'
-    )
+    sin_permiso = cliente_de(jefe).post(ruta, {'hasta': hasta.isoformat()}, format='json')
     assert sin_permiso.status_code == 403
 
-    sin_motivo = cliente_de(people).post(
-        f'{RUTA}/periodos/{mes:%Y-%m}/edicion', {}, format='json'
-    )
-    assert sin_motivo.status_code == 400
+    sin_fecha = cliente_de(people).post(ruta, {'motivo': 'Falta tiempo'}, format='json')
+    assert sin_fecha.status_code == 400
+    ayer = (date.today() - timedelta(days=1)).isoformat()
+    assert cliente_de(people).post(ruta, {'hasta': ayer}, format='json').status_code == 400
 
-    abierto = cliente_de(people).post(
-        f'{RUTA}/periodos/{mes:%Y-%m}/edicion',
-        {'motivo': 'Reestructuración de octubre, autorizada por el CEO.'},
-        format='json',
-    )
+    # El motivo es opcional: no hay que decir quién lo autorizó.
+    abierto = cliente_de(people).post(ruta, {'hasta': hasta.isoformat()}, format='json')
     assert abierto.status_code == 200, abierto.data
+    assert 'hasta el' in abierto.json()['mensaje']
 
     registro = Periodo.objects.get(periodo=mes)
     assert registro.edicion_habilitada is True
+    assert registro.edicion_hasta == hasta
     assert registro.habilitada_por == people
     assert registro.fecha_habilitacion is not None
-    assert 'CEO' in registro.motivo_habilitacion
 
     # Con la excepción abierta, el jefe vuelve a editar.
     editado = cliente_de(jefe).patch(
@@ -631,6 +629,104 @@ def test_people_habilita_la_edicion_de_un_mes_congelado(app_performance, equipo)
     )
     assert cerrado.status_code == 200
     assert Periodo.objects.get(periodo=mes).edicion_habilitada is False
+
+
+def test_la_edicion_habilitada_se_cierra_sola_al_pasar_la_fecha(equipo):
+    jefe, julian, _daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100')
+    mes = _empezar_el_mes(objetivo.periodo)
+    registro = Periodo.objects.create(
+        periodo=mes, edicion_habilitada=True, edicion_hasta=date.today() - timedelta(days=1)
+    )
+
+    respuesta = cliente_de(jefe).patch(
+        f'{RUTA}/objetivos/{objetivo.pk}', {'peso': '80'}, format='json'
+    )
+    assert respuesta.status_code == 400
+    assert 'cerró el' in str(respuesta.data)
+
+    # People la amplía con otra fecha y se vuelve a editar.
+    registro.edicion_hasta = date.today()
+    registro.save(update_fields=['edicion_hasta'])
+    assert cliente_de(jefe).patch(
+        f'{RUTA}/objetivos/{objetivo.pk}', {'peso': '80'}, format='json'
+    ).status_code == 200
+
+
+# ── CEO: define los suyos y su resultado queda aprobado ───────────────────
+
+
+def _rol_ceo(usuario):
+    Permission.objects.get_or_create(
+        code='performance:objetivos:autogestion',
+        defaults={
+            'name': 'Autogestión',
+            'application': Application.objects.get(code='objetivos-kpis'),
+        },
+    )
+    rol = Role.objects.create(code=f'ceo-{usuario.pk}', name='CEO')
+    rol.permissions.set(
+        Permission.objects.filter(
+            code__in=['performance:objetivos:autogestion', 'performance:objetivos:view_all']
+        )
+    )
+    usuario.roles.add(rol)
+
+
+def test_el_ceo_define_sus_objetivos_y_su_resultado_queda_aprobado(app_performance, equipo):
+    jefe, julian, _daniel = equipo
+    ceo = crear_usuario('ceo@supli.tech', app_performance, cargo='CEO')
+    _rol_ceo(ceo)
+    cliente = cliente_de(ceo)
+
+    opciones = cliente.get(f'{RUTA}/opciones').json()
+    assert ceo.pk in {p['id'] for p in opciones['equipo']}
+    assert opciones['capacidades']['puedeAutogestionar'] is True
+    # Ve a toda la organización, aunque no sea su jefe.
+    assert {jefe.pk, julian.pk} <= {p['id'] for p in opciones['compania']}
+
+    creado = cliente.post(
+        f'{RUTA}/objetivos',
+        {'colaborador': ceo.pk, 'periodo': OCTUBRE.isoformat(), 'objetivo': 'Crecer',
+         'kpi': 'Revenue', 'peso': '100'},
+        format='json',
+    )
+    assert creado.status_code == 201, creado.data
+    # Pero no le define objetivos a quien no es de su equipo.
+    ajeno = cliente.post(
+        f'{RUTA}/objetivos',
+        {'colaborador': julian.pk, 'periodo': OCTUBRE.isoformat(), 'objetivo': 'X',
+         'kpi': 'Y', 'peso': '10'},
+        format='json',
+    )
+    assert ajeno.status_code == 403
+
+    objetivo = Objetivo.objects.get(colaborador=ceo)
+    _empezar_el_mes(objetivo.periodo)
+    resultado = cliente.put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '90'},
+        format='json',
+    ).json()
+    assert resultado['estadoValidacion'] == EstadoValidacion.VALIDADO
+    assert [paso['accion'] for paso in resultado['historial']] == ['cargado', 'validado']
+
+
+def test_el_admin_no_se_autoaprueba(app_performance, equipo):
+    """La autogestión hay que asignarla: el admin no la hereda con sus permisos."""
+    _jefe, _julian, _daniel = equipo
+    admin = crear_usuario('admin@supli.tech', app_performance)
+    User.objects.filter(pk=admin.pk).update(kind=User.Kind.ADMIN)
+    admin.refresh_from_db()
+    objetivo = objetivo_de(admin, admin, '100')
+    _empezar_el_mes(objetivo.periodo)
+
+    resultado = cliente_de(admin).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '90'},
+        format='json',
+    ).json()
+    assert resultado['estadoValidacion'] == EstadoValidacion.PENDIENTE
 
 
 # ── Resultados y evidencias (A5) ───────────────────────────────────────────

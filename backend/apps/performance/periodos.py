@@ -9,8 +9,9 @@ Dos reglas cerradas por People en el documento de definiciones:
 
     A9 · Los objetivos de un mes se editan hasta el último día del mes
          anterior. Cuando el mes empieza quedan congelados solos, sin que
-         nadie oprima nada. People puede reabrir la edición en un caso
-         excepcional autorizado por el CEO, y eso queda registrado.
+         nadie oprima nada. Solo People puede reabrir la edición, hasta una
+         fecha que puede ampliar, sin pedir autorización al CEO; queda
+         registrado quién, cuándo y por qué, y al pasar la fecha se cierra sola.
 
 Vive aparte de las vistas porque las dos reglas se preguntan desde varios
 lados —el serializer al guardar, la vista al borrar, la portada para avisar—
@@ -59,20 +60,37 @@ def puede_editarse(periodo: date, registro, hoy: date) -> tuple[bool, str]:
     if registro is not None and registro.estado == EstadoPeriodo.CERRADO:
         return False, f'{etiqueta_mes(periodo)} está cerrado: sus objetivos ya no se modifican.'
 
-    if registro is not None and registro.edicion_habilitada:
+    if excepcion_vigente(registro, hoy):
         return True, ''
 
     if primer_dia(hoy) >= periodo:
+        if registro is not None and registro.edicion_habilitada and registro.edicion_hasta:
+            return False, (
+                f'Los objetivos de {etiqueta_mes(periodo)} quedaron congelados: la edición que '
+                f'habilitó People cerró el {etiqueta_dia(registro.edicion_hasta)}. People puede '
+                'ampliarla.'
+            )
         return False, (
             f'Los objetivos de {etiqueta_mes(periodo)} quedaron congelados: se editan hasta el '
-            'último día del mes anterior. People puede habilitar la edición en casos '
-            'excepcionales autorizados por el CEO.'
+            'último día del mes anterior. People puede habilitar la edición por unos días.'
         )
 
     if registro is not None and registro.estado == EstadoPeriodo.EN_MEDICION:
         return False, f'{etiqueta_mes(periodo)} ya está en medición: sus objetivos se congelaron.'
 
     return True, ''
+
+
+def excepcion_vigente(registro, hoy: date) -> bool:
+    """
+    Si la edición que habilitó People sigue abierta hoy.
+
+    Se cierra sola al pasar `edicion_hasta`. Sin fecha —las que se abrieron
+    antes de que existiera— sigue abierta hasta que People la cierre.
+    """
+    if registro is None or not registro.edicion_habilitada:
+        return False
+    return registro.edicion_hasta is None or hoy <= registro.edicion_hasta
 
 
 def ultimo_dia_para_editar(periodo: date) -> date:
@@ -110,6 +128,11 @@ def meses_del_rango(desde: date, hasta: date) -> list[date]:
 
 def etiqueta_mes(periodo: date) -> str:
     return f'{MESES[periodo.month - 1]} {periodo.year}'
+
+
+def etiqueta_dia(dia: date) -> str:
+    """`2026-11-05` → `5 de noviembre`."""
+    return f'{dia.day} de {MESES[dia.month - 1].lower()}'
 
 
 def etiqueta_corte(tipo: str, anio: int, indice: int = 1) -> str:

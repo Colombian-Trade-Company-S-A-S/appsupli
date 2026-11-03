@@ -18,7 +18,7 @@ from django.db import transaction
 
 from apps.accounts.models import Application, Permission, Role, User
 
-from ...api_permissions import APP_CODE, MANAGE_ALL, PERIODOS, VIEW_ALL
+from ...api_permissions import APP_CODE, AUTOGESTION, MANAGE_ALL, PERIODOS, VIEW_ALL
 
 CONTENEDOR = 'supli-performance'
 
@@ -26,6 +26,7 @@ PERMISOS = [
     (MANAGE_ALL, 'Definir objetivos de cualquier persona'),
     (VIEW_ALL, 'Ver los objetivos de toda la organización'),
     (PERIODOS, 'Abrir, activar y cerrar el periodo de medición'),
+    (AUTOGESTION, 'Definir los objetivos propios, con el resultado aprobado al cargarlo'),
 ]
 
 # El líder no necesita rol: sus permisos salen de tener personas a cargo
@@ -35,7 +36,14 @@ ROLES = [
         'performance-people',
         'Supli Performance · People Manager',
         'Define objetivos de cualquiera, abre y activa el mes de medición.',
-        [code for code, _ in PERMISOS],
+        [MANAGE_ALL, VIEW_ALL, PERIODOS],
+    ),
+    (
+        'performance-ceo',
+        'Supli Performance · CEO',
+        'Ve toda la organización y define sus propios objetivos: no tiene jefe, así que su '
+        'resultado queda aprobado al cargarlo y People lo audita después.',
+        [VIEW_ALL, AUTOGESTION],
     ),
     (
         'performance-direccion',
@@ -93,8 +101,8 @@ class Command(BaseCommand):
             defaults={
                 'name': 'Objetivos y KPIs',
                 'description': (
-                    'Definición de objetivos por persona y mes, con su KPI, meta, peso '
-                    'y criterio de medición.'
+                    'Objetivos por persona y mes, con su KPI y su peso, medidos en % de '
+                    'cumplimiento y aprobados por el jefe.'
                 ),
                 'base_path': '/inicio/performance/objetivos',
                 'icon': 'target',

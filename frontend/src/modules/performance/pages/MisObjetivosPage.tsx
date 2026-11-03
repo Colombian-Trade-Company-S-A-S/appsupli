@@ -116,8 +116,10 @@ export default function MisObjetivosPage() {
           <DialogHeader>
             <DialogTitle>Registrar mi cumplimiento</DialogTitle>
             <DialogDescription>
-              Tu % de cumplimiento del mes, de 0 a 100, con el enlace de la evidencia. Tu jefe la
-              revisa y lo aprueba.
+              Tu % de cumplimiento del mes, de 0 a 100, con el enlace de la evidencia.{' '}
+              {opciones?.capacidades.puedeAutogestionar
+                ? 'Queda aprobado al guardarlo; People lo audita después.'
+                : 'Tu jefe la revisa y lo aprueba.'}
             </DialogDescription>
           </DialogHeader>
           {cargando && (

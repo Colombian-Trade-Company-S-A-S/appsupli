@@ -31,6 +31,7 @@ from .api_permissions import (
     capacidades,
     es_asesor_o_promotor,
     es_lider,
+    puede_autogestionar,
     puede_cargar_resultado,
     puede_dar_feedback,
     puede_definir,
@@ -61,7 +62,9 @@ from .periodos import (
     MESES_POR_CORTE,
     cortes_del_anio,
     etiqueta_corte,
+    etiqueta_dia,
     etiqueta_mes,
+    excepcion_vigente,
     mes_siguiente,
     meses_del_rango,
     primer_dia,
@@ -124,7 +127,8 @@ def _periodos_disponibles() -> list[dict]:
                 'estado_label': EstadoPeriodo(estado).label,
                 'editable': editable,
                 'motivo': motivo,
-                'edicion_habilitada': bool(registro and registro.edicion_habilitada),
+                'edicion_habilitada': excepcion_vigente(registro, hoy),
+                'edicion_hasta': registro.edicion_hasta if registro else None,
                 'motivo_habilitacion': registro.motivo_habilitacion if registro else '',
                 'ultimo_dia_para_editar': ultimo_dia_para_editar(periodo),
             }
@@ -345,7 +349,8 @@ def resumen_periodo(request, periodo):
             'estado_label': EstadoPeriodo(estado).label,
             'editable': editable,
             'motivo': motivo,
-            'edicion_habilitada': bool(registro and registro.edicion_habilitada),
+            'edicion_habilitada': excepcion_vigente(registro, timezone.localdate()),
+            'edicion_hasta': registro.edicion_hasta if registro else None,
             'ponderacion_completa': PONDERACION_COMPLETA,
             'colaboradores': _ponderacion(personas, mes),
         }
@@ -412,14 +417,17 @@ def activar_periodo(request, periodo):
 def opciones(request):
     """Todo lo que el formulario necesita para pintarse de una sola vez."""
     # `equipo` son las personas a cargo directo: con quien se trabaja uno por
-    # uno. People además puede definirle a cualquiera, pero eso no llena el
-    # desplegable por defecto: lo pide con `compania`.
+    # uno; el CEO, que define los suyos, va también. People además puede
+    # definirle a cualquiera, y quien ve toda la organización la consulta: eso
+    # no llena el desplegable por defecto, lo pide con `compania`.
     relaciones = ('area', 'manager__manager')
-    a_cargo = request.user.team.filter(is_active=True)
+    a_cargo = User.objects.filter(is_active=True, manager=request.user)
+    if puede_autogestionar(request.user):
+        a_cargo = a_cargo | User.objects.filter(pk=request.user.pk)
     equipo = a_cargo.select_related(*relaciones).order_by('first_name')
     compania = (
-        _equipo_de(request.user).select_related(*relaciones).order_by('first_name')
-        if puede_definir_a_cualquiera(request.user)
+        User.objects.filter(is_active=True).select_related(*relaciones).order_by('first_name')
+        if puede_ver_todo(request.user)
         else []
     )
     aprueba = _aprueba_sin_ser_jefe(request.user).select_related(*relaciones).order_by(
@@ -475,7 +483,8 @@ def resumen(request):
             'estado_label': EstadoPeriodo(estado).label,
             'editable': editable,
             'motivo': motivo,
-            'edicion_habilitada': bool(registro and registro.edicion_habilitada),
+            'edicion_habilitada': excepcion_vigente(registro, timezone.localdate()),
+            'edicion_hasta': registro.edicion_hasta if registro else None,
             'mis_objetivos': mios.count(),
             'mi_ponderacion': float(mios.aggregate(total=Sum('peso'))['total'] or 0),
             'equipo': len(equipo),
@@ -550,18 +559,26 @@ def cargar_resultado(request, pk):
     serializer.is_valid(raise_exception=True)
     evidencias = serializer.validated_data.pop('evidencias', None)
 
+    # El CEO no tiene jefe que lo apruebe: lo que carga de lo suyo queda
+    # aprobado de inmediato, y People lo audita después como al resto.
+    autoaprobado = (
+        objetivo.colaborador_id == request.user.id and puede_autogestionar(request.user)
+    )
+    ahora = timezone.now()
     resultado = serializer.save(
         objetivo=objetivo,
         cargado_por=request.user,
-        fecha_carga=timezone.now(),
+        fecha_carga=ahora,
         # Lo ejecutado era de la metodología anterior: con el % registrado a
         # mano, un valor viejo al lado solo confundiría.
         resultado_ejecutado=None,
         # Cambiar el resultado devuelve la validación a pendiente: lo que el
         # jefe validó ya no es lo que dice la fila.
-        estado_validacion=EstadoValidacion.PENDIENTE,
-        validado_por=None,
-        fecha_validacion=None,
+        estado_validacion=(
+            EstadoValidacion.VALIDADO if autoaprobado else EstadoValidacion.PENDIENTE
+        ),
+        validado_por=request.user if autoaprobado else None,
+        fecha_validacion=ahora if autoaprobado else None,
     )
 
     if evidencias is not None:
@@ -583,6 +600,13 @@ def cargar_resultado(request, pk):
         request.user,
         resultado.observacion,
     )
+    if autoaprobado:
+        _registrar(
+            resultado,
+            AccionHistorial.VALIDADO,
+            request.user,
+            'Aprobado al cargarlo: no tiene jefe que lo apruebe. People lo audita.',
+        )
 
     return Response(ResultadoSerializer(_resultado_para_serializar(resultado.pk)).data)
 
@@ -697,32 +721,41 @@ def dar_feedback(request, pk):
 @permission_classes([IsAuthenticated, HasPerformanceApp, CanManagePeriodos])
 def habilitar_edicion(request, periodo):
     """
-    People reabre (o vuelve a cerrar) la edición de un mes ya congelado.
+    People reabre (amplía, o vuelve a cerrar) la edición de un mes ya congelado.
 
-    Es la excepción autorizada por el CEO del A9. Queda registrado quién la
-    habilitó, cuándo y con qué motivo, porque una excepción sin registro es
-    indistinguible de que la regla no exista.
+    Es la excepción del A9. La decide People sola, sin autorización del CEO, y
+    siempre hasta una fecha (`hasta`, incluida): al pasar se congela sola, y si
+    hace falta más tiempo se vuelve a habilitar con una fecha posterior. Queda
+    registrado quién la habilitó, cuándo y por qué.
     """
     mes = _a_periodo(periodo)
     habilitar = request.data.get('habilitada')
     habilitar = True if habilitar is None else bool(habilitar)
     motivo = (request.data.get('motivo') or '').strip()
-    if habilitar and not motivo:
-        raise ValidationError(
-            {'motivo': 'Escribe el motivo de la excepción y quién la autorizó.'}
-        )
+    hasta = None
+    if habilitar:
+        try:
+            hasta = date.fromisoformat(str(request.data.get('hasta') or ''))
+        except ValueError as exc:
+            raise ValidationError(
+                {'hasta': 'Elige hasta qué día queda abierta la edición.'}
+            ) from exc
+        if hasta < timezone.localdate():
+            raise ValidationError({'hasta': 'La fecha de cierre no puede ser anterior a hoy.'})
 
     registro, _ = Periodo.objects.get_or_create(
         periodo=mes,
         defaults={'abierto_por': request.user, 'fecha_apertura': timezone.now()},
     )
     registro.edicion_habilitada = habilitar
+    registro.edicion_hasta = hasta
     registro.habilitada_por = request.user if habilitar else None
     registro.fecha_habilitacion = timezone.now() if habilitar else None
     registro.motivo_habilitacion = motivo if habilitar else ''
     registro.save(
         update_fields=[
             'edicion_habilitada',
+            'edicion_hasta',
             'habilitada_por',
             'fecha_habilitacion',
             'motivo_habilitacion',
@@ -733,7 +766,8 @@ def habilitar_edicion(request, periodo):
         {
             **PeriodoSerializer(registro).data,
             'mensaje': (
-                f'{etiqueta_mes(mes)} queda abierto para edición por excepción.'
+                f'{etiqueta_mes(mes)} queda abierto para edición hasta el '
+                f'{etiqueta_dia(hasta)}.'
                 if habilitar
                 else f'{etiqueta_mes(mes)} vuelve a quedar congelado.'
             ),

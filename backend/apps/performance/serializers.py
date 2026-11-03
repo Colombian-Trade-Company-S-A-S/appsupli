@@ -387,6 +387,7 @@ class PeriodoSerializer(serializers.ModelSerializer):
             'fecha_apertura',
             'fecha_cierre',
             'edicion_habilitada',
+            'edicion_hasta',
             'habilitada_por',
             'habilitada_por_nombre',
             'fecha_habilitacion',

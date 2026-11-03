@@ -136,11 +136,20 @@ export const useValidarResultado = () =>
         : 'Resultado devuelto al colaborador',
   );
 
-/** La excepción del A9: solo People, y siempre con motivo. */
+/** La excepción del A9: solo People, y siempre hasta un día. */
 export const useHabilitarEdicion = () =>
   usePerformanceMutation(
-    ({ periodo, habilitada, motivo }: { periodo: string; habilitada: boolean; motivo?: string }) =>
-      performanceApi.habilitarEdicion(mesDe(periodo), habilitada, motivo),
+    ({
+      periodo,
+      habilitada,
+      hasta,
+      motivo,
+    }: {
+      periodo: string;
+      habilitada: boolean;
+      hasta?: string;
+      motivo?: string;
+    }) => performanceApi.habilitarEdicion(mesDe(periodo), habilitada, hasta, motivo),
     (datos) => datos.mensaje,
   );
 
