@@ -53,7 +53,7 @@ export function BotonInstalar() {
       <Dialog open={pasos} onOpenChange={setPasos}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Instala Supli Tech en tu iPhone</DialogTitle>
+            <DialogTitle>Instala appSupli en tu iPhone</DialogTitle>
             <DialogDescription>
               Queda en tu pantalla de inicio y abre en su propia ventana, como cualquier app.
             </DialogDescription>

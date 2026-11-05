@@ -16,22 +16,22 @@ export function IconoMarca({ className }: { className?: string }) {
 }
 
 /**
- * El logotipo: «Supli» en Montserrat Extrabold con el degradado oficial, y el
- * resto del nombre de la app al lado en el color del texto.
+ * El logotipo: «Supli» en Montserrat Extrabold con el degradado oficial, y lo
+ * demás del nombre de la app («app») pegado, en el color del texto.
  */
 export function Logo({ className }: { className?: string }) {
-  const [marca, ...resto] = env.appName.split(' ');
+  const [antes, despues] = env.appName.split('Supli');
+  const conMarca = despues !== undefined;
   return (
-    <span className={cn('inline-flex items-baseline gap-1.5 leading-none', className)}>
-      <span className="text-logo">{marca}</span>
-      {resto.length > 0 && (
-        <span className="font-heading font-semibold tracking-tight text-foreground/80">
-          {resto.join(' ')}
-        </span>
-      )}
+    <span className={cn('inline-flex items-baseline leading-none', className)}>
+      {conMarca && antes && <span className={RESTO_DEL_NOMBRE}>{antes}</span>}
+      <span className="text-logo">{conMarca ? 'Supli' : env.appName}</span>
+      {conMarca && despues && <span className={RESTO_DEL_NOMBRE}>{despues}</span>}
     </span>
   );
 }
+
+const RESTO_DEL_NOMBRE = 'font-heading font-semibold tracking-tight text-foreground/80';
 
 /** La marca de la plataforma: el ícono y el logotipo, igual que en el sidebar. */
 export function Marca({ className }: { className?: string }) {

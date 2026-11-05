@@ -67,6 +67,8 @@ export function FormularioObjetivo({
   // colaborador (sale de la jerarquía, y el backend lo impone igual).
   const responsableNombre = colaborador.jefeId ? colaborador.jefe : colaborador.nombre;
   const aprobador = colaborador.aprobador || 'su jefe';
+  // El CEO no tiene jefe: el backend lo devuelve como su propio aprobador.
+  const suPropioJefe = !colaborador.jefeId && colaborador.aprobador === colaborador.nombre;
 
   const onSubmit = async (evento: FormEvent) => {
     evento.preventDefault();
@@ -150,7 +152,9 @@ export function FormularioObjetivo({
           <FieldDescription>
             {colaborador.jefeId
               ? 'Su jefe directo.'
-              : 'Esta persona no tiene jefe registrado: queda ella misma.'}
+              : suPropioJefe
+                ? 'Es su propio jefe.'
+                : 'Esta persona no tiene jefe registrado: queda ella misma.'}
           </FieldDescription>
         </Field>
 
@@ -158,7 +162,12 @@ export function FormularioObjetivo({
           <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
           <span className="text-pretty">
             Se mide en <b className="text-foreground">% de cumplimiento, de 0 a 100</b>.{' '}
-            {colaborador.asesorOPromotor ? (
+            {suPropioJefe ? (
+              <>
+                Es su propio jefe: registra su % con la evidencia, queda aprobado al guardarlo y
+                People lo audita después.
+              </>
+            ) : colaborador.asesorOPromotor ? (
               <>
                 Por ser asesor o promotor, su jefe inmediato registra el % con la evidencia y lo
                 aprueba <b className="text-foreground">{aprobador}</b>.

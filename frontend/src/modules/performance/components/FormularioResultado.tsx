@@ -157,13 +157,20 @@ export function FormularioResultado({
       <div className="flex items-start gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
         <span className="text-pretty">
-          Adjunta la evidencia que soporta el %:{' '}
-          {objetivo.aprobadorNombre ? (
-            <b className="text-foreground">{objetivo.aprobadorNombre}</b>
+          {objetivo.aprobadorNombre === objetivo.colaboradorNombre ? (
+            // El CEO es su propio jefe: lo que registra queda aprobado de una vez.
+            'Adjunta la evidencia que soporta el %: lo que registres queda aprobado al guardarlo y People lo audita después.'
           ) : (
-            'el jefe'
+            <>
+              Adjunta la evidencia que soporta el %:{' '}
+              {objetivo.aprobadorNombre ? (
+                <b className="text-foreground">{objetivo.aprobadorNombre}</b>
+              ) : (
+                'el jefe'
+              )}{' '}
+              la revisa y aprueba el cumplimiento.
+            </>
           )}{' '}
-          la revisa y aprueba el cumplimiento.{' '}
           {objetivo.resultado && !corrigiendo && (
             <>
               Hoy va en{' '}

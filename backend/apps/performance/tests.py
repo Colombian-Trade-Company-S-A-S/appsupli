@@ -711,6 +711,55 @@ def test_el_ceo_define_sus_objetivos_y_su_resultado_queda_aprobado(app_performan
     assert resultado['estadoValidacion'] == EstadoValidacion.VALIDADO
     assert [paso['accion'] for paso in resultado['historial']] == ['cargado', 'validado']
 
+    # Es su propio jefe: la app lo muestra como quien aprueba y puede volver a decidir.
+    fila = cliente.get(f'{RUTA}/mis-objetivos').json()[0]
+    assert fila['aprobadorNombre'] == ceo.full_name
+    assert (fila['puedeCargar'], fila['puedeValidar']) == (True, True)
+    assert cliente.post(
+        f'{RUTA}/objetivos/{objetivo.pk}/validar', {'estado': 'validado'}, format='json'
+    ).status_code == 200
+
+
+def test_el_ceo_que_tambien_es_people_se_aprueba_a_si_mismo(app_performance, equipo):
+    """Con el rol de People encima, la regla de no validarse lo propio no lo bloquea."""
+    ceo = crear_usuario(
+        'ceo@supli.tech', app_performance, ['performance:objetivos:manage_all'], cargo='CEO'
+    )
+    _rol_ceo(ceo)
+    objetivo = objetivo_de(ceo, ceo, '100')
+    _empezar_el_mes(objetivo.periodo)
+
+    resultado = cliente_de(ceo).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
+    )
+
+    assert resultado.status_code == 200, resultado.data
+    assert resultado.json()['estadoValidacion'] == EstadoValidacion.VALIDADO
+    assert cliente_de(ceo).post(
+        f'{RUTA}/objetivos/{objetivo.pk}/validar', {'estado': 'validado'}, format='json'
+    ).status_code == 200
+
+
+def test_quien_no_tiene_jefe_ni_el_rol_no_se_aprueba_solo(app_performance):
+    """Un dato faltante en Odoo no convierte a nadie en su propio aprobador."""
+    sin_jefe = crear_usuario('sinjefe@supli.tech', app_performance)
+    objetivo = objetivo_de(sin_jefe, sin_jefe, '100')
+    _empezar_el_mes(objetivo.periodo)
+    cliente = cliente_de(sin_jefe)
+
+    resultado = cliente.put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '100'},
+        format='json',
+    )
+
+    assert resultado.json()['estadoValidacion'] == EstadoValidacion.PENDIENTE
+    assert cliente.post(
+        f'{RUTA}/objetivos/{objetivo.pk}/validar', {'estado': 'validado'}, format='json'
+    ).status_code == 403
+
 
 def test_el_admin_no_se_autoaprueba(app_performance, equipo):
     """La autogestión hay que asignarla: el admin no la hereda con sus permisos."""

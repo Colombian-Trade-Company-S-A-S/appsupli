@@ -1,8 +1,8 @@
 {
   "id": "/inicio",
-  "name": "Supli Tech",
-  "short_name": "Supli Tech",
-  "description": "La plataforma interna de Supli Tech: una cuenta para todas las áreas.",
+  "name": "appSupli",
+  "short_name": "appSupli",
+  "description": "La plataforma interna de appSupli: una cuenta para todas las áreas.",
   "lang": "es",
   "start_url": "/inicio",
   "scope": "/",

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   VITE_API_URL: z.string().default('/api'),
-  VITE_APP_NAME: z.string().default('Supli Tech'),
+  VITE_APP_NAME: z.string().default('appSupli'),
   // La aplicación de Entra ID para «Ingresar con Microsoft». No son secretos
   // (viajan en la URL de Microsoft) y son los mismos del backend: vivir acá
   // deja el botón listo aunque el backend de Render esté dormido.

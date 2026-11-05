@@ -112,10 +112,11 @@ def aprobador_id(colaborador) -> int | None:
 
     Para asesores y promotores es el jefe de su jefe —el Trade Marketing
     Manager—, porque el jefe inmediato es quien registra el resultado y no se
-    aprueba a sí mismo. Si ese jefe no tiene a nadie arriba, aprueba él.
+    aprueba a sí mismo. Si ese jefe no tiene a nadie arriba, aprueba él. El CEO
+    no tiene jefe: es su propio aprobador.
     """
     if colaborador.manager_id is None:
-        return None
+        return colaborador.pk if puede_autogestionar(colaborador) else None
     if es_asesor_o_promotor(colaborador):
         return colaborador.manager.manager_id or colaborador.manager_id
     return colaborador.manager_id
@@ -125,7 +126,7 @@ def aprobador_de(colaborador):
     """La persona de `aprobador_id`, para mostrar su nombre."""
     jefe = colaborador.manager
     if jefe is None:
-        return None
+        return colaborador if puede_autogestionar(colaborador) else None
     if es_asesor_o_promotor(colaborador) and jefe.manager_id:
         return jefe.manager
     return jefe
