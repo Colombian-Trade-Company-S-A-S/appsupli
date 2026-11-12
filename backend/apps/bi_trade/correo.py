@@ -16,18 +16,18 @@ import re
 import unicodedata
 import urllib.parse
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.utils import timezone
 
 from apps.planner.graph import GraphClient, GraphError
 
-#: Hasta dónde se busca hacia atrás. El informe llega casi todos los días.
-DIAS_ATRAS = 45
-#: Cuántos correos con adjuntos se revisan, del más reciente al más viejo.
-CORREOS_A_REVISAR = 25
+#: Cuántos correos con adjuntos se revisan, del más reciente al más viejo. Sin
+#: límite de fecha: se trae el último informe que haya, aunque hoy no llegue.
+CORREOS_A_REVISAR = 50
+#: Desde cuándo se busca: Graph pide la fecha en el filtro para poder ordenar.
+DESDE_SIEMPRE = '2000-01-01T00:00:00Z'
 TIPO_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 
@@ -87,14 +87,20 @@ def _traducir(error: GraphError) -> ErrorDeCorreo:
 
 
 def buscar_informe(cliente: GraphClient | None = None) -> InformeEnCorreo:
-    """El informe más reciente del buzón: el primer adjunto que se llame como el informe."""
+    """
+    El informe más reciente del buzón: el primer adjunto que se llame como el informe.
+
+    No importa la fecha (si hoy no llegó, sirve el de ayer o el de la semana
+    pasada) ni, por defecto, quién lo mandó: el buzón solo recibe informes y
+    el nombre del adjunto ya lo identifica. Así también sirve un correo
+    reenviado a mano. INFORME_CLARO_REMITENTE lo restringe si hace falta.
+    """
     cliente = cliente or GraphClient()
     remitente = settings.INFORME_CLARO_REMITENTE.strip().lower()
-    desde = (timezone.now() - timedelta(days=DIAS_ATRAS)).strftime('%Y-%m-%dT%H:%M:%SZ')
     # Graph exige que lo que va en $orderby aparezca primero en el $filter.
     parametros = urllib.parse.urlencode(
         {
-            '$filter': f'receivedDateTime ge {desde} and hasAttachments eq true',
+            '$filter': f'receivedDateTime ge {DESDE_SIEMPRE} and hasAttachments eq true',
             '$orderby': 'receivedDateTime desc',
             '$top': str(CORREOS_A_REVISAR),
             '$select': 'id,subject,receivedDateTime,from',
@@ -132,15 +138,16 @@ def buscar_informe(cliente: GraphClient | None = None) -> InformeEnCorreo:
     except GraphError as error:
         raise _traducir(error) from error
 
-    quien = settings.INFORME_CLARO_REMITENTE or 'nadie'
+    de_quien = f' de {settings.INFORME_CLARO_REMITENTE}' if remitente else ''
     if del_remitente:
         raise ErrorDeCorreo(
-            f'Hay correos de {quien} en el buzón, pero ninguno trae el adjunto '
-            f'«{settings.INFORME_CLARO_ADJUNTO}…xlsx».'
+            f'Hay correos{de_quien} en el buzón {settings.INFORME_CLARO_BUZON}, pero ninguno '
+            f'trae el adjunto «{settings.INFORME_CLARO_ADJUNTO}…xlsx».'
         )
     raise ErrorDeCorreo(
-        f'No hay correos de {quien} con adjuntos en el buzón {settings.INFORME_CLARO_BUZON} '
-        f'en los últimos {DIAS_ATRAS} días.'
+        f'El buzón {settings.INFORME_CLARO_BUZON} no tiene ningún correo{de_quien} con '
+        'adjuntos. Revisa que la regla que copia el informe a ese buzón esté activa, o '
+        'reenvía ahí el último correo del informe.'
     )
 
 

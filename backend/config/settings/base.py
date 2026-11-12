@@ -236,12 +236,11 @@ PLANNER_TIMEOUT = config('PLANNER_TIMEOUT', default=30, cast=int)
 # ── Informe del ERP de Claro por correo ────────────────────────────────────
 # Llega a un buzón compartido (una regla de Exchange lo copia ahí) y la misma
 # app de Entra de Planner lo lee: Exchange le permite leer SOLO ese buzón. Lo
-# usan Claro y Tmk Ecommerce Claro, que reciben el mismo archivo. Remitente
-# vacío = cualquier remitente (para probar reenviando el correo a mano).
+# usan Claro y Tmk Ecommerce Claro, que reciben el mismo archivo. Se trae el
+# último adjunto que se llame como el informe, de cualquier remitente (sirve un
+# correo reenviado a mano); con INFORME_CLARO_REMITENTE se exige uno.
 INFORME_CLARO_BUZON = config('INFORME_CLARO_BUZON', default='informesclaro@supli.tech')
-INFORME_CLARO_REMITENTE = config(
-    'INFORME_CLARO_REMITENTE', default='michael.rojas@claro.com.co'
-)
+INFORME_CLARO_REMITENTE = config('INFORME_CLARO_REMITENTE', default='')
 INFORME_CLARO_ADJUNTO = config(
     'INFORME_CLARO_ADJUNTO', default='Informe Inventarios Tecnologia Coltrade'
 )

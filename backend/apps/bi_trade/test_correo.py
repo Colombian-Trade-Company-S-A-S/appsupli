@@ -65,7 +65,28 @@ def test_el_nombre_del_adjunto_trae_la_fecha():
     assert fecha_del_nombre('otro.xlsx') is None
 
 
-def test_busca_el_informe_mas_reciente_del_remitente():
+def test_trae_el_ultimo_informe_del_buzon_de_cualquier_remitente():
+    """Sin fecha límite ni remitente: el primer correo, del más reciente, que traiga el informe."""
+    graph = GraphFalso(
+        correos=[
+            _correo('a', recibido='2026-11-10T09:00:00Z'),
+            _correo('b', de='julian@supli.tech', recibido='2026-10-01T09:00:00Z'),
+        ],
+        adjuntos={
+            'a': [{'id': 'x', 'name': 'foto.png', 'size': 5}],
+            'b': [{'id': 'y', 'name': NOMBRE, 'size': 9}],
+        },
+    )
+
+    informe = buscar_informe(graph)
+
+    # El más reciente no trae el informe; sirve el reenviado a mano de octubre.
+    assert (informe.mensaje, informe.adjunto) == ('b', 'y')
+    assert 'receivedDateTime+ge+2000-01-01' in graph.pedidos[0]
+
+
+def test_con_remitente_configurado_solo_toma_sus_correos(settings):
+    settings.INFORME_CLARO_REMITENTE = CLARO
     graph = GraphFalso(
         correos=[_correo('a', de='otra@persona.com'), _correo('b'), _correo('c')],
         adjuntos={
@@ -91,7 +112,7 @@ def test_sin_informe_en_el_buzon_lo_dice():
     with pytest.raises(ErrorDeCorreo, match='ninguno trae el adjunto'):
         buscar_informe(graph)
 
-    with pytest.raises(ErrorDeCorreo, match='No hay correos'):
+    with pytest.raises(ErrorDeCorreo, match='no tiene ningún correo'):
         buscar_informe(GraphFalso(correos=[], adjuntos={}))
 
 
