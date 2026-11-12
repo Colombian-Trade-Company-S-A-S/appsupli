@@ -2,6 +2,7 @@ import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   BarChart3Icon,
   GaugeIcon,
+  ListTodoIcon,
   ListChecksIcon,
   LockIcon,
   TrophyIcon,
@@ -30,6 +31,7 @@ const SECCIONES: Seccion[] = [
   { to: 'mis-objetivos', label: 'Mis objetivos', icon: ListChecksIcon },
   { to: 'equipo', label: 'Objetivos del equipo', icon: UsersIcon, soloLider: true },
   { to: 'dashboard', label: 'Semáforo del equipo', icon: BarChart3Icon, soloLider: true },
+  { to: 'pendientes', label: 'Pendientes', icon: ListTodoIcon, soloLider: true },
   { to: 'top', label: 'Top Performance', icon: TrophyIcon },
 ];
 

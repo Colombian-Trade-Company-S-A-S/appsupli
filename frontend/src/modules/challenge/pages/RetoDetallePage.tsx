@@ -25,6 +25,7 @@ import { useAuth } from '@/core/auth';
 import { fechaCorta, type Participacion } from '../api';
 import {
   useCerrarReto,
+  useCerrarYPublicarReto,
   useFinalizarReto,
   useOpcionesChallenge,
   useParticipaciones,
@@ -37,6 +38,7 @@ import {
 import { CategoriaBadge, EstadoReto as EstadoRetoBadge } from '../components/Piezas';
 import { FormularioParticipacion } from '../components/FormularioParticipacion';
 import { FormularioReto } from '../components/FormularioReto';
+import { ConfirmarCierre, type AccionCierre } from '../components/ConfirmarCierre';
 import {
   MiEntrega,
   ResultadoPorPublicar,
@@ -65,10 +67,13 @@ export default function RetoDetallePage() {
   const [revisando, setRevisando] = useState<Participacion | null>(null);
   const [reabriendo, setReabriendo] = useState(false);
   const [motivo, setMotivo] = useState('');
+  // Antes de cerrar o publicar se muestra quién está pendiente.
+  const [confirmando, setConfirmando] = useState<AccionCierre | null>(null);
 
   const publicar = usePublicarReto();
   const cerrar = useCerrarReto();
   const finalizar = useFinalizarReto();
+  const cerrarYPublicar = useCerrarYPublicarReto();
   const reabrir = useReabrirReto();
   const revision = usePedirRevision();
 
@@ -136,8 +141,11 @@ export default function RetoDetallePage() {
         )}
         {puedeGestionarRetos && abierto && (
           <>
-            <Button variant="outline" onClick={() => cerrar.mutate(reto.id)}>
-              Cerrar reto
+            <Button onClick={() => setConfirmando('cerrar-y-publicar')}>
+              Cerrar y publicar resultado
+            </Button>
+            <Button variant="outline" onClick={() => setConfirmando('cerrar')}>
+              Solo cerrar reto
             </Button>
             <Button variant="ghost" onClick={() => setEditando(true)}>
               Corregir texto o ampliar plazo
@@ -146,7 +154,7 @@ export default function RetoDetallePage() {
         )}
         {puedeGestionarRetos && reto.estado === 'cerrado' && (
           <>
-            <Button onClick={() => finalizar.mutate(reto.id)} disabled={finalizar.isPending}>
+            <Button onClick={() => setConfirmando('publicar')} disabled={finalizar.isPending}>
               Finalizar y publicar resultado
             </Button>
             <Button
@@ -161,6 +169,22 @@ export default function RetoDetallePage() {
           </>
         )}
       </div>
+
+      <ConfirmarCierre
+        retoId={reto.id}
+        accion={confirmando}
+        onCancelar={() => setConfirmando(null)}
+        enCurso={cerrar.isPending || finalizar.isPending || cerrarYPublicar.isPending}
+        onAceptar={() => {
+          const accion =
+            confirmando === 'cerrar'
+              ? cerrar
+              : confirmando === 'publicar'
+                ? finalizar
+                : cerrarYPublicar;
+          accion.mutate(reto.id, { onSettled: () => setConfirmando(null) });
+        }}
+      />
 
       {finalizado && resultado?.publicado ? (
         <ResultadoPublicado

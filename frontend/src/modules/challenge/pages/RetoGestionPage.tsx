@@ -1,7 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowLeftIcon, ClipboardCheckIcon, LockIcon, SearchIcon, UsersIcon } from 'lucide-react';
 import {
+  ArrowLeftIcon,
+  ClipboardCheckIcon,
+  LockIcon,
+  SearchIcon,
+  UserXIcon,
+  UsersIcon,
+} from 'lucide-react';
+import {
+  Badge,
   Button,
   Card,
   CardContent,
@@ -31,7 +39,7 @@ import { Encabezado, EstadoTabla, Kpi } from '@/shared/components/layout';
 import { EsqueletoPagina } from '@/shared/components/feedback';
 import { useAuth } from '@/core/auth';
 import type { EstadoParticipacion, Participacion } from '../api';
-import { useOpcionesChallenge, useParticipaciones, useReto } from '../hooks';
+import { useOpcionesChallenge, useParticipaciones, usePendientesReto, useReto } from '../hooks';
 import { EstadoEntrega, EstadoReto as EstadoRetoBadge } from '../components/Piezas';
 import { FormularioValoracion } from '../components/FormularioValoracion';
 import { CalificacionesDeLaEntrega } from '../components/ResultadoDelReto';
@@ -105,6 +113,12 @@ export default function RetoGestionPage() {
   const [estado, setEstado] = useState('');
   const [busqueda, setBusqueda] = useState('');
   const [calificando, setCalificando] = useState<Participacion | null>(null);
+  const [verPendientes, setVerPendientes] = useState(false);
+  // Quién del público no ha subido evidencia: solo lo consulta quien gestiona.
+  const { data: pendientes } = usePendientesReto(
+    retoId,
+    !!opciones?.capacidades.puedeGestionarRetos && !!reto && reto.estado !== 'borrador',
+  );
 
   const finalizado = reto?.estado === 'finalizado';
 
@@ -197,7 +211,7 @@ export default function RetoGestionPage() {
           value={porCalificar}
           hint={
             !finalizado && porCalificar > 0
-              ? 'Con al menos una calificación ya se puede finalizar'
+              ? 'Se puede publicar igual: las que falten se publican sin puntaje'
               : undefined
           }
         />
@@ -207,6 +221,50 @@ export default function RetoGestionPage() {
           hint={finalizado ? 'De 100 puntos, sin las que no cumplen' : 'Se calcula al publicar'}
         />
       </div>
+
+      {pendientes && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <UserXIcon className="size-4 text-primary" />
+              Pendientes por cargar evidencia
+              <Badge variant="secondary">{pendientes.sinEvidencia.length}</Badge>
+            </CardTitle>
+            <CardDescription>
+              {pendientes.sinEvidencia.length === 0
+                ? 'Todo el público del reto ya subió su evidencia.'
+                : `${pendientes.entregas} de ${pendientes.publico} personas del público participaron. Estas no han subido nada.`}
+            </CardDescription>
+          </CardHeader>
+          {pendientes.sinEvidencia.length > 0 && (
+            <CardContent className="flex flex-col gap-2">
+              <ul className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+                {(verPendientes
+                  ? pendientes.sinEvidencia
+                  : pendientes.sinEvidencia.slice(0, 9)
+                ).map((persona) => (
+                  <li key={persona.id} className="flex min-w-0 flex-col py-1">
+                    <span className="truncate text-sm font-medium">{persona.nombre}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {[persona.cargo, persona.area].filter(Boolean).join(' · ') || '—'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {pendientes.sinEvidencia.length > 9 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="self-start"
+                  onClick={() => setVerPendientes((v) => !v)}
+                >
+                  {verPendientes ? 'Ver menos' : `Ver las ${pendientes.sinEvidencia.length}`}
+                </Button>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {porArea.length > 0 && (
         <Card>

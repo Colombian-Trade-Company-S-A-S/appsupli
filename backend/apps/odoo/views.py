@@ -1,6 +1,5 @@
 """Odoo en Administración: probar la conexión, sincronizar y ver la bitácora."""
 from django.http import HttpResponse
-
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 

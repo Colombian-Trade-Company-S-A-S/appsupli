@@ -37,6 +37,8 @@ export interface User {
   /** Personas activas a su cargo. */
   teamCount: number;
   avatarUrl: string;
+  /** La foto de perfil, relativa a la raíz de la API; null si no tiene. */
+  foto: string | null;
   isActive: boolean;
   /** Apariencia guardada en la cuenta: sigue a la persona entre equipos. */
   theme: Theme;
@@ -84,4 +86,12 @@ export interface PreferencesPayload {
   theme?: Theme;
   accent?: Accent;
   radius?: Radius;
+}
+
+/** Lo que responde el backend al cambiar la foto. */
+export interface ResultadoFoto {
+  user: User;
+  /** Si quedó también en Odoo, si la cuenta no está enlazada o si Odoo falló. */
+  odoo: 'actualizada' | 'sin_vinculo' | 'error';
+  message: string;
 }

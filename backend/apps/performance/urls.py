@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from . import views
+from . import pendientes, views
 
 app_name = 'performance'
 
@@ -14,6 +14,8 @@ urlpatterns = [
     path('resumen', views.resumen, name='resumen'),
     path('mis-objetivos', views.mis_objetivos, name='mis-objetivos'),
     path('acumulado', views.acumulado, name='acumulado'),
+    # Quién tiene algo pendiente en el mes: asignar, cargar o aprobar.
+    path('pendientes', pendientes.pendientes, name='pendientes'),
     # Carga de objetivos por Excel, con la misma plantilla de BI Trade.
     path('objetivos/plantilla', views.plantilla_objetivos, name='objetivos-plantilla'),
     path('objetivos/importar', views.importar_objetivos, name='objetivos-importar'),

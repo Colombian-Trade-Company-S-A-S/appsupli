@@ -282,6 +282,45 @@ Crea los roles *Valoración · Admin People*, *· BI / Tech* y *· Dirección*.
 tenga `results:publish` los abre desde el home del módulo, idealmente con el
 avance al 100%. Es una fila única (`ValuationSettings`) con fecha y responsable.
 
+## Ejecución Planner (`apps.planner`)
+
+Sub-módulo de Supli Performance que **solo lee** Microsoft Planner por Graph y
+mide la ejecución semanal: % Weekly, % Daily, Hito e Índice (40/40/20 por
+defecto, con tope de 100). La guía de implementación y el plan están en
+`integration/planner/`.
+
+**Variables** (backend y `.env`): `PLANNER_TENANT_ID`, `PLANNER_CLIENT_ID`,
+`PLANNER_CLIENT_SECRET`. Es la app de Entra `appsupli-planner-sync`, distinta
+de la del login. **El secreto vence el 3 de noviembre de 2028.**
+
+**Puesta en marcha**
+
+```bash
+python manage.py seed_planner_app --como-objetivos   # sub-módulo, permisos y acceso
+python manage.py inventario_planner                  # descubre los planes y los relaciona por nombre
+python manage.py sync_planner --tipo diaria          # primera lectura
+```
+
+People revisa la relación plan–persona en «Conexión y calidad».
+
+**Tareas programadas** (cron de Render, en UTC; COT = UTC−5):
+
+| Qué | Hora COT | Cron UTC | Comando |
+|---|---|---|---|
+| Lectura nocturna | 02:00 todos los días | `0 7 * * *` | `sync_planner --tipo diaria` |
+| Línea base | lunes 18:00 (martes si es festivo) | `0 23 * * 1,2` | `sync_planner --tipo linea_base` |
+| Cierre | domingo 23:59 | `59 4 * * 1` | `sync_planner --tipo cierre` |
+
+La línea base se programa lunes y martes: el comando decide si ese día toca.
+La línea base y el cierre se toman una vez; `--forzar` los reemplaza.
+
+**Reglas que esperan confirmación de People** (están en el código como lo
+pide la guía y el prototipo): las tareas agregadas después de la línea base no
+cuentan; las movidas a otro depósito sí; un componente sin dato cuenta 0; el
+Hito «Sin validar» suma 100; el semáforo usa 80/60; se aceptan depósitos `W45`,
+`Week 45` o `45` con alerta de calidad; la ventana de validación se corre un día
+si el lunes es festivo.
+
 ## Producción
 
 - `DJANGO_SETTINGS_MODULE=config.settings.production`, `SECRET_KEY` real,

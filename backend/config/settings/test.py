@@ -12,3 +12,14 @@ DATABASES = {
         'NAME': ':memory:',
     }
 }
+
+# Ni Odoo ni Microsoft Graph en las pruebas, aunque `.env` traiga las claves:
+# una prueba que olvide simular el cliente fallaría, en vez de escribir en el
+# Odoo real (la foto de perfil se escribe en el empleado).
+ODOO_URL = ''
+ODOO_DB = ''
+ODOO_USER = ''
+ODOO_SECRET = ''
+PLANNER_TENANT_ID = ''
+PLANNER_CLIENT_ID = ''
+PLANNER_CLIENT_SECRET = ''

@@ -53,6 +53,10 @@ class OdooFalso:
             raise OdooError(self._error)
         return self._departamentos
 
+    def fotos(self, ids):
+        # Nadie tiene foto en Odoo: la sincronización de fotos no cambia nada.
+        return {}
+
     def empleados(self):
         return self._empleados
 

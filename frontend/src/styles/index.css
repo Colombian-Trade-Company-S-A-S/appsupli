@@ -378,3 +378,98 @@
     animation: none;
   }
 }
+
+/* ── Ficha de los socios ──────────────────────────────────────────────────
+   Sin rótulos: la diferencia está en los efectos, y son discretos. Un aro
+   dorado y morado que gira muy despacio alrededor de la foto, un halo tibio,
+   un borde con un hilo dorado y un brillo que cruza la ficha cada tanto. */
+@property --giro-aro {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes giro-aro {
+  to {
+    --giro-aro: 360deg;
+  }
+}
+@keyframes destello-ficha {
+  0%,
+  72% {
+    transform: translateX(-140%) skewX(-18deg);
+  }
+  100% {
+    transform: translateX(340%) skewX(-18deg);
+  }
+}
+@keyframes respiro-halo {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+.aro-socio {
+  position: relative;
+  border-radius: 9999px;
+  padding: 3px;
+  background: conic-gradient(
+    from var(--giro-aro),
+    #f3d58a,
+    #c8973a,
+    #a66bff,
+    #5932d7,
+    #c8973a,
+    #f3d58a
+  );
+  animation: giro-aro 10s linear infinite;
+}
+.aro-socio::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(closest-side, rgb(214 170 80 / 0.45), transparent);
+  animation: respiro-halo 5s ease-in-out infinite;
+}
+.borde-socio {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    linear-gradient(
+        135deg,
+        rgb(214 170 80 / 0.75),
+        rgb(166 107 255 / 0.35) 45%,
+        rgb(214 170 80 / 0.75)
+      )
+      border-box;
+}
+.destello-socio {
+  position: relative;
+  overflow: hidden;
+}
+.destello-socio::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgb(255 236 190 / 0.13), transparent);
+  animation: destello-ficha 9s ease-in-out infinite;
+}
+/* En las listas basta un hilo dorado alrededor de la foto. */
+.hilo-socio {
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 3.5px rgb(214 170 80 / 0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .aro-socio,
+  .aro-socio::before,
+  .destello-socio::after {
+    animation: none;
+  }
+}

@@ -1,10 +1,13 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { MoreHorizontalIcon, PencilIcon, SearchIcon, UserCheckIcon, UserXIcon } from 'lucide-react';
 import { useDebounced } from '@/shared/hooks';
-import { useAuth } from '@/core/auth';
+import { urlFotoDe, useAuth } from '@/core/auth';
+import { cn } from '@/shared/lib/utils';
 import {
   Avatar,
   AvatarFallback,
+  AvatarImage,
   Badge,
   Button,
   Card,
@@ -165,13 +168,19 @@ export function UsersTab() {
                   <TableRow key={usuario.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <Avatar className="size-8">
+                        <Avatar className={cn('size-8', usuario.destacado && 'hilo-socio')}>
+                          <AvatarImage src={urlFotoDe(usuario)} alt="" />
                           <AvatarFallback>
                             {usuario.firstName.charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex flex-col">
-                          <span className="font-medium">{usuario.fullName}</span>
+                          <Link
+                            to={`/inicio/admin/usuarios/${usuario.id}`}
+                            className="font-medium underline-offset-4 hover:text-primary hover:underline"
+                          >
+                            {usuario.fullName}
+                          </Link>
                           <span className="text-xs text-muted-foreground">{usuario.email}</span>
                         </div>
                       </div>

@@ -104,6 +104,8 @@ urlpatterns = [
         name='avance-mensual-exportar',
     ),
     path('importar-informe', views.importar_informe, name='importar-informe'),
+    # El último informe del ERP en el buzón compartido (Claro y Tmk usan el mismo).
+    path('informe-correo', views.informe_del_correo, name='informe-correo'),
     path('cumplimiento-diario', views.cumplimiento_diario, name='cumplimiento-diario'),
     path(
         'cumplimiento-diario/exportar',

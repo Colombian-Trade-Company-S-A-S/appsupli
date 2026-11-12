@@ -5,6 +5,7 @@ import type {
   LoginCredentials,
   LoginResponse,
   PreferencesPayload,
+  ResultadoFoto,
   User,
 } from './types';
 
@@ -33,6 +34,14 @@ export const authApi = {
    */
   decidirInstalacion: (decision: 'instalada' | 'despues' | 'visto') =>
     api.post<User>('/auth/instalacion-app', { decision }),
+  /** Sube la foto de perfil; el backend también la escribe en Odoo. */
+  subirFoto: (foto: Blob) => {
+    const cuerpo = new FormData();
+    cuerpo.append('foto', foto, 'foto.jpg');
+    return httpClient
+      .put<ResultadoFoto>('/auth/me/foto', cuerpo, { headers: { 'Content-Type': undefined } })
+      .then((r) => r.data);
+  },
   logout: () => api.post<void>('/auth/logout'),
   verifyPassword: (password: string) => api.post<void>('/auth/verify-password', { password }),
   changePassword: (payload: ChangePasswordPayload) =>

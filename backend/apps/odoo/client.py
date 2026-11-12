@@ -1,9 +1,11 @@
 """
-Cliente de Odoo: solo lectura, por XML-RPC estándar.
+Cliente de Odoo, por XML-RPC estándar: casi todo es solo lectura.
 
-No hay ningún método que escriba en Odoo. La cuenta de integración podría
-hacerlo —Odoo da permisos por modelo, no por campo—, así que la garantía de
-«solo leer» es este archivo: lo único que se llama es `search_read`.
+La única escritura es la foto del empleado (`actualizar_foto`): la persona
+cambia su foto en appSupli y People pidió que quede igual en Odoo. La cuenta de
+integración podría escribir cualquier cosa —Odoo da permisos por modelo, no
+por campo—, así que el límite es este archivo: aparte de `search_read`, lo
+único que se llama es `write` sobre `hr.employee`, solo con `image_1920`.
 """
 import time
 import xmlrpc.client
@@ -119,6 +121,28 @@ class OdooClient:
         return self._llamar(
             self._proxy('/xmlrpc/2/object').execute_kw,
             self.base, uid, self._secreto, modelo, 'search_count', [dominio or []],
+        )
+
+    # ── Foto del empleado ────────────────────────────────────────────────
+    def fotos(self, ids: list[int]) -> dict[int, str]:
+        """`{id del empleado: foto en base64}` en 256 px. Sin la clave si no tiene foto."""
+        filas = []
+        for inicio in range(0, len(ids), 50):
+            filas += self.leer(
+                'hr.employee',
+                ['id', 'image_256'],
+                [('id', 'in', ids[inicio : inicio + 50])],
+                incluir_archivados=True,
+            )
+        return {fila['id']: fila['image_256'] for fila in filas if fila.get('image_256')}
+
+    def actualizar_foto(self, empleado_id: int, foto_base64: str) -> None:
+        """La ÚNICA escritura en Odoo: la foto de un empleado. Odoo genera los tamaños menores."""
+        uid = self.autenticar()
+        self._llamar(
+            self._proxy('/xmlrpc/2/object').execute_kw,
+            self.base, uid, self._secreto, 'hr.employee', 'write',
+            [[empleado_id], {'image_1920': foto_base64}],
         )
 
     # ── Lo que consume la sincronización ─────────────────────────────────

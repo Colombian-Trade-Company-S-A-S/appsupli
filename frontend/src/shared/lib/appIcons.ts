@@ -1,6 +1,7 @@
 import {
   BarChart3Icon,
   BoxesIcon,
+  CalendarCheckIcon,
   GaugeIcon,
   LayoutGridIcon,
   SettingsIcon,
@@ -22,6 +23,7 @@ import {
 const ICONOS: Record<string, LucideIcon> = {
   'bar-chart-3': BarChart3Icon,
   boxes: BoxesIcon,
+  'calendar-check': CalendarCheckIcon,
   gauge: GaugeIcon,
   settings: SettingsIcon,
   store: StoreIcon,

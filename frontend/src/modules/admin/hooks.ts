@@ -6,6 +6,7 @@ import { adminApi } from './api';
 export const adminKeys = {
   todo: ['admin'] as const,
   users: (filtros?: Record<string, unknown>) => ['admin', 'users', filtros ?? {}] as const,
+  user: (id: number) => ['admin', 'user', id] as const,
   areas: () => ['admin', 'areas'] as const,
   applications: () => ['admin', 'applications'] as const,
   roles: () => ['admin', 'roles'] as const,
@@ -23,6 +24,14 @@ export function useAdminUsers(filtros: Record<string, unknown>) {
     placeholderData: (anterior) => anterior,
   });
 }
+
+/** Una persona, para su página de detalle. */
+export const useAdminUser = (id: number) =>
+  useQuery({
+    queryKey: adminKeys.user(id),
+    queryFn: () => adminApi.users.get(id),
+    enabled: Number.isFinite(id) && id > 0,
+  });
 
 export const useAreas = () =>
   useQuery({ queryKey: adminKeys.areas(), queryFn: () => adminApi.areas.list() });
@@ -60,10 +69,7 @@ export const mensajeDeError = (error: unknown) => {
  * Envuelve una mutación del módulo: invalida las consultas de admin y avisa
  * con un toast. Así cada pantalla solo describe qué hace, no cómo se refresca.
  */
-export function useAdminMutation<TVars, TData>(
-  fn: (vars: TVars) => Promise<TData>,
-  exito: string,
-) {
+export function useAdminMutation<TVars, TData>(fn: (vars: TVars) => Promise<TData>, exito: string) {
   const queryClient = useQueryClient();
 
   return useMutation({

@@ -7,6 +7,7 @@ reparte con roles desde Administración.
 """
 from datetime import date, datetime
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, IntegerField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
@@ -34,6 +35,7 @@ from .api_permissions import CanManageData, HasBiTradeApp, ReadOnlyOrCanManage
 from .belkin import registros_del_informe
 from .calendario import dias_del_mes, dias_habiles, es_habil, festivos
 from .canales import CLARO, Canal
+from .correo import ErrorDeCorreo, buscar_informe, descargar_informe
 from .filters import InventarioFilter, MetaFilter, VentaFilter
 from .informe import ErrorDeInforme, leer_informe
 from .models import (
@@ -869,17 +871,20 @@ class VentaViewSet(BiTradeViewSet):
 
     @property
     def solo_con_meta(self) -> bool:
-        """Claro solo carga ventas de productos con meta (ver `VentasConMeta`)."""
+        """Claro y Tmk solo cargan ventas de productos con meta (ver `VentasConMeta`)."""
         return self.canal.solo_con_meta
 
     @property
     def nota_plantilla(self) -> str:
         if not self.solo_con_meta:
             return self.nota_base
+        # El plan Belkin es solo de Claro: en Tmk no hay excepción.
+        belkin = (
+            ', y las de los productos del plan Recomiéndame Belkin' if self.canal is CLARO else ''
+        )
         return (
             f'{self.nota_base} Solo entran las ventas de un producto con meta ese mes en '
-            'ese punto de venta, y las de los productos del plan Recomiéndame Belkin; '
-            'las demás se omiten. Sube primero las metas del mes.'
+            f'ese punto de venta{belkin}; las demás se omiten. Sube primero las metas del mes.'
         )
 
     def _importar_filas(self, filas: list[dict], errores: list[dict]) -> tuple[int, int]:
@@ -1675,6 +1680,37 @@ def importar_informe(request):
     return importar_informe_de(request, CLARO)
 
 
+@api_view(['GET'])
+@permission_classes([HasBiTradeApp, CanManageData])
+def informe_del_correo(request):
+    """
+    El último informe del ERP que llegó al buzón compartido, sin bajarlo.
+
+    Es lo que se muestra antes de importar: de qué correo es y de qué fecha.
+    La importación lo baja después, con `mensaje` y `adjunto`. Sirve igual a
+    Claro y a Tmk Ecommerce Claro: es el mismo archivo.
+    """
+    try:
+        informe = buscar_informe()
+    except ErrorDeCorreo as exc:
+        return Response(
+            {'code': 'invalid', 'message': str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(
+        {
+            'mensaje': informe.mensaje,
+            'adjunto': informe.adjunto,
+            'nombre': informe.nombre,
+            'tamano': informe.tamano,
+            'recibido': informe.recibido,
+            'asunto': informe.asunto,
+            'remitente': informe.remitente,
+            'fecha_archivo': informe.fecha_archivo,
+            'buzon': settings.INFORME_CLARO_BUZON,
+        }
+    )
+
+
 def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     """
     Carga el informe del ERP: ventas e inventario de una sola pasada.
@@ -1709,6 +1745,16 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     punto de venta o el producto no existen en la app, esa fila no entra.
     """
     archivo = request.FILES.get('archivo')
+    # O, en vez del archivo, el correo del buzón compartido de donde bajarlo.
+    mensaje, adjunto = request.data.get('mensaje'), request.data.get('adjunto')
+    if archivo is None and mensaje and adjunto:
+        try:
+            archivo = descargar_informe(str(mensaje), str(adjunto))
+        except ErrorDeCorreo as exc:
+            return Response(
+                {'code': 'invalid', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
     if archivo is None:
         return Response(
             {'code': 'invalid', 'message': 'No llegó ningún archivo.'},
@@ -1806,8 +1852,8 @@ def _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal: Canal) 
     """
     Aplica las ventas del archivo al mes elegido, según el modo.
 
-    En Claro solo entran las de productos con meta ese mes en ese punto, y las
-    del plan Belkin (ver `VentasConMeta`). Tmk carga todo.
+    En Claro y en Tmk solo entran las de productos con meta ese mes en ese
+    punto; en Claro, además, las del plan Belkin (ver `VentasConMeta`).
     """
     filtro = VentasConMeta({(anio, mes)}, canal) if canal.solo_con_meta else None
     del_mes = {

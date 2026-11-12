@@ -1,11 +1,12 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDownIcon, LogOutIcon, UserIcon } from 'lucide-react';
-import { useAuth } from '@/core/auth';
+import { urlFotoDe, useAuth } from '@/core/auth';
 import { useAppearanceEffect } from '@/shared/hooks';
 import { ErrorBoundary } from '@/shared/components/feedback';
 import {
   Avatar,
   AvatarFallback,
+  AvatarImage,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -79,6 +80,7 @@ function AppHeader({ onBuscar }: { onBuscar: () => void }) {
             render={
               <Button variant="ghost" className="h-auto gap-2 py-1.5">
                 <Avatar className="size-7">
+                  <AvatarImage src={urlFotoDe(user)} alt="" />
                   <AvatarFallback>{user?.fullName.charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
                 <span className="hidden text-left leading-tight sm:grid">
@@ -92,7 +94,18 @@ function AppHeader({ onBuscar }: { onBuscar: () => void }) {
           <DropdownMenuContent align="end" className="w-56">
             {/* Base UI exige que el label viva dentro de su propio grupo. */}
             <DropdownMenuGroup>
-              <DropdownMenuLabel>{user?.email}</DropdownMenuLabel>
+              <DropdownMenuLabel className="flex items-center gap-3 py-2">
+                <Avatar className="size-9">
+                  <AvatarImage src={urlFotoDe(user)} alt="" />
+                  <AvatarFallback>{user?.fullName.charAt(0).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <span className="grid min-w-0 leading-tight">
+                  <span className="truncate text-sm font-medium text-foreground">
+                    {user?.fullName}
+                  </span>
+                  <span className="truncate text-xs font-normal">{user?.email}</span>
+                </span>
+              </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

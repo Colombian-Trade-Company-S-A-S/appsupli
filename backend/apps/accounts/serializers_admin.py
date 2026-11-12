@@ -123,6 +123,10 @@ class AdminUserSerializer(serializers.ModelSerializer):
     puede_iniciar_sesion = serializers.BooleanField(read_only=True)
     correo_editable = serializers.SerializerMethodField()
     departamento_nombre = serializers.CharField(source='departamento', read_only=True, default='')
+    # La foto de perfil, relativa a la raíz de la API; null si no tiene.
+    foto = serializers.SerializerMethodField()
+    # Uno de los socios (USUARIOS_DESTACADOS): el frontend lo distingue con efectos.
+    destacado = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -133,6 +137,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'full_name',
+            'foto',
+            'destacado',
             'area',
             'area_name',
             'position',
@@ -169,6 +175,14 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     #: Lo que manda Odoo de la persona misma; solo se edita en quien no viene de allá.
     CAMPOS_PERSONALES_ODOO = ('first_name', 'last_name')
+
+    def get_foto(self, usuario: User) -> str | None:
+        from .fotos import ruta_de_foto  # noqa: PLC0415 — fotos importa los serializers
+
+        return ruta_de_foto(usuario)
+
+    def get_destacado(self, usuario: User) -> bool:
+        return (usuario.email or '').lower() in settings.USUARIOS_DESTACADOS
 
     def get_correo_editable(self, usuario: User) -> bool:
         """

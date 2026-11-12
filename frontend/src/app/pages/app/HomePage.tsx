@@ -11,11 +11,12 @@ import {
   UserRoundIcon,
   UsersIcon,
 } from 'lucide-react';
-import { aplanarApps, useAuth } from '@/core/auth';
+import { aplanarApps, urlFotoDe, useAuth } from '@/core/auth';
 import { iconoDeApp } from '@/shared/lib/appIcons';
 import {
   Avatar,
   AvatarFallback,
+  AvatarImage,
   Card,
   CardContent,
   CardDescription,
@@ -69,10 +70,7 @@ export default function HomePage() {
     <div className="flex flex-col gap-6">
       <Bienvenida usuario={user} />
 
-      <section
-        aria-label="Tus indicadores"
-        className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
-      >
+      <section aria-label="Tus indicadores" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi
           label="Tus aplicaciones"
           value={aplicaciones.length}
@@ -204,6 +202,7 @@ function Bienvenida({ usuario }: { usuario: NonNullable<ReturnType<typeof useAut
         <div className="flex min-w-0 items-center gap-4">
           <span className="hidden shrink-0 rounded-full bg-brand-gradient p-0.5 shadow-lg shadow-[#5932d7]/40 sm:inline-flex">
             <Avatar className="size-14 shrink-0 ring-2 ring-[#0a0818]">
+              <AvatarImage src={urlFotoDe(usuario)} alt="" />
               <AvatarFallback className="bg-[#14102e] font-heading text-lg font-bold text-white">
                 {usuario.firstName.charAt(0).toUpperCase()}
               </AvatarFallback>

@@ -6,7 +6,8 @@ Actions). Sin opciones hace las tres: crear, actualizar y desactivar.
 """
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.odoo.sync import sincronizar
+from apps.odoo.client import OdooError
+from apps.odoo.sync import sincronizar, sincronizar_fotos
 
 
 class Command(BaseCommand):
@@ -21,8 +22,19 @@ class Command(BaseCommand):
             help='Borra, con sus registros, a quien no está en Odoo (nunca a un admin).',
         )
         parser.add_argument('--simular', action='store_true', help='Calcula los cambios sin guardar nada.')
+        parser.add_argument(
+            '--solo-fotos', action='store_true',
+            help='Solo trae las fotos de perfil de Odoo (no toca el organigrama).',
+        )
 
     def handle(self, *args, **opciones):
+        if opciones['solo_fotos']:
+            try:
+                cambiadas = sincronizar_fotos()
+            except OdooError as error:
+                raise CommandError(str(error)) from error
+            self.stdout.write(self.style.SUCCESS(f'Fotos actualizadas: {cambiadas}.'))
+            return
         solo = opciones['solo_crear'] or opciones['solo_actualizar']
         registro = sincronizar(
             crear=opciones['solo_crear'] or not solo,

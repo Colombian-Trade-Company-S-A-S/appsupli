@@ -70,6 +70,8 @@ class UserSerializer(serializers.ModelSerializer):
     manager_name = serializers.CharField(source='manager.full_name', read_only=True, default='')
     team_count = serializers.SerializerMethodField()
     aviso_app = serializers.CharField(read_only=True, allow_null=True)
+    # La foto de perfil, relativa a la raíz de la API; null si no tiene.
+    foto = serializers.SerializerMethodField()
     applications = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
 
@@ -99,12 +101,18 @@ class UserSerializer(serializers.ModelSerializer):
             'app_instalada',
             'aviso_app',
             'avatar_url',
+            'foto',
             'is_active',
             'is_admin',
             'roles',
             'applications',
             'permissions',
         )
+
+    def get_foto(self, obj: User) -> str | None:
+        from .fotos import ruta_de_foto  # noqa: PLC0415 — fotos importa este módulo
+
+        return ruta_de_foto(obj)
 
     def get_team_count(self, obj: User) -> int:
         """Personas activas que lo tienen como jefe directo."""

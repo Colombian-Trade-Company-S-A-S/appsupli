@@ -17,6 +17,7 @@ urlpatterns = [
     path('retos/<int:pk>/publicar', views.publicar, name='reto-publicar'),
     path('retos/<int:pk>/cerrar', views.cerrar, name='reto-cerrar'),
     path('retos/<int:pk>/finalizar', views.finalizar, name='reto-finalizar'),
+    path('retos/<int:pk>/pendientes', views.pendientes, name='reto-pendientes'),
     path('retos/<int:pk>/reabrir', views.reabrir, name='reto-reabrir'),
     path('retos/<int:pk>/participaciones', views.participaciones, name='reto-participaciones'),
     path('retos/<int:pk>/resultado', views.resultado, name='reto-resultado'),

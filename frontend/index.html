@@ -12,18 +12,115 @@
     <meta name="apple-mobile-web-app-title" content="appSupli" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <title>appSupli</title>
+    <script>
+      // El tema guardado se aplica antes de pintar nada: así la pantalla de
+      // carga ya sale clara u oscura, igual que la de React que viene después.
+      try {
+        var t = JSON.parse(localStorage.getItem('supli.appearance') || '{}').theme || 'dark';
+        if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        if (t === 'dark') document.documentElement.classList.add('dark');
+      } catch (e) {
+        document.documentElement.classList.add('dark');
+      }
+    </script>
+    <style>
+      /* La pantalla de carga no puede depender del CSS de la app: en desarrollo
+         ese CSS llega después del JavaScript y, sin estos estilos, la página
+         quedaba sin alto, con el margen y el fondo blanco del navegador. Es
+         una copia de FullPageLoader, para que el paso a React no se note. */
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: #fff;
+      }
+      html.dark body {
+        background: oklch(0.13 0.03 285);
+      }
+      .splash {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        height: 100%;
+        min-height: 60vh;
+        font-family: system-ui, sans-serif;
+      }
+      .splash-marca {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .splash-brillo {
+        position: absolute;
+        width: 7rem;
+        height: 7rem;
+        border-radius: 9999px;
+        background: rgb(89 50 215 / 0.4);
+        filter: blur(40px);
+        animation: splash-brillo 2.4s ease-in-out infinite;
+      }
+      .splash-brillo + .splash-brillo {
+        width: 5rem;
+        height: 5rem;
+        transform: translateX(1rem);
+        background: rgb(59 109 255 / 0.3);
+        animation-delay: -1.2s;
+      }
+      .splash-s {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 3.5rem;
+        height: 3.5rem;
+        border-radius: 1rem;
+        background: linear-gradient(135deg, #a66bff 0%, #5932d7 50%, #3b6dff 100%);
+        box-shadow: 0 10px 15px -3px rgb(89 50 215 / 0.3);
+        color: #fff;
+        font: 800 1.5rem/1 system-ui, sans-serif;
+      }
+      .splash-texto {
+        margin: 0;
+        font-size: 0.875rem;
+        color: oklch(0.5 0.04 285);
+      }
+      html.dark .splash-texto {
+        color: oklch(0.72 0.03 285);
+      }
+      @keyframes splash-brillo {
+        0%,
+        100% {
+          opacity: 0.45;
+          scale: 0.92;
+        }
+        50% {
+          opacity: 0.9;
+          scale: 1.05;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .splash-brillo {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body class="h-full">
     <!-- Splash mientras descarga el JS; React lo reemplaza al montar. -->
     <div id="root" class="h-full">
-      <div
-        style="height:100%;display:flex;align-items:center;justify-content:center;background:#0a0818"
-      >
-        <div
-          style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#a66bff,#5932d7 50%,#3b6dff);box-shadow:0 0 60px 10px rgba(89,50,215,.45);color:#fff;font:800 26px/1 system-ui,sans-serif"
-        >
-          S
+      <div class="splash" role="status" aria-live="polite">
+        <div class="splash-marca">
+          <span class="splash-brillo" aria-hidden="true"></span>
+          <span class="splash-brillo" aria-hidden="true"></span>
+          <span class="splash-s">S</span>
         </div>
+        <p class="splash-texto">Cargando…</p>
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

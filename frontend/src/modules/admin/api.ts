@@ -50,6 +50,10 @@ export interface AdminUser {
   firstName: string;
   lastName: string;
   fullName: string;
+  /** La foto de perfil, relativa a la raíz de la API; null si no tiene. */
+  foto: string | null;
+  /** Uno de los socios: su ficha se distingue con efectos, sin rótulos. */
+  destacado: boolean;
   area: number | null;
   areaName: string;
   position: string;
@@ -147,6 +151,7 @@ export const adminApi = {
   // Sin crear ni borrar: las personas entran y salen con la sincronización de Odoo.
   users: {
     list: (params?: Record<string, unknown>) => api.getList<AdminUser>('/admin/users', params),
+    get: (id: number) => api.get<AdminUser>(`/admin/users/${id}`),
     update: (id: number, payload: AdminUserPayload) =>
       api.patch<AdminUser>(`/admin/users/${id}`, payload),
     toggleActive: (id: number) => api.post<AdminUser>(`/admin/users/${id}/toggle-active`),

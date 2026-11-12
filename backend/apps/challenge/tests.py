@@ -241,19 +241,46 @@ def test_el_reto_pasa_por_sus_cuatro_estados(gente):
     assert Reto.objects.get(pk=reto['id']).estado == EstadoReto.PUBLICADO
 
     participacion = participar(ana, reto['id']).json()
-    assert cliente.post(f'{RUTA}/retos/{reto["id"]}/cerrar', {}, format='json').status_code == 200
-
-    # Con una entrega sin ninguna valoración no se finaliza: no hay con qué comparar.
-    sin_valorar = cliente.post(f'{RUTA}/retos/{reto["id"]}/finalizar', {}, format='json')
-    assert sin_valorar.status_code == 400
-    assert 'sin ninguna valoración' in sin_valorar.json()['message']
-
     for evaluador in los_tres_evaluadores(reto['id']):
         valorar(evaluador, participacion['id'], [8, 8, 8, 8, 8])
+    assert cliente.post(f'{RUTA}/retos/{reto["id"]}/cerrar', {}, format='json').status_code == 200
 
     finalizado = cliente.post(f'{RUTA}/retos/{reto["id"]}/finalizar', {}, format='json')
     assert finalizado.status_code == 200, finalizado.data
     assert Reto.objects.get(pk=reto['id']).estado == EstadoReto.FINALIZADO
+
+
+def test_se_cierra_y_publica_aunque_haya_evidencias_sin_calificar(gente):
+    """Una evidencia que nadie calificó no traba el reto: se publica sin puntaje y no gana."""
+    people, uno, _dos, ana, mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    de_ana = participar(ana, reto['id']).json()
+    de_mario = participar(mario, reto['id']).json()
+    valorar(uno, de_ana['id'], [6, 6, 6, 6, 6])  # la de Mario queda sin calificar
+
+    cerrar_y_finalizar(people, reto['id'])
+
+    assert Participacion.objects.get(pk=de_ana['id']).estado == EstadoParticipacion.VALORADA
+    sin_calificar = Participacion.objects.get(pk=de_mario['id'])
+    assert sin_calificar.estado == EstadoParticipacion.ENTREGADA
+    assert sin_calificar.puntaje_final is None and not sin_calificar.es_ganador
+    resultado = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    assert resultado['publicado'] is True
+    assert resultado['ganador']['participanteNombre'] == ana.full_name
+
+
+def test_se_publica_aunque_nadie_haya_calificado(gente):
+    """Sin ninguna calificación el reto también se publica, sin ganador."""
+    people, _uno, _dos, ana, _mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    participar(ana, reto['id'])
+
+    cerrar_y_finalizar(people, reto['id'])
+
+    resultado = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    assert resultado['publicado'] is True and resultado['ganador'] is None
 
 
 def test_se_finaliza_con_las_valoraciones_que_haya(gente):
@@ -722,3 +749,54 @@ def test_el_seed_deja_el_modulo_con_sus_roles():
     app = Application.objects.get(code='supli-challenge')
     assert app.permissions.count() == 2
     assert Role.objects.filter(code__startswith='challenge-').count() == 2
+
+
+# ── Pendientes del reto ────────────────────────────────────────────────────
+
+
+def test_pendientes_lista_quien_no_subio_evidencia_y_lo_sin_calificar(gente):
+    """Antes de cerrar, People ve quién del público no participó y qué falta calificar."""
+    people, uno, _dos, ana, mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+    de_ana = participar(ana, reto['id']).json()
+
+    datos = cliente_de(people).get(f'{RUTA}/retos/{reto["id"]}/pendientes').json()
+
+    sin_evidencia = {fila['nombre'] for fila in datos['sinEvidencia']}
+    assert mario.full_name in sin_evidencia and ana.full_name not in sin_evidencia
+    assert [fila['participacion'] for fila in datos['sinCalificar']] == [de_ana['id']]
+    assert datos['entregas'] == 1
+
+    valorar(uno, de_ana['id'], [8, 8, 8, 8, 8])
+    datos = cliente_de(people).get(f'{RUTA}/retos/{reto["id"]}/pendientes').json()
+    assert datos['sinCalificar'] == []
+
+
+def test_pendientes_respeta_el_publico_por_personas(gente):
+    """Con público de personas puntuales, solo faltan esas personas."""
+    people, _uno, _dos, ana, mario = gente
+    reto = crear_reto(people, alcance='personas', personas=[ana.pk])
+
+    datos = cliente_de(people).get(f'{RUTA}/retos/{reto["id"]}/pendientes').json()
+
+    assert [fila['nombre'] for fila in datos['sinEvidencia']] == [ana.full_name]
+    assert mario.full_name not in {fila['nombre'] for fila in datos['sinEvidencia']}
+
+
+def test_pendientes_es_solo_de_people(gente):
+    people, _uno, _dos, ana, _mario = gente
+    reto = crear_reto(people)
+    assert cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/pendientes').status_code == 403
+
+
+def test_se_cierra_y_publica_con_personas_sin_evidencia(gente):
+    """Que falte gente por subir evidencia no impide cerrar ni publicar."""
+    people, _uno, _dos, ana, _mario = gente
+    reto = crear_reto(people)
+    publicar(people, reto['id'])
+
+    cerrar_y_finalizar(people, reto['id'])
+
+    resultado = cliente_de(ana).get(f'{RUTA}/retos/{reto["id"]}/resultado').json()
+    assert resultado['publicado'] is True

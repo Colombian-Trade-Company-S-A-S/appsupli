@@ -19,6 +19,7 @@ export const performanceKeys = {
   periodo: (periodo: string, colaborador?: number) =>
     ['performance', 'periodo', periodo, colaborador ?? 'equipo'] as const,
   acumulado: (corte: Record<string, unknown>) => ['performance', 'acumulado', corte] as const,
+  pendientes: (periodo: string) => ['performance', 'pendientes', periodo] as const,
 };
 
 export const useOpcionesPerformance = () =>
@@ -110,6 +111,14 @@ export const useAcumulado = (
   useQuery({
     queryKey: performanceKeys.acumulado({ ...corte, top }),
     queryFn: () => performanceApi.acumulado(corte, top),
+  });
+
+/** Quién tiene algo pendiente en el mes: asignar objetivos, cargar o aprobar. */
+export const usePendientes = (periodo: string) =>
+  useQuery({
+    queryKey: performanceKeys.pendientes(periodo),
+    queryFn: () => performanceApi.pendientes(periodo),
+    enabled: !!periodo,
   });
 
 export const useCargarResultado = () =>

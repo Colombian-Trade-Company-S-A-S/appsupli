@@ -215,6 +215,16 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     )
     phone = models.CharField('teléfono', max_length=30, blank=True)
     avatar_url = models.URLField('avatar', blank=True)
+    # La foto de perfil vive en la base y no en disco: el disco de Render se
+    # borra en cada despliegue. Es pequeña (el navegador la reduce antes de
+    # subirla y la de Odoo llega en 256 px). Se sincroniza con Odoo en ambos
+    # sentidos: la que se sube acá se escribe en el empleado de Odoo, y la que
+    # cambian en Odoo llega con la sincronización.
+    foto = models.BinaryField('foto de perfil', null=True, blank=True, editable=False)
+    foto_tipo = models.CharField('tipo de la foto', max_length=30, blank=True, editable=False)
+    foto_actualizada_at = models.DateTimeField(
+        'foto actualizada el', null=True, blank=True, editable=False
+    )
 
     # ── Organigrama extendido ────────────────────────────────────────────
     # Los pide Supli Performance para filtrar el Performance. Quedan vacíos

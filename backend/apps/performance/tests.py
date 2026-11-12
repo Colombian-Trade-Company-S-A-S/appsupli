@@ -1447,3 +1447,81 @@ def test_la_plantilla_se_llena_y_se_sube_tal_cual(equipo):
     assert objetivo.peso == Decimal('100.00')
     assert objetivo.fuente_datos == 'Tablero de BI'
     assert objetivo.tipo_medicion == TipoMedicion.PORCENTAJE
+
+
+# ── Pendientes del mes ─────────────────────────────────────────────────────
+
+
+def _pendientes(usuario, periodo):
+    respuesta = cliente_de(usuario).get(
+        f'{RUTA}/pendientes', {'periodo': periodo.strftime('%Y-%m')}
+    )
+    assert respuesta.status_code == 200, respuesta.data
+    return respuesta.json()
+
+
+def test_pendientes_por_asignar_dice_quien_no_tiene_objetivos_completos(equipo):
+    """Sin objetivos o sin llegar al 100%: le toca al jefe asignarlos."""
+    jefe, julian, daniel = equipo
+    objetivo_de(julian, jefe, '60')
+
+    datos = _pendientes(jefe, OCTUBRE)
+
+    por_asignar = {fila['nombre']: fila for fila in datos['porAsignar']}
+    assert set(por_asignar) == {julian.full_name, daniel.full_name}
+    assert por_asignar[julian.full_name]['pesoAsignado'] == 60
+    assert por_asignar[daniel.full_name]['detalle'] == 'Sin objetivos asignados'
+    assert por_asignar[daniel.full_name]['responsable'] == jefe.full_name
+
+
+def test_pendientes_por_cargar_y_por_aprobar_en_un_mes_empezado(equipo):
+    """Lo que no tiene % o evidencia está por cargar; lo cargado sin aprobar, por aprobar."""
+    jefe, julian, daniel = equipo
+    objetivo_de(julian, jefe, '100')
+    cargado = objetivo_de(daniel, jefe, '100')
+    mes = _empezar_el_mes(OCTUBRE)
+    resultado = Resultado.objects.create(
+        objetivo=cargado, porcentaje_cumplimiento=Decimal('90'), cargado_por=daniel
+    )
+    resultado.evidencias.create(nombre='Informe', link_soporte='https://supli.tech/informe')
+
+    datos = _pendientes(jefe, mes)
+
+    assert [fila['nombre'] for fila in datos['porCargar']] == [julian.full_name]
+    assert datos['porCargar'][0]['detalle'] == '1 sin % de cumplimiento'
+    assert datos['porCargar'][0]['responsable'] == julian.full_name
+    assert [fila['nombre'] for fila in datos['porAprobar']] == [daniel.full_name]
+    assert datos['porAprobar'][0]['responsable'] == jefe.full_name
+
+
+def test_pendientes_cuenta_lo_cargado_sin_evidencia(equipo):
+    jefe, julian, _daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100')
+    mes = _empezar_el_mes(OCTUBRE)
+    Resultado.objects.create(objetivo=objetivo, porcentaje_cumplimiento=Decimal('80'))
+
+    datos = _pendientes(jefe, mes)
+
+    assert datos['porCargar'][0]['detalle'] == '1 sin evidencia'
+
+
+def test_pendientes_de_un_mes_que_no_empieza_solo_trae_por_asignar(equipo):
+    jefe, julian, _daniel = equipo
+    objetivo_de(julian, jefe, '100')
+
+    datos = _pendientes(jefe, OCTUBRE)
+
+    assert datos['medicionIniciada'] is False
+    assert datos['porCargar'] == [] and datos['porAprobar'] == []
+
+
+def test_el_lider_solo_ve_a_su_equipo_y_el_colaborador_no_ve_pendientes(app_performance, equipo):
+    jefe, julian, _daniel = equipo
+    otro_jefe = crear_usuario('otro@supli.tech', app_performance)
+    crear_usuario('ajeno@supli.tech', app_performance, jefe=otro_jefe)
+
+    nombres = {fila['nombre'] for fila in _pendientes(jefe, OCTUBRE)['porAsignar']}
+    assert 'Ajeno' not in nombres
+
+    respuesta = cliente_de(julian).get(f'{RUTA}/pendientes', {'periodo': MES})
+    assert respuesta.status_code == 403

@@ -209,6 +209,24 @@ export interface ValoracionPayload {
   noCumple?: boolean;
 }
 
+/** Alguien del público del reto, en la lista de pendientes. */
+export interface PersonaPendiente {
+  id: number;
+  nombre: string;
+  cargo: string;
+  area: string;
+}
+
+/** Quién falta en el reto: lo que se muestra antes de cerrarlo o publicarlo. */
+export interface PendientesReto {
+  /** Del público del reto, quienes no han subido evidencia. */
+  sinEvidencia: PersonaPendiente[];
+  /** Entregas que nadie ha calificado: se publican sin puntaje. */
+  sinCalificar: Array<PersonaPendiente & { participacion: number }>;
+  publico: number;
+  entregas: number;
+}
+
 export const challengeApi = {
   opciones: () => api.get<OpcionesChallenge>(`${RUTA}/opciones`),
   retos: (filtros?: { categoria?: string; estado?: string }) =>
@@ -222,6 +240,7 @@ export const challengeApi = {
   publicar: (id: number) => api.post<Reto>(`${RUTA}/retos/${id}/publicar`),
   cerrar: (id: number) => api.post<Reto>(`${RUTA}/retos/${id}/cerrar`),
   finalizar: (id: number) => api.post<Reto>(`${RUTA}/retos/${id}/finalizar`),
+  pendientes: (id: number) => api.get<PendientesReto>(`${RUTA}/retos/${id}/pendientes`),
   reabrir: (id: number, motivo: string) =>
     api.post<Reto>(`${RUTA}/retos/${id}/reabrir`, { motivo }),
   participaciones: (reto: number) =>

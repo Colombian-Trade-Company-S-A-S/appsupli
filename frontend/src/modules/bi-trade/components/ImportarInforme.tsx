@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { FileUpIcon, UploadIcon } from 'lucide-react';
+import { useMutation } from '@tanstack/react-query';
+import { FileUpIcon, MailIcon, UploadIcon } from 'lucide-react';
 import {
   Alert,
   AlertDescription,
@@ -24,8 +25,9 @@ import {
 } from '@/shared/components/ui';
 import { formatoNumero } from '@/shared/lib/formato';
 import type { ModoImportacion, ResultadoInforme } from '../api';
+import { informeDelCorreo, type InformeEnCorreo } from '../correo';
 import { useFuente, type FuenteDatos } from '../fuente';
-import { useBiTradeMutation } from '../hooks';
+import { mensajeDeError, useBiTradeMutation } from '../hooks';
 import { aValorMes, desdeValorMes, mesActual, nombreDelMes, type Mes } from './SelectorMes';
 
 /**
@@ -33,10 +35,16 @@ import { aValorMes, desdeValorMes, mesActual, nombreDelMes, type Mes } from './S
  *
  * El mes se elige a mano y no se saca del archivo: el mismo informe puede
  * subirse tarde —estando en abril, cargar marzo— y quien importa es el que
- * sabe a qué periodo van esas ventas.
+ * sabe a qué periodo van esas ventas. Al traerlo del correo se propone el mes
+ * de la fecha del nombre del adjunto, pero se puede cambiar igual.
  *
  * `importar` es el del canal en el que se está: las ventas de Tmk van a las
  * tablas `_tmk`, no a las de Claro.
+ *
+ * El archivo se puede elegir del equipo o traer del correo: «Traer del correo»
+ * le pide al backend el último informe que llegó al buzón compartido (el mismo
+ * para Claro y Tmk) y lo deja elegido. El archivo no pasa por el navegador: al
+ * importar se mandan los identificadores del correo y el backend lo baja.
  */
 export function ImportarInforme({
   importar: importarEnCanal,
@@ -49,16 +57,37 @@ export function ImportarInforme({
   const [modo, setModo] = useState<ModoImportacion>('completar');
   const [archivo, setArchivo] = useState<File | null>(null);
   const [resultado, setResultado] = useState<ResultadoInforme | null>(null);
+  // El informe del buzón compartido, cuando se trajo del correo en vez de elegirlo.
+  const [delCorreo, setDelCorreo] = useState<InformeEnCorreo | null>(null);
 
   const importar = useBiTradeMutation(
-    () => importarEnCanal(archivo!, mes, modo),
+    () =>
+      importarEnCanal(
+        delCorreo ? { mensaje: delCorreo.mensaje, adjunto: delCorreo.adjunto } : archivo!,
+        mes,
+        modo,
+      ),
     (datos) => datos.message,
   );
+
+  const traer = useMutation({
+    mutationFn: informeDelCorreo,
+    onSuccess: (informe) => {
+      setDelCorreo(informe);
+      setArchivo(null);
+      // El mes sale de la fecha del nombre del archivo (AAAA-MM-DD); se puede cambiar.
+      const fecha = informe.fechaArchivo ? desdeValorMes(informe.fechaArchivo.slice(0, 7)) : null;
+      if (fecha) setMes(fecha);
+    },
+  });
+  const errorDelCorreo = traer.error ? mensajeDeError(traer.error) : null;
 
   const cerrar = () => {
     setAbierto(false);
     setArchivo(null);
+    setDelCorreo(null);
     importar.reset();
+    traer.reset();
   };
 
   return (
@@ -77,23 +106,51 @@ export function ImportarInforme({
               inventario (CMv 1); el resto de los movimientos se ignora.
               {canal === 'claro' &&
                 ' Solo entran las ventas de productos con meta ese mes en ese punto de venta, y las de los productos del plan Recomiéndame Belkin: sube primero las metas del mes.'}
+              {canal === 'tmk' &&
+                ' Solo entran las ventas de productos con meta en Tmk ese mes en ese punto de venta: sube primero las metas del mes.'}
             </DialogDescription>
           </DialogHeader>
 
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="informe-archivo">Archivo</FieldLabel>
-              <Input
-                id="informe-archivo"
-                type="file"
-                accept=".xlsx"
-                onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
-              />
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  id="informe-archivo"
+                  type="file"
+                  accept=".xlsx"
+                  className="min-w-0 flex-1"
+                  onChange={(e) => {
+                    setArchivo(e.target.files?.[0] ?? null);
+                    setDelCorreo(null);
+                  }}
+                />
+                <Button
+                  variant="secondary"
+                  disabled={traer.isPending || importar.isPending}
+                  onClick={() => traer.mutate()}
+                >
+                  {traer.isPending ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <MailIcon data-icon="inline-start" />
+                  )}
+                  {traer.isPending ? 'Buscando…' : 'Traer del correo'}
+                </Button>
+              </div>
               <FieldDescription>
-                {archivo
-                  ? `${archivo.name} · ${formatoNumero(Math.round(archivo.size / 1024))} KB`
-                  : 'Excel .xlsx tal como sale del ERP, sin modificar.'}
+                {delCorreo
+                  ? `Del correo del ${formatoFechaHora(new Date(delCorreo.recibido))} · ${delCorreo.nombre} · ${formatoNumero(Math.round(delCorreo.tamano / 1024))} KB`
+                  : archivo
+                    ? `${archivo.name} · ${formatoNumero(Math.round(archivo.size / 1024))} KB`
+                    : 'Excel .xlsx tal como sale del ERP, sin modificar. O tráelo del correo: se busca el último informe que llegó al buzón de informes.'}
               </FieldDescription>
+              {errorDelCorreo && (
+                <Alert variant="destructive">
+                  <AlertTitle>No se trajo el informe del correo</AlertTitle>
+                  <AlertDescription>{errorDelCorreo}</AlertDescription>
+                </Alert>
+              )}
             </Field>
 
             <Field>
@@ -152,7 +209,7 @@ export function ImportarInforme({
               Cancelar
             </Button>
             <Button
-              disabled={!archivo || importar.isPending}
+              disabled={(!archivo && !delCorreo) || importar.isPending}
               onClick={() =>
                 importar.mutate(undefined, {
                   onSuccess: (datos) => {
@@ -177,6 +234,9 @@ export function ImportarInforme({
     </>
   );
 }
+
+const formatoFechaHora = (fecha: Date) =>
+  fecha.toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
 
 /**
  * Qué entró y qué no.

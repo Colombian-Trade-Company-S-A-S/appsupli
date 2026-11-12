@@ -37,6 +37,7 @@ LOCAL_APPS = [
     'apps.performance',
     'apps.challenge',
     'apps.odoo',
+    'apps.planner',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -198,6 +199,18 @@ LOGIN_CONTRASENA_RESPALDO = [
     c.strip().lower() for c in config('LOGIN_CONTRASENA_RESPALDO', default='', cast=Csv()) if c.strip()
 ]
 
+# Los socios: su ficha en Administración se ve distinta (solo con efectos, sin
+# rótulos). Por correo y no por nombre, que en Odoo cambia de forma.
+USUARIOS_DESTACADOS = [
+    c.strip().lower()
+    for c in config(
+        'USUARIOS_DESTACADOS',
+        default='mejiafabio@supli.tech,ordonezjuan@supli.tech',
+        cast=Csv(),
+    )
+    if c.strip()
+]
+
 # ── Odoo ───────────────────────────────────────────────────────────────────
 # Solo se lee de Odoo. Sin estas variables, el botón de estado lo dice y la
 # sincronización no arranca; el resto de la plataforma no depende de Odoo.
@@ -210,6 +223,28 @@ ODOO_TIMEOUT = config('ODOO_TIMEOUT', default=30, cast=int)
 FRONTEND_URL = config('FRONTEND_URL', default='https://appsupli.onrender.com')
 # El correo de Odoo solo se copia si es de este dominio: es el de ingreso.
 ODOO_DOMINIO_INGRESO = config('ODOO_DOMINIO_INGRESO', default='supli.tech')
+
+# ── Microsoft Planner (Ejecución Planner) ───────────────────────────────────
+# La app de Entra «appsupli-planner-sync», distinta de la del login: permisos de
+# aplicación de solo lectura (Tasks.Read.All, Group.Read.All). El secreto vence
+# el 3 de noviembre de 2028; hay que renovarlo antes.
+PLANNER_TENANT_ID = config('PLANNER_TENANT_ID', default='')
+PLANNER_CLIENT_ID = config('PLANNER_CLIENT_ID', default='')
+PLANNER_CLIENT_SECRET = config('PLANNER_CLIENT_SECRET', default='')
+PLANNER_TIMEOUT = config('PLANNER_TIMEOUT', default=30, cast=int)
+
+# ── Informe del ERP de Claro por correo ────────────────────────────────────
+# Llega a un buzón compartido (una regla de Exchange lo copia ahí) y la misma
+# app de Entra de Planner lo lee: Exchange le permite leer SOLO ese buzón. Lo
+# usan Claro y Tmk Ecommerce Claro, que reciben el mismo archivo. Remitente
+# vacío = cualquier remitente (para probar reenviando el correo a mano).
+INFORME_CLARO_BUZON = config('INFORME_CLARO_BUZON', default='informesclaro@supli.tech')
+INFORME_CLARO_REMITENTE = config(
+    'INFORME_CLARO_REMITENTE', default='michael.rojas@claro.com.co'
+)
+INFORME_CLARO_ADJUNTO = config(
+    'INFORME_CLARO_ADJUNTO', default='Informe Inventarios Tecnologia Coltrade'
+)
 
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',

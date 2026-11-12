@@ -13,8 +13,6 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { aplanarApps, useAuth } from '@/core/auth';
 import {
-  Avatar,
-  AvatarFallback,
   Badge,
   Card,
   CardContent,
@@ -29,6 +27,7 @@ import {
   Separator,
 } from '@/shared/components/ui';
 import { AppearanceCard } from './AppearanceCard';
+import { CambiarFoto } from './CambiarFoto';
 import { ChangePasswordForm } from './ChangePasswordForm';
 
 const KIND_LABELS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
@@ -54,11 +53,7 @@ export default function ProfilePage() {
       {/* Identidad: una franja horizontal a todo el ancho. */}
       <Card>
         <CardContent className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
-          <Avatar className="size-20 shrink-0">
-            <AvatarFallback className="text-2xl">
-              {user.firstName.charAt(0).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          <CambiarFoto />
           <div className="flex min-w-0 flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-tight">{user.fullName}</h1>
             <p className="text-sm text-muted-foreground">

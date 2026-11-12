@@ -696,11 +696,22 @@ export type MetaPayload = Pick<
 /**
  * Sube el informe del ERP a un canal: ventas del mes elegido e inventario
  * completo. Lo tienen Claro y Tmk Ecommerce Claro; Homecenter y Falabella no.
+ *
+ * `origen` es el archivo elegido en el equipo o el correo del buzón
+ * compartido; en ese caso el backend baja el adjunto él mismo.
  */
+export type OrigenInforme = File | { mensaje: string; adjunto: string };
+
 const importarInformeEn =
-  (ruta: string) => (archivo: File, mes: { anio: number; mes: number }, modo: ModoImportacion) => {
+  (ruta: string) =>
+  (origen: OrigenInforme, mes: { anio: number; mes: number }, modo: ModoImportacion) => {
     const cuerpo = new FormData();
-    cuerpo.append('archivo', archivo);
+    if (origen instanceof File) {
+      cuerpo.append('archivo', origen);
+    } else {
+      cuerpo.append('mensaje', origen.mensaje);
+      cuerpo.append('adjunto', origen.adjunto);
+    }
     cuerpo.append('anio', String(mes.anio));
     cuerpo.append('mes', String(mes.mes));
     cuerpo.append('modo', modo);

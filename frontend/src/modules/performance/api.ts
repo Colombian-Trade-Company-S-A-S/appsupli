@@ -307,6 +307,31 @@ async function descargarArchivo(url: string, nombrePorDefecto: string) {
   URL.revokeObjectURL(objeto);
 }
 
+/** Una persona con algo pendiente en el mes y quién tiene que actuar. */
+export interface FilaPendiente {
+  colaborador: number;
+  nombre: string;
+  cargo: string;
+  area: string;
+  jefe: string;
+  /** Quien tiene que actuar: el jefe, el colaborador o quien aprueba. */
+  responsable: string;
+  objetivos: number;
+  detalle: string;
+}
+
+export interface Pendientes {
+  periodo: string;
+  periodoLabel: string;
+  alcance: 'compania' | 'equipo';
+  personas: number;
+  /** Antes de que empiece el mes no hay resultados que cargar ni aprobar. */
+  medicionIniciada: boolean;
+  porAsignar: FilaPendiente[];
+  porCargar: FilaPendiente[];
+  porAprobar: FilaPendiente[];
+}
+
 export const performanceApi = {
   opciones: () => api.get<OpcionesPerformance>(`${RUTA}/opciones`),
   resumen: (periodo?: string) =>
@@ -337,6 +362,7 @@ export const performanceApi = {
     api.put<Resultado>(`${RUTA}/objetivos/${objetivo}/resultado`, payload),
   validarResultado: (objetivo: number, estado: EstadoValidacion, observacion = '') =>
     api.post<Resultado>(`${RUTA}/objetivos/${objetivo}/validar`, { estado, observacion }),
+  pendientes: (periodo: string) => api.get<Pendientes>(`${RUTA}/pendientes`, { periodo }),
   acumulado: (corte: { tipo: TipoCorte; anio?: number; indice?: number }, top = false) =>
     api.get<Acumulado>(`${RUTA}/acumulado`, {
       ...corte,

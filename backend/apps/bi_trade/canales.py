@@ -59,7 +59,7 @@ class Canal:
     #: unidades: sus productos no tienen puntaje y nada suyo habla de puntos.
     con_puntos: bool = True
     #: Si solo cuenta lo que tiene meta: al importar ventas y en el tablero, solo
-    #: entra un producto con meta ese mes en ese punto de venta. Solo Claro.
+    #: entra un producto con meta ese mes en ese punto de venta. Claro y Tmk.
     solo_con_meta: bool = False
 
 
@@ -117,6 +117,8 @@ TMK = Canal(
     precio=PrecioProductoTmk,
     opciones=OPCIONES_TMK,
     con_puntos=False,
+    # Como Claro: del informe del ERP solo cuenta lo que tiene meta en Tmk.
+    solo_con_meta=True,
 )
 
 CANALES = {canal.codigo: canal for canal in (CLARO, HC, FALABELLA, TMK)}

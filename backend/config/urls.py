@@ -10,6 +10,7 @@ urlpatterns = [
     path('api/admin/odoo/', include('apps.odoo.urls')),
     path('api/admin/', include('apps.accounts.urls_admin')),
     path('api/valoracion/', include('apps.valoracion.urls')),
+    path('api/performance/planner/', include('apps.planner.urls')),
     path('api/performance/', include('apps.performance.urls')),
     path('api/challenge/', include('apps.challenge.urls')),
     path('api/bi-trade/', include('apps.bi_trade.urls')),

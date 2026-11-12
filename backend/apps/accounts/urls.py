@@ -1,14 +1,15 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from .fotos import FotoView, MiFotoView
 from .views import (
     ChangePasswordView,
     IngresoView,
     InstalacionAppView,
     LoginView,
-    MicrosoftLoginView,
     LogoutView,
     MeView,
+    MicrosoftLoginView,
     PreferencesView,
     VerifyPasswordView,
 )
@@ -20,6 +21,8 @@ urlpatterns = [
     path('ingreso', IngresoView.as_view(), name='ingreso'),
     path('microsoft', MicrosoftLoginView.as_view(), name='microsoft'),
     path('me', MeView.as_view(), name='me'),
+    path('me/foto', MiFotoView.as_view(), name='me-foto'),
+    path('fotos/<str:firma>', FotoView.as_view(), name='foto'),
     path('preferences', PreferencesView.as_view(), name='preferences'),
     path('instalacion-app', InstalacionAppView.as_view(), name='instalacion-app'),
     path('logout', LogoutView.as_view(), name='logout'),

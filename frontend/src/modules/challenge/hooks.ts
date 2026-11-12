@@ -17,6 +17,7 @@ export const challengeKeys = {
   resultado: (reto: number) => ['challenge', 'resultado', reto] as const,
   misRetos: () => ['challenge', 'mis-retos'] as const,
   top: () => ['challenge', 'top'] as const,
+  pendientes: (reto: number) => ['challenge', 'pendientes', reto] as const,
 };
 
 export const useOpcionesChallenge = () =>
@@ -116,6 +117,21 @@ export const useCerrarReto = () =>
 
 export const useFinalizarReto = () =>
   useChallengeMutation((id: number) => challengeApi.finalizar(id), 'Reto finalizado');
+
+/** Quién falta en el reto (sin evidencia o sin calificar). Solo People. */
+export const usePendientesReto = (reto: number, activo = true) =>
+  useQuery({
+    queryKey: challengeKeys.pendientes(reto),
+    queryFn: () => challengeApi.pendientes(reto),
+    enabled: activo && !!reto,
+  });
+
+/** Cierra el reto abierto y publica el resultado de una vez. */
+export const useCerrarYPublicarReto = () =>
+  useChallengeMutation(async (id: number) => {
+    await challengeApi.cerrar(id);
+    return challengeApi.finalizar(id);
+  }, 'Reto cerrado y resultado publicado');
 
 export const useReabrirReto = () =>
   useChallengeMutation(

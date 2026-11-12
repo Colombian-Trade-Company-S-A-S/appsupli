@@ -191,6 +191,8 @@ function FilaDelRanking({
 }) {
   const medalla = MEDALLA[fila.posicion];
   const descalificada = fila.estado === 'descalificada';
+  // Se publicó sin que nadie la calificara: no tiene puntaje, no es un cero.
+  const sinCalificar = !descalificada && (fila.total === null || fila.total === undefined);
   return (
     <li
       className={cn(
@@ -228,6 +230,8 @@ function FilaDelRanking({
       <div className="shrink-0 text-right">
         {descalificada ? (
           <EstadoEntrega estado="descalificada" label="No cumple" />
+        ) : sinCalificar ? (
+          <EstadoEntrega estado="entregada" label="Sin calificar" />
         ) : (
           <>
             <p className="font-semibold tabular-nums">{puntos(fila.total)}</p>
@@ -331,9 +335,12 @@ export function ResultadoPublicado({
   }
 
   const enElTop = ranking.some((fila) => fila.participante === miId);
-  // El podio es de quienes cumplieron (una descalificada no lleva medalla); con
-  // podio, la lista sigue con el resto: los del podio ya están arriba.
-  const enCompetencia = ranking.filter((fila) => fila.estado !== 'descalificada');
+  // El podio es de quienes cumplieron y tienen puntaje: una descalificada o una
+  // que quedó sin calificar no lleva medalla. Con podio, la lista sigue con el
+  // resto: los del podio ya están arriba.
+  const enCompetencia = ranking.filter(
+    (fila) => fila.estado !== 'descalificada' && fila.total !== null && fila.total !== undefined,
+  );
   const podio = enCompetencia.length >= 2 ? enCompetencia.slice(0, 3) : [];
   const resto = ranking.filter((fila) => !podio.includes(fila));
 

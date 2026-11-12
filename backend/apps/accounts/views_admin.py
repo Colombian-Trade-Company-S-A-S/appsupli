@@ -70,12 +70,16 @@ class RoleViewSet(AdminViewSet):
 class UserViewSet(AdminViewSet):
     # `extra_permissions` también va precargado: el serializer lo devuelve y,
     # sin esto, cada usuario del listado (hasta 200) era una consulta más.
-    queryset = User.objects.select_related('area', 'manager', 'departamento__padre__padre').prefetch_related(
-        'applications', 'roles', 'extra_permissions'
+    # La foto no se trae: el listado solo necesita saber si hay (su fecha).
+    queryset = (
+        User.objects.select_related('area', 'manager', 'departamento__padre__padre')
+        .prefetch_related('applications', 'roles', 'extra_permissions')
+        .defer('foto')
     )
     serializer_class = AdminUserSerializer
     search_fields = ('first_name', 'last_name', 'email', 'username', 'position')
-    filterset_fields = ('is_active', 'kind', 'area')
+    # `manager` arma el «equipo a cargo» del detalle de una persona.
+    filterset_fields = ('is_active', 'kind', 'area', 'manager')
     ordering_fields = ('first_name', 'email', 'last_login_at')
     ordering = ('first_name', 'last_name')
 

@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from apps.accounts.models import Area, User
 
 from .api_permissions import (
+    APP_CODE,
     CanManageRetos,
     HasChallengeApp,
     capacidades,
@@ -222,25 +223,18 @@ def finalizar(request, pk):
     """
     El cierre definitivo: ganador en firme y resultados publicados.
 
-    Solo se exige que cada entrega tenga al menos una valoración: sin ninguna
-    no se puede comparar. Las que no alcanzaron las tres valoraciones (B9) se
-    cierran con las que tienen —su puntaje ya es el promedio de esas—, porque
-    si falta un evaluador el reto no puede quedar trabado para siempre.
+    No exige que todo esté calificado: si alguien subió su evidencia y nadie
+    la valoró, el reto igual se publica (lo pidió People). Esa entrega queda
+    «Entregada», sin puntaje, y no compite por el primer puesto. Las que no
+    alcanzaron las tres valoraciones (B9) se cierran con las que tienen —su
+    puntaje ya es el promedio de esas—.
     """
     reto = _reto_o_404(pk)
     if reto.estado != EstadoReto.CERRADO:
         raise ValidationError('Primero hay que cerrar el reto.')
-    sin_ninguna = reto.participaciones.filter(
-        estado=EstadoParticipacion.ENTREGADA, valoraciones__isnull=True
-    ).count()
-    if sin_ninguna:
-        raise ValidationError(
-            f'Quedan {sin_ninguna} participación(es) sin ninguna valoración: valóralas (o '
-            'márcalas «no cumple») antes de publicar el resultado.'
-        )
-    reto.participaciones.filter(estado=EstadoParticipacion.ENTREGADA).update(
-        estado=EstadoParticipacion.VALORADA, updated_at=timezone.now()
-    )
+    reto.participaciones.filter(
+        estado=EstadoParticipacion.ENTREGADA, valoraciones__isnull=False
+    ).update(estado=EstadoParticipacion.VALORADA, updated_at=timezone.now())
     hermanas = list(
         reto.participaciones.prefetch_related('valoraciones__puntajes__criterio')
     )
@@ -250,6 +244,73 @@ def finalizar(request, pk):
     reto.finalizado_en = timezone.now()
     reto.save(update_fields=['estado', 'finalizado_en', 'updated_at'])
     return Response(RetoSerializer(_con_conteos(Reto.objects.filter(pk=pk)).first()).data)
+
+
+def _publico_activo(reto):
+    """
+    Las personas activas a las que les aparece el reto y tienen Supli Challenge.
+
+    Es `es_del_publico` aplicado a toda la compañía: alcance, áreas, personas
+    y país, más el acceso a la app, que sin él el reto no se ve.
+    """
+    con_app = (
+        Q(kind=User.Kind.ADMIN)
+        | Q(applications__code=APP_CODE)
+        | Q(roles__permissions__application__code=APP_CODE)
+        | Q(extra_permissions__application__code=APP_CODE)
+    )
+    personas = User.objects.filter(con_app, is_active=True).distinct()
+    if reto.pais:
+        personas = personas.filter(pais=reto.pais)
+    if reto.alcance == Alcance.AREAS:
+        personas = personas.filter(area__in=reto.areas.all())
+    elif reto.alcance == Alcance.PERSONAS:
+        personas = personas.filter(pk__in=reto.personas.values('pk'))
+    return personas
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, HasChallengeApp, CanManageRetos])
+def pendientes(request, pk):
+    """
+    Quién falta en el reto: lo que se le muestra a People antes de cerrarlo.
+
+    `sin_evidencia` son las personas del público que no han subido nada;
+    `sin_calificar`, las entregas que nadie ha valorado. Ninguna de las dos
+    impide cerrar ni publicar: es para decidir con la lista a la vista.
+    """
+    reto = _reto_o_404(pk)
+    participantes = reto.participaciones.values('participante_id')
+    faltan = (
+        _publico_activo(reto)
+        .exclude(pk__in=participantes)
+        .select_related('area')
+        .order_by('first_name', 'last_name')
+    )
+    sin_calificar = (
+        reto.participaciones.filter(estado=EstadoParticipacion.ENTREGADA, valoraciones__isnull=True)
+        .select_related('participante__area')
+        .order_by('participante__first_name')
+    )
+
+    def ficha(persona):
+        return {
+            'id': persona.pk,
+            'nombre': persona.full_name,
+            'cargo': persona.position,
+            'area': persona.area.name if persona.area_id else '',
+        }
+
+    return Response(
+        {
+            'sin_evidencia': [ficha(persona) for persona in faltan],
+            'sin_calificar': [
+                {**ficha(p.participante), 'participacion': p.pk} for p in sin_calificar
+            ],
+            'publico': _publico_activo(reto).count(),
+            'entregas': reto.participaciones.count(),
+        }
+    )
 
 
 #: Cuántos puestos del ranking ve quien solo participa: el top 10.

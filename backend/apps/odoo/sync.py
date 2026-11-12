@@ -507,6 +507,48 @@ class Sincronizador:
         self.excepciones.append({'tipo': tipo, 'odoo_id': fila['id'], 'nombre': fila['name'], 'detalle': detalle})
 
 
+def sincronizar_fotos(cliente: OdooClient | None = None) -> int:
+    """
+    Trae de Odoo la foto de cada persona activa enlazada y devuelve cuántas cambiaron.
+
+    Solo reemplaza cuando la de Odoo es distinta. Si en Odoo no hay foto (o
+    solo la imagen vacía que Odoo pone por defecto), se deja la que haya acá:
+    puede ser una que la persona subió y que no alcanzó a llegar a Odoo.
+    """
+    import base64  # noqa: PLC0415
+
+    from apps.accounts.fotos import (  # noqa: PLC0415
+        TAMANO_MINIMO_ODOO,
+        guardar_foto,
+        tipo_de_imagen,
+    )
+
+    cliente = cliente or OdooClient()
+    usuarios = {
+        u.odoo_id: u
+        for u in User.objects.filter(is_active=True, odoo_id__isnull=False).only(
+            'id', 'odoo_id', 'foto'
+        )
+    }
+    if not usuarios:
+        return 0
+    cambiadas = 0
+    for odoo_id, foto_base64 in cliente.fotos(list(usuarios)).items():
+        try:
+            contenido = base64.b64decode(foto_base64)
+        except (ValueError, TypeError):
+            continue
+        tipo = tipo_de_imagen(contenido)
+        if len(contenido) < TAMANO_MINIMO_ODOO or tipo is None:
+            continue
+        usuario = usuarios[odoo_id]
+        if usuario.foto is not None and bytes(usuario.foto) == contenido:
+            continue
+        guardar_foto(usuario, contenido, tipo)
+        cambiadas += 1
+    return cambiadas
+
+
 def sincronizar(
     *, crear: bool, actualizar: bool, desactivar: bool, eliminar: bool = False, simular: bool = False,
     ejecutada_por: User | None = None, cliente: OdooClient | None = None,
@@ -531,6 +573,14 @@ def sincronizar(
                 transaction.set_rollback(True)
         registro.resumen = dict(sincronizador.resumen)
         registro.excepciones = sincronizador.excepciones
+        if not simular and actualizar:
+            # Las fotos van aparte y después: si fallan, el resto ya quedó.
+            try:
+                registro.resumen['fotos'] = sincronizar_fotos(cliente)
+            except OdooError as error:
+                registro.excepciones.append(
+                    {'tipo': 'fotos', 'odoo_id': None, 'nombre': '', 'detalle': str(error)}
+                )
     except OdooError as error:
         registro.estado = Sincronizacion.Estado.ERROR
         registro.error = str(error)

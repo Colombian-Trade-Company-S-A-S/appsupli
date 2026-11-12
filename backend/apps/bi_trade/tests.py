@@ -3817,6 +3817,21 @@ def catalogo_tmk():
     return tienda, audifonos
 
 
+def con_metas_tmk(*meses: tuple[int, int]) -> None:
+    """Como con_metas, en Tmk: también solo cuenta lo que tiene meta."""
+    MetaComercialTmk.objects.bulk_create(
+        MetaComercialTmk(
+            id_producto=producto,
+            id_punto_venta=punto,
+            fecha_meta=date(anio, mes, 1),
+            meta_cantidad=1,
+        )
+        for producto in ProductoTmk.objects.all()
+        for punto in PuntoVentaTmk.objects.all()
+        for anio, mes in meses
+    )
+
+
 def _venta_tmk(punto, producto, unidades, fecha=date(2026, 3, 4)):
     return VentaTmk.objects.create(
         id_producto=producto, id_punto_venta=punto, fecha_venta=fecha, cantidad_vendida=unidades
@@ -3846,6 +3861,7 @@ def test_tmk_no_se_mezcla_con_los_otros_canales(app_bi_trade, catalogo_hc, catal
     tienda, audifonos = catalogo_tmk
     _venta_hc(tienda_hc, torre, 3)
     _venta_tmk(tienda, audifonos, 2)
+    con_metas_tmk((2026, 3))
 
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
     mes = '?anio=2026&mes=3'
@@ -4010,6 +4026,7 @@ def test_el_enlace_publico_de_tmk_muestra_tmk(
     cache.clear()
     tienda, audifonos = catalogo_tmk
     _venta_tmk(tienda, audifonos, 2)
+    con_metas_tmk((2026, 3))
     editor = _editor(app_bi_trade)
     creado = editor.post(
         '/api/bi-trade/enlaces',
@@ -4065,6 +4082,7 @@ def _importar_tmk(cliente, filas, anio=2026, mes=3, modo='completar'):
 def test_el_informe_del_erp_carga_en_las_tablas_de_tmk(editor, catalogo, catalogo_tmk):
     norte, _sur, caro, _barato = catalogo
     tienda, audifonos = catalogo_tmk
+    con_metas_tmk((2026, 3))
     Inventario.objects.create(id_producto=caro, id_punto_venta=norte, cantidad_inventario=5)
     InventarioTmk.objects.create(
         id_producto=audifonos, id_punto_venta=tienda, cantidad_inventario=99
@@ -4100,6 +4118,7 @@ def test_sobrescribir_en_tmk_solo_borra_las_ventas_de_tmk(editor, catalogo, cata
         id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 3, 4), cantidad_vendida=1
     )
     _venta_tmk(tienda, audifonos, 5)
+    con_metas_tmk((2026, 3))
 
     respuesta = _importar_tmk(
         editor, [('TMKP-001', 'TMK-301', '601', date(2026, 3, 6))], modo='sobrescribir'
@@ -4109,6 +4128,30 @@ def test_sobrescribir_en_tmk_solo_borra_las_ventas_de_tmk(editor, catalogo, cata
     assert respuesta.json()['ventas']['eliminadas'] == 1
     assert list(VentaTmk.objects.values_list('fecha_venta', flat=True)) == [date(2026, 3, 6)]
     assert Venta.objects.count() == 1
+
+
+def test_tmk_solo_carga_las_ventas_de_productos_con_meta(editor, catalogo_tmk):
+    """Como en Claro: lo que no tiene meta en Tmk ese mes en ese punto no entra."""
+    _tienda, _audifonos = catalogo_tmk
+    parlante = ProductoTmk.objects.create(
+        id_producto='TMKP-002', nombre_producto='Parlante', marca=marca('JBL'),
+        precio_venta_tmk=100_000, precio_venta_coltrade=80_000,
+    )
+    con_metas_tmk((2026, 3))
+    # El parlante se crea con meta y se le quita: el audífono sí la conserva.
+    MetaComercialTmk.objects.filter(id_producto=parlante).delete()
+
+    respuesta = _importar_tmk(
+        editor,
+        [
+            ('TMKP-001', 'TMK-301', '601', date(2026, 3, 4)),
+            ('TMKP-002', 'TMK-301', '601', date(2026, 3, 4)),
+        ],
+    )
+
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['ventas']['sinMeta'] == 1
+    assert list(VentaTmk.objects.values_list('id_producto', flat=True)) == ['TMKP-001']
 
 
 def test_importar_el_informe_de_tmk_exige_permiso_de_edicion(app_bi_trade, catalogo_tmk):

@@ -15,6 +15,7 @@ const MicrosoftCallbackPage = lazy(() => import('@/app/pages/MicrosoftCallbackPa
 const HomePage = lazy(() => import('@/app/pages/app/HomePage'));
 const ProfilePage = lazy(() => import('@/app/pages/app/ProfilePage'));
 const AdminPage = lazy(() => import('@/modules/admin/pages/AdminPage'));
+const UsuarioDetallePage = lazy(() => import('@/modules/admin/pages/UsuarioDetallePage'));
 
 // ── BI Trade Marketing ────────────────────────────────────────────────────
 const BiTradeHomePage = lazy(() => import('@/modules/bi-trade/pages/BiTradeHomePage'));
@@ -56,6 +57,16 @@ const MisObjetivosPage = lazy(() => import('@/modules/performance/pages/MisObjet
 const ObjetivosEquipoPage = lazy(() => import('@/modules/performance/pages/ObjetivosEquipoPage'));
 const PerformanceDashboardPage = lazy(() => import('@/modules/performance/pages/DashboardPage'));
 const TopPerformancePage = lazy(() => import('@/modules/performance/pages/TopPerformancePage'));
+const PendientesPerformancePage = lazy(() => import('@/modules/performance/pages/PendientesPage'));
+
+// ── Supli Performance · Ejecución Planner ─────────────────────────────────
+const PlannerLayout = lazy(() => import('@/modules/planner/pages/PlannerLayout'));
+const ComoFuncionaPage = lazy(() => import('@/modules/planner/pages/ComoFuncionaPage'));
+const MiCumplimientoPage = lazy(() => import('@/modules/planner/pages/MiCumplimientoPage'));
+const DashboardPlannerPage = lazy(() => import('@/modules/planner/pages/DashboardPlannerPage'));
+const ValidarHitosPage = lazy(() => import('@/modules/planner/pages/ValidarHitosPage'));
+const ConexionPlannerPage = lazy(() => import('@/modules/planner/pages/ConexionPage'));
+const ParametrosPlannerPage = lazy(() => import('@/modules/planner/pages/ParametrosPage'));
 const ChallengeLayout = lazy(() => import('@/modules/challenge/pages/ChallengeLayout'));
 const RetosPage = lazy(() => import('@/modules/challenge/pages/RetosPage'));
 const RetoDetallePage = lazy(() => import('@/modules/challenge/pages/RetoDetallePage'));
@@ -121,7 +132,10 @@ const routes: RouteObject[] = [
           { path: 'perfil', element: withSuspense(<ProfilePage />) },
           {
             element: <RequireAdmin />,
-            children: [{ path: 'admin', element: withSuspense(<AdminPage />) }],
+            children: [
+              { path: 'admin', element: withSuspense(<AdminPage />) },
+              { path: 'admin/usuarios/:id', element: withSuspense(<UsuarioDetallePage />) },
+            ],
           },
           {
             element: <RequireApp code="bi-trade" />,
@@ -233,7 +247,25 @@ const routes: RouteObject[] = [
                     path: 'dashboard',
                     element: withSuspense(<PerformanceDashboardPage />),
                   },
+                  { path: 'pendientes', element: withSuspense(<PendientesPerformancePage />) },
                   { path: 'top', element: withSuspense(<TopPerformancePage />) },
+                ],
+              },
+            ],
+          },
+          {
+            element: <RequireApp code="ejecucion-planner" />,
+            children: [
+              {
+                path: 'performance/planner',
+                element: withSuspense(<PlannerLayout />),
+                children: [
+                  { index: true, element: withSuspense(<ComoFuncionaPage />) },
+                  { path: 'mi-cumplimiento', element: withSuspense(<MiCumplimientoPage />) },
+                  { path: 'dashboard', element: withSuspense(<DashboardPlannerPage />) },
+                  { path: 'hitos', element: withSuspense(<ValidarHitosPage />) },
+                  { path: 'conexion', element: withSuspense(<ConexionPlannerPage />) },
+                  { path: 'parametros', element: withSuspense(<ParametrosPlannerPage />) },
                 ],
               },
             ],
