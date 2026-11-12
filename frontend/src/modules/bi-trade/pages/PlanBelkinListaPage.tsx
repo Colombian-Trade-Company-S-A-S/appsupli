@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
-import { Badge } from '@/shared/components/ui';
+import { useState, type ReactNode } from 'react';
+import { Link, Navigate, useParams } from 'react-router-dom';
+import { CalendarRangeIcon } from 'lucide-react';
+import { Badge, Button, Label, Switch } from '@/shared/components/ui';
+import { formatoNumero } from '@/shared/lib/formato';
 import { useAuth } from '@/core/auth';
 import {
   belkinApi,
@@ -12,6 +14,7 @@ import {
 } from '../api';
 import { ACTIVO, Catalogo, Cuenta, type Config } from '../components/Catalogo';
 import { useCatalogoBelkin, type ListaBelkin } from '../hooks';
+import { fechaCorta } from '../components/AsesoresDelPunto';
 import { LISTAS_BELKIN, listaDeRuta } from '../listasBelkin';
 import { PLANES } from '../planes';
 
@@ -104,7 +107,17 @@ function PuntosVenta({ puedeAdministrar }: { puedeAdministrar: boolean }) {
         titulo: 'Centro de costos',
         celda: (p) => <span className="font-mono font-medium">{p.idPuntoVenta}</span>,
       },
-      { titulo: 'Nombre', celda: (p) => p.nombrePdv },
+      {
+        titulo: 'Nombre',
+        celda: (p) => (
+          <Link
+            to={rutaPunto(p.idPuntoVenta)}
+            className="font-medium underline-offset-4 hover:text-primary hover:underline"
+          >
+            {p.nombrePdv}
+          </Link>
+        ),
+      },
       { titulo: 'Regional', celda: (p) => <BadgeRegional regional={p.regional} /> },
       {
         titulo: 'Categoría',
@@ -185,17 +198,26 @@ function PuntosVenta({ puedeAdministrar }: { puedeAdministrar: boolean }) {
   return <Catalogo config={config} puedeAdministrar={puedeAdministrar} />;
 }
 
+/** El enlace al detalle de un punto del plan, donde vive la historia de sus asesores. */
+const rutaPunto = (idPunto: string) => `${PLAN}/puntos/${encodeURIComponent(idPunto)}`;
+
+/** Asesor de hoy: el último de su cadena y sin fecha de fin. */
+const esActual = (a: AsesorApple) => !a.hasta && !a.reemplazadoPor;
+
 function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
   const { data = [], isLoading } = useCatalogoBelkin('asesores');
   const { data: puntos = [] } = useCatalogoBelkin('puntosVenta');
+  // La lista muestra los de hoy; los anteriores viven en el detalle del punto.
+  const [verAnteriores, setVerAnteriores] = useState(false);
   const opcionesPunto = puntos.map((p) => ({
     value: p.idPuntoVenta,
     label: `${p.etiqueta} · ${regionalDe(p.regional)}`,
   }));
+  const anteriores = data.filter((a) => !esActual(a)).length;
   const config: Config<AsesorApple> = {
     ...base('asesores'),
     singular: 'Asesor',
-    filas: data,
+    filas: verAnteriores ? data : data.filter(esActual),
     cargando: isLoading,
     id: (a) => a.idAsesor,
     nombre: (a) => a.nombre,
@@ -206,16 +228,49 @@ function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
       opciones: puntos.map((p) => ({ value: p.idPuntoVenta, label: p.etiqueta })),
       valorDe: (a) => a.idPuntoVenta,
     },
+    extraFiltros:
+      anteriores > 0 ? (
+        <div className="flex items-center gap-2 pb-2">
+          <Switch id="ver-anteriores" checked={verAnteriores} onCheckedChange={setVerAnteriores} />
+          <Label htmlFor="ver-anteriores" className="text-sm font-normal">
+            Ver también los anteriores ({formatoNumero(anteriores)})
+          </Label>
+        </div>
+      ) : null,
     columnas: [
       {
         titulo: 'Nombre y apellido',
         celda: (a) => <span className="font-medium">{a.nombre}</span>,
       },
-      { titulo: 'Punto de venta', celda: (a) => a.puntoVentaEtiqueta },
+      {
+        titulo: 'Punto de venta',
+        celda: (a) => (
+          <Link
+            to={rutaPunto(a.idPuntoVenta)}
+            className="underline-offset-4 hover:text-primary hover:underline"
+          >
+            {a.puntoVentaEtiqueta}
+          </Link>
+        ),
+      },
       {
         titulo: 'Regional',
         celda: (a) => <BadgeRegional regional={a.regional} />,
         className: 'hidden md:table-cell',
+      },
+      {
+        titulo: 'Asesor desde',
+        celda: (a) =>
+          a.hasta ? (
+            <span className="text-sm whitespace-nowrap text-muted-foreground">
+              Hasta {fechaCorta(a.hasta)}
+            </span>
+          ) : a.desde ? (
+            <span className="text-sm whitespace-nowrap">{fechaCorta(a.desde)}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+        className: 'hidden sm:table-cell',
       },
       {
         titulo: 'Registros',
@@ -230,6 +285,8 @@ function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
         tipo: 'texto',
         maxLength: 120,
         placeholder: 'Duván Riaño',
+        ayuda:
+          'Para corregir cómo está escrito. Si el punto cambió de asesor, hazlo en el detalle del punto: así lo de antes queda a nombre de quien lo hizo.',
       },
       {
         clave: 'idPuntoVenta',
@@ -246,12 +303,35 @@ function Asesores({ puedeAdministrar }: { puedeAdministrar: boolean }) {
       idPuntoVenta: a?.idPuntoVenta ?? '',
       activo: a?.activo ?? true,
     }),
-    payload: (v) => ({ nombre: v.nombre, idPuntoVenta: v.idPuntoVenta || null, activo: v.activo }),
+    payload: (v) => ({
+      nombre: v.nombre,
+      idPuntoVenta: v.idPuntoVenta || null,
+      activo: v.activo,
+      // Confirmó que es la misma persona: solo se corrige cómo se escribe.
+      ...(v.confirmado ? { corregirNombre: true } : {}),
+    }),
     crear: (p) => belkinApi.asesores.create(p),
     editar: (id, p) => belkinApi.asesores.update(id, p),
     borrar: (id) => belkinApi.asesores.remove(id),
     avisoEdicion:
-      'Si lo pasas a otro punto, desde ahora sale allá; sus registros viejos se quedan en el punto donde se hicieron.',
+      'Las fechas y el cambio de asesor se manejan en el detalle del punto. Si lo pasas a otro punto, desde ahora sale allá; sus registros viejos se quedan donde se hicieron.',
+    // Cambiarle el nombre a quien ya recomendó pasaría todo lo suyo al nombre nuevo.
+    confirmarEdicion: (a, v) =>
+      a.registrosCount > 0 &&
+      String(v.nombre).trim().toLowerCase() !== a.nombre.trim().toLowerCase()
+        ? `${a.nombre} ya tiene ${a.registrosCount} recomendación(es). Si es la misma persona y solo corriges cómo está escrito, guarda igual. Si ahora el asesor es otra persona, cancela y usa «Cambiar asesor» en el detalle del punto: así lo de antes queda a nombre de ${a.nombre}.`
+        : null,
+    accionesFila: (a) => (
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={`Ver la historia de asesores de ${a.nombrePdv}`}
+        title="Historia de asesores del punto"
+        render={<Link to={rutaPunto(a.idPuntoVenta)} />}
+      >
+        <CalendarRangeIcon />
+      </Button>
+    ),
   };
   return <Catalogo config={config} puedeAdministrar={puedeAdministrar} />;
 }

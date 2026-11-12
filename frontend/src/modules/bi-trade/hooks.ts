@@ -41,6 +41,10 @@ export const biTradeKeys = {
   metas: (filtros?: Record<string, unknown>) => ['bi-trade', 'metas', filtros ?? {}] as const,
   cumplimiento: (filtros: FiltrosCumplimiento) => ['bi-trade', 'cumplimiento', filtros] as const,
   avanceMensual: (filtros: FiltrosAvance) => ['bi-trade', 'avance-mensual', filtros] as const,
+  detallePunto: (idPunto: string, anio: number, mes: number) =>
+    ['bi-trade', 'detalle-punto', idPunto, anio, mes] as const,
+  detalleRegional: (regional: string, anio: number, mes: number) =>
+    ['bi-trade', 'detalle-regional', regional, anio, mes] as const,
   pagina: (recurso: string, filtros: Record<string, unknown>) =>
     ['bi-trade', recurso, 'pagina', filtros] as const,
   resumen: (recurso: string, filtros: Record<string, unknown>) =>
@@ -197,6 +201,28 @@ export const useMetas = (filtros: Record<string, unknown> = {}) =>
     queryKey: biTradeKeys.metas(filtros),
     queryFn: () => biTradeApi.metas.list(filtros),
   });
+
+/** Todo el mes de un punto de venta, en el canal en que se está. */
+export function useDetallePunto(idPunto: string, mes: { anio: number; mes: number }) {
+  const fuente = useFuente();
+  return useQuery({
+    queryKey: llave(fuente, biTradeKeys.detallePunto(idPunto, mes.anio, mes.mes)),
+    queryFn: () => fuente.detallePunto!(idPunto, mes),
+    enabled: !!idPunto && !!fuente.detallePunto,
+    placeholderData: (anterior) => anterior,
+  });
+}
+
+/** Todo el mes de una regional, en el canal en que se está. */
+export function useDetalleRegional(regional: string, mes: { anio: number; mes: number }) {
+  const fuente = useFuente();
+  return useQuery({
+    queryKey: llave(fuente, biTradeKeys.detalleRegional(regional, mes.anio, mes.mes)),
+    queryFn: () => fuente.detalleRegional!(regional, mes),
+    enabled: !!regional && !!fuente.detalleRegional,
+    placeholderData: (anterior) => anterior,
+  });
+}
 
 export function useAvanceMensual(filtros: FiltrosAvance) {
   const fuente = useFuente();

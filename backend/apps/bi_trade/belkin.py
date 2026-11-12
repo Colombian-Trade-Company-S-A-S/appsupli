@@ -5,7 +5,6 @@ Las dos cosas vienen del Power BI con el que Trade liquidaba el plan. Aquí
 viven aparte de las vistas porque las usan dos lugares: el tablero del plan y
 la importación del informe de ventas de Claro.
 """
-from django.db.models import Count
 
 from .informe import Lectura
 from .models import (
@@ -106,18 +105,21 @@ def registros_del_informe(lectura: Lectura, anio: int, mes: int, reemplazar: boo
     )
     productos = set(ProductoBelkin.objects.values_list('id_producto', flat=True))
 
-    # Al punto con un solo asesor activo se le asigna; si tiene varios, o
-    # ninguno, el registro queda sin asesor: el informe no dice quién vendió.
-    asesor_del_punto = {}
-    unicos = (
-        AsesorApple.objects.filter(activo=True, id_punto_venta__in=puntos)
-        .values('id_punto_venta')
-        .annotate(n=Count('pk'))
-        .filter(n=1)
-        .values_list('id_punto_venta', flat=True)
-    )
-    for asesor in AsesorApple.objects.filter(activo=True, id_punto_venta__in=list(unicos)):
-        asesor_del_punto[asesor.id_punto_venta_id] = asesor.pk
+    # Se le asigna el asesor que el punto tenía ESE día, si era uno solo; con
+    # varios, o ninguno, queda sin asesor: el informe no dice quién vendió.
+    # Por fecha y no por quién está hoy: si en noviembre cambiaron al asesor,
+    # reimportar octubre le sigue dando octubre al de octubre.
+    asesores_por_punto: dict[str, list[AsesorApple]] = {}
+    for asesor in AsesorApple.objects.filter(id_punto_venta__in=puntos):
+        asesores_por_punto.setdefault(asesor.id_punto_venta_id, []).append(asesor)
+    asesor_del_dia: dict[tuple, int | None] = {}
+
+    def asesor_de(centro: str, fecha) -> int | None:
+        clave = (centro, fecha)
+        if clave not in asesor_del_dia:
+            vigentes = [a for a in asesores_por_punto.get(centro, []) if a.vigente_en(fecha)]
+            asesor_del_dia[clave] = vigentes[0].pk if len(vigentes) == 1 else None
+        return asesor_del_dia[clave]
 
     existentes = RegistroBelkin.objects.filter(
         fuente=FuenteRegistroBelkin.INFORME,
@@ -145,7 +147,7 @@ def registros_del_informe(lectura: Lectura, anio: int, mes: int, reemplazar: boo
         nuevos.extend(
             RegistroBelkin(
                 id_punto_venta_id=centro,
-                id_asesor_id=asesor_del_punto.get(centro),
+                id_asesor_id=asesor_de(centro, fecha),
                 id_producto_id=producto,
                 fecha_recomendacion=fecha,
                 fuente=FuenteRegistroBelkin.INFORME,

@@ -1379,7 +1379,13 @@ def _mes_pedido(request) -> tuple[int, int]:
     return anio, mes
 
 
-def _calcular_avance(request, canal: Canal = CLARO) -> dict:
+def _calcular_avance(
+    request,
+    canal: Canal = CLARO,
+    punto_fijo: str | None = None,
+    detalle: bool = False,
+    regional_fija: str | None = None,
+) -> dict:
     """
     Avance del mes: la venta de cada día contra la meta diaria.
 
@@ -1395,11 +1401,15 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
 
     `canal` dice de qué tablas sale todo —Claro u Homecenter—: el cálculo es
     uno solo para los dos.
+
+    `punto_fijo` y `regional_fija` los usan los detalles de un punto y de una
+    regional, y `detalle` agrega el corte por marca y por producto, que el
+    tablero general no necesita.
     """
     anio, mes = _mes_pedido(request)
-    regional = (request.query_params.get('regional') or '').strip()
+    regional = regional_fija or (request.query_params.get('regional') or '').strip()
     marca = (request.query_params.get('marca') or '').strip()
-    punto = (request.query_params.get('id_punto_venta') or '').strip()
+    punto = punto_fijo or (request.query_params.get('id_punto_venta') or '').strip()
 
     ventas = solo_lo_que_tiene_meta(
         canal.venta.objects.filter(fecha_venta__year=anio, fecha_venta__month=mes),
@@ -1489,13 +1499,16 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
         valor=Coalesce(Sum('valor_linea', output_field=IntegerField()), Value(0)),
     )
 
-    def agrupar(campo: str):
+    def agrupar(campo: str, etiquetas: dict | None = None):
         """
         Meta mensual, venta e inventario cruzados por una misma dimensión.
 
         `cumplimiento_alcanzable` es hasta dónde llegaría el cumplimiento si se
         vendiera todo el stock: lo vendido más el inventario valorizado, contra
         la meta. En Claro el stock ya es solo el de productos con meta.
+
+        Con `etiquetas`, la clave es el código (el del punto o el producto) y
+        lo que se muestra es su nombre: así se puede enlazar a su detalle.
         """
         reales_por = {
             f[campo]: f
@@ -1505,9 +1518,10 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
             )
         }
         metas_por = {
-            f[campo]: f['dinero']
+            f[campo]: f
             for f in metas.values(campo).annotate(
-                dinero=Coalesce(Sum('dinero_meta', output_field=IntegerField()), Value(0))
+                dinero=Coalesce(Sum('dinero_meta', output_field=IntegerField()), Value(0)),
+                unidades=Coalesce(Sum('meta_cantidad'), Value(0)),
             )
         }
         stock_por = {
@@ -1522,12 +1536,14 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
         for clave in set(reales_por) | set(metas_por) | set(stock_por):
             r = reales_por.get(clave, {})
             s = stock_por.get(clave, {})
-            meta_fila = metas_por.get(clave, 0)
+            meta_fila = metas_por.get(clave, {}).get('dinero', 0)
+            etiqueta = (etiquetas or {}).get(clave) or clave
             filas.append(
                 {
                     'key': clave or 'Sin dato',
-                    'label': clave or 'Sin dato',
+                    'label': etiqueta or 'Sin dato',
                     'meta_mensual': meta_fila,
+                    'meta_cantidad': metas_por.get(clave, {}).get('unidades', 0),
                     'importe': r.get('dinero', 0),
                     'cantidad': r.get('cantidad', 0),
                     'inventario': s.get('unidades', 0),
@@ -1541,7 +1557,25 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
         filas.sort(key=lambda f: f['cumplimiento'], reverse=True)
         return filas
 
+    # El punto va por su código, con el nombre como etiqueta: la fila enlaza
+    # al detalle del punto. Dos puntos con el mismo nombre ya no se suman.
+    nombres_punto = dict(canal.punto.objects.values_list('id_punto_venta', 'nombre_pdv'))
+    extra = {}
+    if detalle:
+        productos = {
+            fila['id_producto']: fila
+            for fila in canal.producto.objects.values('id_producto', 'nombre_producto', 'marca')
+        }
+        por_producto = agrupar(
+            'id_producto',
+            {clave: fila['nombre_producto'] for clave, fila in productos.items()},
+        )
+        for fila in por_producto:
+            fila['marca'] = (productos.get(fila['key']) or {}).get('marca') or ''
+        extra = {'por_marca': agrupar('id_producto__marca'), 'por_producto': por_producto}
+
     return {
+        **extra,
         'periodo': {
             'anio': anio,
             'mes': mes,
@@ -1568,7 +1602,7 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
         },
         'serie': serie,
         'por_regional': agrupar('id_punto_venta__regional'),
-        'por_punto_venta': agrupar('id_punto_venta__nombre_pdv'),
+        'por_punto_venta': agrupar('id_punto_venta', nombres_punto),
         'puntos_venta': puntos_del_tablero(canal, anio, mes),
     }
 
@@ -1578,6 +1612,221 @@ def _calcular_avance(request, canal: Canal = CLARO) -> dict:
 def avance_mensual(request):
     """El avance del mes, para el tablero."""
     return Response(_calcular_avance(request))
+
+
+#: Cuántas ventas del mes se listan en un detalle (las más nuevas).
+VENTAS_EN_DETALLE = 500
+
+
+def _ritmo_del_mes(datos: dict, todos_los_dias: bool) -> tuple[dict, list[dict]]:
+    """
+    Lo que le falta para cumplir y a qué ritmo va: lo comparten el detalle del
+    punto y el de la regional. Devuelve `(ritmo, productos a reforzar)`.
+
+    `todos_los_dias` cuenta el mes completo y no solo los hábiles: en una
+    regional siempre hay algún punto abierto, así que no hay día de descanso.
+    En un punto el asesor descansa el domingo y se cuentan los hábiles (lunes
+    a sábado sin festivos). Hoy cuenta como día por venir mientras no tenga
+    ventas cargadas.
+    """
+    totales, serie = datos['totales'], datos['serie']
+    hoy = timezone.localdate()
+    dias = [date.fromisoformat(dia['fecha']) for dia in serie if todos_los_dias or dia['habil']]
+    vendido_hoy = any(dia['fecha'] == hoy.isoformat() and dia['ventas'] for dia in serie)
+    corridos = [d for d in dias if d < hoy or (d == hoy and vendido_hoy)]
+    restantes = [d for d in dias if d not in corridos and d >= hoy]
+
+    vendido, vendido_unidades = totales['ventas_dinero'], totales['ventas_cantidad']
+    meta, meta_unidades = totales['meta_dinero'], totales['meta_cantidad']
+    falta = max(meta - vendido, 0)
+    falta_unidades = max(meta_unidades - vendido_unidades, 0)
+    promedio = round(vendido / len(corridos)) if corridos else 0
+    promedio_unidades = round(vendido_unidades / len(corridos), 1) if corridos else 0
+    necesario = -(-falta // len(restantes)) if restantes and falta else 0
+    necesario_unidades = (
+        -(-falta_unidades // len(restantes)) if restantes and falta_unidades else 0
+    )
+    proyectado = vendido + promedio * len(restantes)
+    esperado = round(len(corridos) * 100 / len(dias), 1) if dias else 0.0
+    corridos_set = set(corridos)
+
+    # Por debajo de lo esperado a esta altura del mes, con meta: se refuerzan.
+    a_reforzar = []
+    for fila in datos['por_producto']:
+        if not fila['meta_mensual'] or fila['cumplimiento'] >= esperado:
+            continue
+        faltan = max(fila['meta_cantidad'] - fila['cantidad'], 0)
+        a_reforzar.append(
+            {
+                'key': fila['key'],
+                'label': fila['label'],
+                'marca': fila['marca'],
+                'cumplimiento': fila['cumplimiento'],
+                'meta_cantidad': fila['meta_cantidad'],
+                'cantidad': fila['cantidad'],
+                'faltan_unidades': faltan,
+                'unidades_por_dia': round(faltan / len(restantes), 1) if restantes else faltan,
+                'inventario': fila['inventario'],
+                'sin_stock': fila['inventario'] == 0,
+            }
+        )
+    a_reforzar.sort(key=lambda f: (f['cumplimiento'], -f['faltan_unidades']))
+
+    ritmo = {
+        'todos_los_dias': todos_los_dias,
+        'habiles_totales': len(dias),
+        'habiles_corridos': len(corridos),
+        'habiles_restantes': len(restantes),
+        'esperado': esperado,
+        'promedio_diario': promedio,
+        'promedio_diario_unidades': promedio_unidades,
+        'falta': falta,
+        'falta_unidades': falta_unidades,
+        'necesario_diario': necesario,
+        'necesario_diario_unidades': necesario_unidades,
+        'proyectado': proyectado,
+        'cumplimiento_proyectado': _porcentaje(proyectado, meta),
+        # Días que ya pasaron sin ninguna venta cargada.
+        'dias_sin_venta': sum(
+            1
+            for dia in serie
+            if not dia['ventas'] and date.fromisoformat(dia['fecha']) in corridos_set
+        ),
+    }
+    return ritmo, a_reforzar
+
+
+def _ventas_del_detalle(canal: Canal, anio: int, mes: int, **filtro) -> list[dict]:
+    """Las ventas del mes que cuentan, de la más nueva a la más vieja, con su punto."""
+    ventas = (
+        solo_lo_que_tiene_meta(
+            canal.venta.objects.filter(fecha_venta__year=anio, fecha_venta__month=mes, **filtro),
+            canal,
+            anio,
+            mes,
+        )
+        .annotate(importe=F('cantidad_vendida') * precio_de_venta(canal))
+        .order_by('-fecha_venta', 'id_producto__nombre_producto')
+        .values(
+            'fecha_venta',
+            'id_producto',
+            'id_producto__nombre_producto',
+            'id_producto__marca',
+            'id_punto_venta',
+            'id_punto_venta__nombre_pdv',
+            'cantidad_vendida',
+            'importe',
+        )[:VENTAS_EN_DETALLE]
+    )
+    return [
+        {
+            'fecha': fila['fecha_venta'],
+            'id_producto': fila['id_producto'],
+            'producto': fila['id_producto__nombre_producto'],
+            'marca': fila['id_producto__marca'] or '',
+            'id_punto_venta': fila['id_punto_venta'],
+            'punto': fila['id_punto_venta__nombre_pdv'],
+            'cantidad': fila['cantidad_vendida'],
+            'importe': fila['importe'] or 0,
+        }
+        for fila in ventas
+    ]
+
+
+def detalle_punto_de(request, canal: Canal = CLARO) -> Response:
+    """
+    Todo el mes de un punto de venta: `?id_punto_venta=…&anio=…&mes=…`.
+
+    Es el mismo cálculo del tablero recortado a ese punto (día por día, meta,
+    vendido, inventario), más el corte por marca y por producto, la lista de
+    ventas y lo que le falta para cumplir (ver `_ritmo_del_mes`): cuenta los
+    días hábiles, porque el asesor descansa el domingo.
+    """
+    id_punto = (request.query_params.get('id_punto_venta') or '').strip()
+    punto = canal.punto.objects.filter(id_punto_venta=id_punto).first()
+    if punto is None:
+        return Response(
+            {'code': 'not_found', 'message': 'Ese punto de venta no existe.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    datos = _calcular_avance(request, canal, punto_fijo=id_punto, detalle=True)
+    ritmo, a_reforzar = _ritmo_del_mes(datos, todos_los_dias=False)
+    anio, mes = datos['periodo']['anio'], datos['periodo']['mes']
+    return Response(
+        {
+            **datos,
+            'punto': {
+                'id_punto_venta': punto.id_punto_venta,
+                'nombre': punto.nombre_pdv,
+                'regional': getattr(punto, 'regional', '') or '',
+            },
+            'ritmo': ritmo,
+            'a_reforzar': a_reforzar,
+            'ventas': _ventas_del_detalle(canal, anio, mes, id_punto_venta=id_punto),
+        }
+    )
+
+
+def detalle_regional_de(request, canal: Canal = CLARO) -> Response:
+    """
+    Todo el mes de una regional: `?regional=…&anio=…&mes=…`.
+
+    Lo mismo que el detalle de un punto, sumando todos los de la regional, más
+    el avance de cada uno de sus puntos (que enlaza a su propio detalle). El
+    ritmo cuenta todos los días del mes: en una regional siempre hay algún
+    punto vendiendo, así que no aplica el día de descanso.
+    """
+    regional = (request.query_params.get('regional') or '').strip()
+    puntos = canal.punto.objects.filter(regional=regional) if regional else None
+    if not puntos or not puntos.exists():
+        return Response(
+            {'code': 'not_found', 'message': 'Esa regional no existe o no tiene puntos de venta.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    datos = _calcular_avance(request, canal, regional_fija=regional, detalle=True)
+    ritmo, a_reforzar = _ritmo_del_mes(datos, todos_los_dias=True)
+    anio, mes = datos['periodo']['anio'], datos['periodo']['mes']
+    con_meta = [fila for fila in datos['por_punto_venta'] if fila['meta_mensual']]
+    return Response(
+        {
+            **datos,
+            'regional': {
+                'nombre': regional,
+                'puntos': puntos.count(),
+                'puntos_con_meta': len(con_meta),
+                'puntos_que_cumplen': sum(1 for fila in con_meta if fila['cumplimiento'] >= 100),
+            },
+            'ritmo': ritmo,
+            'a_reforzar': a_reforzar,
+            'ventas': _ventas_del_detalle(canal, anio, mes, id_punto_venta__regional=regional),
+        }
+    )
+
+
+def vista_detalle_punto(canal: Canal):
+    """La vista del detalle de un punto para un canal: todos usan el mismo cálculo."""
+
+    @api_view(['GET'])
+    @permission_classes([HasBiTradeApp])
+    def detalle_punto(request):
+        return detalle_punto_de(request, canal)
+
+    detalle_punto.__name__ = f'detalle_punto_{canal.codigo}'
+    return detalle_punto
+
+
+def vista_detalle_regional(canal: Canal):
+    """La vista del detalle de una regional para un canal."""
+
+    @api_view(['GET'])
+    @permission_classes([HasBiTradeApp])
+    def detalle_regional(request):
+        return detalle_regional_de(request, canal)
+
+    detalle_regional.__name__ = f'detalle_regional_{canal.codigo}'
+    return detalle_regional
 
 
 #: Las hojas del .xlsx del tablero. La clave es lo que llega en `?hoja=`.

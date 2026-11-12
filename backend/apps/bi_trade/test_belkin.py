@@ -161,7 +161,15 @@ def test_las_opciones_traen_cada_asesor_con_su_punto(app_bi_trade, catalogo_belk
     ).json()
 
     assert opciones['asesores'] == [
-        {'value': c['asesor'].pk, 'label': 'Duvan Riaño', 'idPuntoVenta': 'C108'}
+        {
+            'value': c['asesor'].pk,
+            'label': 'Duvan Riaño',
+            'idPuntoVenta': 'C108',
+            # La vigencia: el formulario muestra solo a quien era asesor ese día.
+            'desde': None,
+            'hasta': None,
+            'activo': True,
+        }
     ]
     assert {r['label'] for r in opciones['regionales']} == {'Zona Norte', 'Zona Sur'}
     assert {cat['label'] for cat in opciones['categorias']} == {'Case Apple', 'Lámina'}
@@ -715,3 +723,234 @@ def test_el_formulario_anterior_se_importa_cruzando_al_asesor_por_apellido(
         call_command('importar_formulario_belkin', **opciones, stdout=StringIO())
     call_command('importar_formulario_belkin', **opciones, reemplazar=True, stdout=StringIO())
     assert RegistroBelkin.objects.count() == 5
+
+
+# ── Trazabilidad del asesor por fecha ──────────────────────────────────────
+
+
+def _editor(app):
+    return cliente_de(crear_usuario('editor@supli.tech', app, ['bi-trade:data:manage']))
+
+
+def _registro(c, asesor, fecha):
+    return RegistroBelkin.objects.create(
+        id_punto_venta=c['plaza_claro'], id_asesor=asesor, id_producto=c['producto'],
+        fecha_recomendacion=fecha,
+    )
+
+
+def test_cambiar_el_asesor_deja_lo_de_antes_a_nombre_del_anterior(
+    app_bi_trade, catalogo_belkin  # noqa: F811
+):
+    """Julian recomendó en octubre; desde noviembre el asesor es Daniel."""
+    c = catalogo_belkin
+    julian = c['asesor']
+    de_octubre = _registro(c, julian, date(2026, 10, 20))
+    # Cargado a nombre de Julian, pero ya del tiempo de Daniel: pasa a Daniel.
+    de_noviembre = _registro(c, julian, date(2026, 11, 3))
+
+    respuesta = _editor(app_bi_trade).post(
+        f'{RUTA}/asesores/{julian.pk}/cambiar',
+        {'nombre': 'Daniel Correa', 'desde': '2026-11-01'},
+        format='json',
+    )
+
+    assert respuesta.status_code == 201, respuesta.json()
+    assert respuesta.json()['movidos'] == 1
+    julian.refresh_from_db()
+    daniel = AsesorApple.objects.get(nombre='Daniel Correa')
+    assert (julian.nombre, julian.hasta, julian.activo) == (
+        'Duvan Riaño', date(2026, 10, 31), False
+    )
+    assert (daniel.id_punto_venta_id, daniel.desde, daniel.activo) == (
+        'C108', date(2026, 11, 1), True
+    )
+    de_octubre.refresh_from_db()
+    de_noviembre.refresh_from_db()
+    assert de_octubre.id_asesor_id == julian.pk
+    assert de_noviembre.id_asesor_id == daniel.pk
+
+
+def test_no_se_le_cambia_el_nombre_a_quien_ya_tiene_recomendaciones(
+    app_bi_trade, catalogo_belkin  # noqa: F811
+):
+    c = catalogo_belkin
+    _registro(c, c['asesor'], date(2026, 10, 20))
+    editor = _editor(app_bi_trade)
+
+    respuesta = editor.patch(
+        f"{RUTA}/asesores/{c['asesor'].pk}", {'nombre': 'Daniel Correa'}, format='json'
+    )
+    assert respuesta.status_code == 400
+    assert 'Cambiar asesor' in respuesta.json()['errors']['nombre'][0]
+
+    # Si es la misma persona y solo se corrige cómo está escrito, sí.
+    respuesta = editor.patch(
+        f"{RUTA}/asesores/{c['asesor'].pk}",
+        {'nombre': 'Duván Riaño', 'corregirNombre': True},
+        format='json',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert AsesorApple.objects.get(pk=c['asesor'].pk).nombre == 'Duván Riaño'
+
+
+def test_la_recomendacion_tiene_que_ser_de_quien_era_asesor_ese_dia(
+    app_bi_trade, catalogo_belkin  # noqa: F811
+):
+    c = catalogo_belkin
+    julian = c['asesor']
+    julian.hasta = date(2026, 10, 31)
+    julian.activo = False
+    julian.save()
+    cliente = cliente_de(crear_usuario('promotor@supli.tech', app_bi_trade))
+    datos = _recomendacion(c['plaza_claro'], c['producto'], julian)
+
+    datos['fechaRecomendacion'] = '2026-11-03'
+    respuesta = cliente.post(f'{RUTA}/registros', datos, format='json')
+    assert respuesta.status_code == 400
+    assert 'no era el asesor' in respuesta.json()['errors']['idAsesor'][0]
+
+    # Una recomendación de octubre cargada tarde sí es de Julian.
+    datos['fechaRecomendacion'] = '2026-10-15'
+    assert cliente.post(f'{RUTA}/registros', datos, format='json').status_code == 201
+
+
+def test_el_informe_le_da_a_cada_dia_el_asesor_que_tenia_el_punto(
+    app_bi_trade, catalogo_belkin, fuera_de_coltrade  # noqa: F811
+):
+    """Reimportar octubre después del cambio deja octubre a nombre de Olga."""
+    punto, olga = fuera_de_coltrade
+    olga.hasta = date(2026, 10, 15)
+    olga.activo = False
+    olga.save()
+    nuevo = AsesorApple.objects.create(
+        nombre='Pedro Gil', id_punto_venta=punto, desde=date(2026, 10, 16)
+    )
+
+    _importar(
+        _editor(app_bi_trade),
+        [
+            ('7020178', 'C304', '601', date(2026, 10, 10)),
+            ('7020178', 'C304', '601', date(2026, 10, 20)),
+        ],
+        anio=2026,
+        mes=10,
+    )
+
+    por_dia = dict(
+        RegistroBelkin.objects.filter(fuente='informe').values_list(
+            'fecha_recomendacion', 'id_asesor'
+        )
+    )
+    assert por_dia == {date(2026, 10, 10): olga.pk, date(2026, 10, 20): nuevo.pk}
+
+
+def test_mover_las_fechas_ajusta_al_vecino_y_reacomoda_lo_registrado(
+    app_bi_trade, catalogo_belkin  # noqa: F811
+):
+    """Julián 1–31 oct, Daniel desde el 1 nov. Si Julián termina el 15, Daniel empieza el 16."""
+    c = catalogo_belkin
+    julian = c['asesor']
+    julian.desde = date(2026, 10, 1)
+    julian.save()
+    editor = _editor(app_bi_trade)
+    editor.post(
+        f'{RUTA}/asesores/{julian.pk}/cambiar',
+        {'nombre': 'Daniel Correa', 'desde': '2026-11-01'},
+        format='json',
+    )
+    daniel = AsesorApple.objects.get(nombre='Daniel Correa')
+    del_20 = _registro(c, julian, date(2026, 10, 20))
+
+    respuesta = editor.post(
+        f'{RUTA}/asesores/{julian.pk}/vigencia',
+        {'desde': '2026-10-01', 'hasta': '2026-10-15'},
+        format='json',
+    )
+
+    assert respuesta.status_code == 200, respuesta.json()
+    daniel.refresh_from_db()
+    assert daniel.desde == date(2026, 10, 16)
+    assert daniel.reemplaza_id == julian.pk
+    # El 20 de octubre ya era Daniel: la recomendación pasa a él.
+    del_20.refresh_from_db()
+    assert del_20.id_asesor_id == daniel.pk
+    assert respuesta.json()['movidos'] == 1
+
+
+def test_las_fechas_no_se_cruzan_con_las_del_vecino(app_bi_trade, catalogo_belkin):  # noqa: F811
+    c = catalogo_belkin
+    julian = c['asesor']
+    julian.desde = date(2026, 10, 1)
+    julian.save()
+    editor = _editor(app_bi_trade)
+    editor.post(
+        f'{RUTA}/asesores/{julian.pk}/cambiar',
+        {'nombre': 'Daniel Correa', 'desde': '2026-11-01'},
+        format='json',
+    )
+    daniel = AsesorApple.objects.get(nombre='Daniel Correa')
+
+    # Daniel no puede empezar antes de que empiece Julián.
+    respuesta = editor.post(
+        f'{RUTA}/asesores/{daniel.pk}/vigencia', {'desde': '2026-09-20'}, format='json'
+    )
+    assert respuesta.status_code == 400
+    # Y Julián, que fue reemplazado, tiene que tener fin.
+    respuesta = editor.post(
+        f'{RUTA}/asesores/{julian.pk}/vigencia', {'desde': '2026-10-01'}, format='json'
+    )
+    assert respuesta.status_code == 400
+
+
+def test_las_fechas_no_se_cambian_editando_el_asesor_en_la_lista(
+    app_bi_trade, catalogo_belkin  # noqa: F811
+):
+    c = catalogo_belkin
+    respuesta = _editor(app_bi_trade).patch(
+        f"{RUTA}/asesores/{c['asesor'].pk}",
+        {'desde': '2026-01-01', 'hasta': '2026-02-01'},
+        format='json',
+    )
+    assert respuesta.status_code == 200
+    c['asesor'].refresh_from_db()
+    assert (c['asesor'].desde, c['asesor'].hasta) == (None, None)
+
+
+def test_borrar_al_nuevo_asesor_sin_recomendaciones_deshace_el_cambio(
+    app_bi_trade, catalogo_belkin  # noqa: F811
+):
+    c = catalogo_belkin
+    julian = c['asesor']
+    _registro(c, julian, date(2026, 10, 20))
+    editor = _editor(app_bi_trade)
+    editor.post(
+        f'{RUTA}/asesores/{julian.pk}/cambiar',
+        {'nombre': 'Daniel Correa', 'desde': '2026-11-01'},
+        format='json',
+    )
+    daniel = AsesorApple.objects.get(nombre='Daniel Correa')
+
+    # Julián tiene recomendaciones y además lo reemplazaron: no se borra.
+    assert editor.delete(f'{RUTA}/asesores/{julian.pk}').status_code == 400
+
+    assert editor.delete(f'{RUTA}/asesores/{daniel.pk}').status_code == 204
+    julian.refresh_from_db()
+    assert (julian.hasta, julian.activo) == (None, True)
+    assert not AsesorApple.objects.filter(nombre='Daniel Correa').exists()
+
+
+def test_no_se_borra_un_asesor_con_recomendaciones(app_bi_trade, catalogo_belkin):  # noqa: F811
+    c = catalogo_belkin
+    julian = c['asesor']
+    editor = _editor(app_bi_trade)
+    editor.post(
+        f'{RUTA}/asesores/{julian.pk}/cambiar',
+        {'nombre': 'Daniel Correa', 'desde': '2026-11-01'},
+        format='json',
+    )
+    daniel = AsesorApple.objects.get(nombre='Daniel Correa')
+    _registro(c, daniel, date(2026, 11, 5))
+
+    assert editor.delete(f'{RUTA}/asesores/{daniel.pk}').status_code == 400
+    assert AsesorApple.objects.filter(pk=daniel.pk).exists()

@@ -10,19 +10,22 @@ el registro no copia la regional ni la categoría, las lee del punto y del
 producto cada vez.
 """
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 
-from django.db.models import Count, Max, Sum
+from django.db import transaction
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.http import HttpResponse
 from django.utils import timezone
-from rest_framework import viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from apps.core.excel import ColumnaExport, construir_export
 
 from .api_permissions import HasBiTradeApp, ReadOnlyOrCanManage
+from .asesores_belkin import ajustar_vigencia, cambiar_asesor, siguiente_de
 from .belkin import TOPE_BONO, calcular_bono, escalones_por_categoria, siguiente_bono
 from .models import (
     AsesorApple,
@@ -98,7 +101,9 @@ class PuntoVentaBelkinViewSet(viewsets.ModelViewSet):
 
 class AsesorAppleViewSet(viewsets.ModelViewSet):
     queryset = (
-        AsesorApple.objects.select_related('id_punto_venta', 'id_punto_venta__id_regional')
+        AsesorApple.objects.select_related(
+            'id_punto_venta', 'id_punto_venta__id_regional', 'reemplazado_por'
+        )
         .annotate(conteo_registros=Count('registros'))
         .order_by('nombre')
     )
@@ -109,9 +114,101 @@ class AsesorAppleViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def destroy(self, request, *args, **kwargs):
+        """
+        Borra un asesor que no tiene recomendaciones.
+
+        Si es el último de su cadena y reemplazó a alguien, es deshacer el
+        cambio: el anterior vuelve a ser el asesor actual (sin fecha de fin).
+        Del medio de una cadena no se borra: dejaría un hueco en las fechas.
+        """
         asesor = self.get_object()
         bloqueo = _en_uso(asesor.nombre, [('registro(s)', asesor.registros.count())])
-        return bloqueo or super().destroy(request, *args, **kwargs)
+        if bloqueo:
+            return bloqueo
+        siguiente = siguiente_de(asesor)
+        if siguiente:
+            return Response(
+                {
+                    'code': 'protected',
+                    'message': (
+                        f'A {asesor.nombre} lo reemplazó {siguiente.nombre}: se borra primero '
+                        'el último asesor de la cadena.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            anterior = asesor.reemplaza
+            asesor.delete()
+            if anterior:
+                anterior.hasta = None
+                anterior.activo = True
+                anterior.save(update_fields=['hasta', 'activo', 'updated_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'])
+    def cambiar(self, request, pk=None):
+        """
+        Cambia el asesor del punto desde una fecha: `{nombre, desde}`.
+
+        No se toca el nombre del anterior —sus recomendaciones siguen a su
+        nombre—: termina el día antes de `desde` y el nuevo, que lo reemplaza,
+        empieza ese día. Lo del anterior desde esa fecha pasa al nuevo.
+        """
+        anterior = self.get_object()
+        desde = _fecha(request.data.get('desde'), 'desde', obligatoria=True)
+        nuevo, movidos = cambiar_asesor(anterior, request.data.get('nombre'), desde)
+        anterior.refresh_from_db()
+        cola = (
+            f'; {movidos} registro(s) desde esa fecha pasaron a {nuevo.nombre}.' if movidos else '.'
+        )
+        return Response(
+            {
+                'anterior': AsesorAppleSerializer(anterior).data,
+                'nuevo': AsesorAppleSerializer(nuevo).data,
+                'movidos': movidos,
+                'message': (
+                    f'Desde el {desde:%d/%m/%Y} el asesor de {nuevo.id_punto_venta.nombre_pdv} '
+                    f'es {nuevo.nombre}. Lo de antes queda a nombre de {anterior.nombre}{cola}'
+                ),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=['post'])
+    def vigencia(self, request, pk=None):
+        """
+        Cambia desde y hasta cuándo fue asesor del punto: `{desde, hasta}`.
+
+        Los vecinos en la cadena se ajustan solos (el anterior termina el día
+        antes; el siguiente empieza el día después) y las recomendaciones se
+        reacomodan según su fecha. Vacío es «sin fecha».
+        """
+        asesor = self.get_object()
+        desde = _fecha(request.data.get('desde'), 'desde')
+        hasta = _fecha(request.data.get('hasta'), 'hasta')
+        movidos = ajustar_vigencia(asesor, desde, hasta)
+        asesor.refresh_from_db()
+        return Response(
+            {
+                'asesor': AsesorAppleSerializer(asesor).data,
+                'movidos': movidos,
+                'message': 'Fechas guardadas'
+                + (f': {movidos} recomendación(es) cambiaron de asesor.' if movidos else '.'),
+            }
+        )
+
+
+def _fecha(valor, campo: str, obligatoria: bool = False) -> date | None:
+    """Una fecha AAAA-MM-DD del cuerpo; vacío es `None` (salvo si es obligatoria)."""
+    if valor in (None, ''):
+        if obligatoria:
+            raise ValidationError({campo: 'Elige la fecha.'})
+        return None
+    try:
+        return date.fromisoformat(str(valor))
+    except ValueError as exc:
+        raise ValidationError({campo: 'La fecha no es válida.'}) from exc
 
 
 class CategoriaBelkinViewSet(viewsets.ModelViewSet):
@@ -190,7 +287,11 @@ def catalogos_belkin() -> dict:
     """
     regionales = RegionalBelkin.objects.filter(activa=True)
     puntos = PuntoVentaBelkin.objects.filter(activo=True, id_regional__activa=True)
-    asesores = AsesorApple.objects.filter(activo=True)
+    # Los activos, y los que dejaron el punto hace poco: una recomendación de
+    # octubre que se carga tarde todavía es de quien era el asesor en octubre.
+    # El formulario los filtra por la fecha elegida con su vigencia.
+    reciente = timezone.localdate() - timedelta(days=92)
+    asesores = AsesorApple.objects.filter(Q(activo=True) | Q(hasta__gte=reciente))
     categorias = CategoriaBelkin.objects.filter(activa=True)
     productos = ProductoBelkin.objects.filter(activo=True, id_categoria__activa=True)
     return {
@@ -200,7 +301,14 @@ def catalogos_belkin() -> dict:
             for p in puntos
         ],
         'asesores': [
-            {'value': a.pk, 'label': a.nombre, 'id_punto_venta': a.id_punto_venta_id}
+            {
+                'value': a.pk,
+                'label': a.nombre,
+                'id_punto_venta': a.id_punto_venta_id,
+                'desde': a.desde,
+                'hasta': a.hasta,
+                'activo': a.activo,
+            }
             for a in asesores
         ],
         'categorias': [{'value': c.pk, 'label': c.nombre} for c in categorias],
@@ -422,9 +530,15 @@ def _calcular_tablero(params, todos_los_puntos: bool = False) -> dict:
     asesores_del_punto: dict[str, list[str]] = {}
     if todos_los_puntos:
         codigos |= {codigo for codigo, pdv in puntos.items() if pdv.activo}
-        for codigo, nombre in AsesorApple.objects.filter(
-            activo=True, id_punto_venta__in=codigos
-        ).values_list('id_punto_venta', 'nombre'):
+        # Los que fueron asesores del punto en algún día del mes, no los de hoy.
+        inicio_mes = date(anio, mes, 1)
+        fin_mes = date(anio, mes, monthrange(anio, mes)[1])
+        for codigo, nombre in (
+            AsesorApple.objects.filter(id_punto_venta__in=codigos)
+            .filter(Q(desde__isnull=True) | Q(desde__lte=fin_mes))
+            .filter(Q(hasta__gte=inicio_mes) | Q(hasta__isnull=True, activo=True))
+            .values_list('id_punto_venta', 'nombre')
+        ):
             asesores_del_punto.setdefault(codigo, []).append(nombre)
     por_punto = []
     for codigo in codigos:

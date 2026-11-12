@@ -1055,6 +1055,8 @@ class AsesorAppleSerializer(serializers.ModelSerializer):
         source='id_punto_venta.id_regional.nombre', read_only=True, default=''
     )
     registros_count = Conteo('registros')
+    # La cadena: a quién reemplazó y quién lo reemplazó (ver `asesores_belkin`).
+    reemplazado_por = serializers.SerializerMethodField()
 
     class Meta:
         model = AsesorApple
@@ -1066,14 +1068,56 @@ class AsesorAppleSerializer(serializers.ModelSerializer):
             'punto_venta_etiqueta',
             'regional',
             'activo',
+            'desde',
+            'hasta',
+            'reemplaza',
+            'reemplazado_por',
             'registros_count',
         )
+        # Las fechas se cambian con la acción `vigencia`, que ajusta la cadena;
+        # `desde` solo se escribe al crear un asesor.
+        read_only_fields = ('hasta', 'reemplaza')
+
+    def get_reemplazado_por(self, asesor) -> int | None:
+        siguiente = getattr(asesor, 'reemplazado_por', None)
+        return siguiente.pk if siguiente else None
+
+    def update(self, instance, validated_data):
+        validated_data.pop('desde', None)
+        return super().update(instance, validated_data)
 
     def validate(self, attrs: dict) -> dict:
-        """El mismo nombre no se repite en un punto: es justo lo que se quiere evitar."""
+        """
+        El mismo nombre no se repite en un punto: es justo lo que se quiere evitar.
+
+        A quien ya tiene recomendaciones no se le cambia el nombre sin más: si
+        ahora es otra persona, sus recomendaciones pasarían a nombre del nuevo.
+        Para eso está «cambiar asesor». Solo se acepta con `corregir_nombre`,
+        cuando es la misma persona y se corrige cómo está escrito.
+        """
         nombre = attrs.get('nombre', getattr(self.instance, 'nombre', ''))
         punto = attrs.get('id_punto_venta') or getattr(self.instance, 'id_punto_venta', None)
         nombre = _texto_requerido(nombre, 'El nombre')
+        desde = attrs.get('desde', getattr(self.instance, 'desde', None))
+        hasta = attrs.get('hasta', getattr(self.instance, 'hasta', None))
+        if desde and hasta and hasta < desde:
+            raise serializers.ValidationError({'hasta': 'La fecha final va después de la inicial.'})
+        if (
+            self.instance
+            and nombre.casefold() != self.instance.nombre.casefold()
+            and self.instance.registros.exists()
+            and not self.initial_data.get('corregir_nombre')
+        ):
+            raise serializers.ValidationError(
+                {
+                    'nombre': (
+                        f'{self.instance.nombre} ya tiene recomendaciones. Si ahora es otra '
+                        'persona, usa «Cambiar asesor» para que lo de antes quede a su nombre. '
+                        'Si solo corriges cómo está escrito, confirma que es la misma persona.'
+                    )
+                },
+                code='corregir_nombre',
+            )
         repetido = AsesorApple.objects.filter(nombre__iexact=nombre, id_punto_venta=punto)
         if self.instance:
             repetido = repetido.exclude(pk=self.instance.pk)
@@ -1179,7 +1223,7 @@ class RegistroBelkinSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate(self, attrs: dict) -> dict:
-        """El punto tiene que ser de Coltrade y el asesor, de ese punto.
+        """El punto tiene que ser de Coltrade y el asesor, de ese punto (y de ese día).
 
         Un punto sin regional es fuera de Coltrade: lo suyo llega del informe
         de ventas y se reemplaza al volver a importarlo, así que el formulario
@@ -1203,5 +1247,21 @@ class RegistroBelkinSerializer(serializers.ModelSerializer):
         if punto and asesor and asesor.id_punto_venta_id != punto.pk:
             raise serializers.ValidationError(
                 {'id_asesor': f'«{asesor.nombre}» no es asesor de {punto.nombre_pdv}.'}
+            )
+        # Y tiene que haber sido el asesor del punto el día de la recomendación:
+        # lo de octubre es de quien era el asesor en octubre.
+        fecha = attrs.get(
+            'fecha_recomendacion', getattr(self.instance, 'fecha_recomendacion', None)
+        )
+        if asesor and fecha and not asesor.vigente_en(fecha):
+            desde = f'del {asesor.desde:%d/%m/%Y}' if asesor.desde else 'desde antes'
+            hasta = f' al {asesor.hasta:%d/%m/%Y}' if asesor.hasta else ''
+            raise serializers.ValidationError(
+                {
+                    'id_asesor': (
+                        f'«{asesor.nombre}» no era el asesor del punto el {fecha:%d/%m/%Y}: '
+                        f'lo fue {desde}{hasta}.'
+                    )
+                }
             )
         return attrs

@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Area,
   CartesianGrid,
@@ -480,6 +481,9 @@ const TOPE_FILAS = 10;
  * Con ella va también el cumplimiento alcanzable: hasta dónde llegaría el
  * punto si vendiera todo su stock, a precio Coltrade de hoy.
  */
+/** La clave de las filas sin regional o sin punto: no tienen detalle al que ir. */
+const SIN_DATO = 'Sin dato';
+
 export function TablaAvance({
   titulo,
   descripcion,
@@ -489,6 +493,7 @@ export function TablaAvance({
   onExportar,
   cargando = false,
   columnaInventario = false,
+  enlace,
 }: {
   titulo: string;
   descripcion: string;
@@ -498,6 +503,8 @@ export function TablaAvance({
   onExportar: (hoja: HojaAvance) => Promise<unknown>;
   cargando?: boolean;
   columnaInventario?: boolean;
+  /** A dónde lleva el nombre de cada fila (el detalle del punto, por ejemplo). */
+  enlace?: (fila: FilaAvance) => string;
 }) {
   const [orden, setOrden] = useState<{ campo: CampoOrden; desc: boolean }>({
     campo: 'cumplimiento',
@@ -645,7 +652,17 @@ export function TablaAvance({
                   <TableRow key={fila.key}>
                     <TableCell className="font-medium">
                       <span className="flex items-center gap-2">
-                        {fila.label}
+                        {/* «Sin dato» (sin regional o sin punto) no tiene detalle. */}
+                        {enlace && fila.key !== SIN_DATO ? (
+                          <Link
+                            to={enlace(fila)}
+                            className="underline-offset-4 hover:text-primary hover:underline"
+                          >
+                            {fila.label}
+                          </Link>
+                        ) : (
+                          fila.label
+                        )}
                         {fila.key === mejor && fila.cumplimiento > 0 && (
                           <Badge variant="success">Mejor</Badge>
                         )}

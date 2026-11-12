@@ -15,6 +15,8 @@ const MicrosoftCallbackPage = lazy(() => import('@/app/pages/MicrosoftCallbackPa
 const HomePage = lazy(() => import('@/app/pages/app/HomePage'));
 const ProfilePage = lazy(() => import('@/app/pages/app/ProfilePage'));
 const AdminPage = lazy(() => import('@/modules/admin/pages/AdminPage'));
+const PuntoVentaDetallePage = lazy(() => import('@/modules/bi-trade/pages/PuntoVentaDetallePage'));
+const RegionalDetallePage = lazy(() => import('@/modules/bi-trade/pages/RegionalDetallePage'));
 const UsuarioDetallePage = lazy(() => import('@/modules/admin/pages/UsuarioDetallePage'));
 
 // ── BI Trade Marketing ────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ const PlanBelkinFormularioPage = lazy(
   () => import('@/modules/bi-trade/pages/PlanBelkinFormularioPage'),
 );
 const PlanBelkinListaPage = lazy(() => import('@/modules/bi-trade/pages/PlanBelkinListaPage'));
+const PlanBelkinPuntoPage = lazy(() => import('@/modules/bi-trade/pages/PlanBelkinPuntoPage'));
 const TableroPublicoLayout = lazy(() => import('@/modules/bi-trade/publico/TableroPublico'));
 const FormularioPublico = lazy(() => import('@/modules/bi-trade/publico/FormularioPublico'));
 const FormularioPublicoBelkin = lazy(
@@ -150,6 +153,14 @@ const routes: RouteObject[] = [
                 element: withSuspense(<PuntosVentaPage />),
               },
               { path: 'bi-trade/claro/inventario', element: withSuspense(<InventarioPage />) },
+              {
+                path: 'bi-trade/claro/punto/:id',
+                element: withSuspense(<PuntoVentaDetallePage />),
+              },
+              {
+                path: 'bi-trade/claro/regional/:nombre',
+                element: withSuspense(<RegionalDetallePage />),
+              },
               { path: 'bi-trade/claro/metas', element: withSuspense(<MetasPage />) },
               { path: 'bi-trade/claro/tickets', element: withSuspense(<TicketsPage />) },
               // Homecenter, Falabella y Tmk: las mismas páginas de Claro con la fuente
@@ -165,6 +176,8 @@ const routes: RouteObject[] = [
                   { path: 'precios', element: withSuspense(<PreciosPage />) },
                   { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
+                  { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
+                  { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
                   { path: 'metas', element: withSuspense(<MetasPage />) },
                 ],
               },
@@ -179,6 +192,8 @@ const routes: RouteObject[] = [
                   { path: 'precios', element: withSuspense(<PreciosPage />) },
                   { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
+                  { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
+                  { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
                   { path: 'metas', element: withSuspense(<MetasPage />) },
                 ],
               },
@@ -193,6 +208,8 @@ const routes: RouteObject[] = [
                   { path: 'precios', element: withSuspense(<PreciosPage />) },
                   { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
+                  { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
+                  { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
                   { path: 'metas', element: withSuspense(<MetasPage />) },
                 ],
               },
@@ -211,6 +228,10 @@ const routes: RouteObject[] = [
               {
                 path: 'bi-trade/plan-recomiendame-belkin/listas/:lista',
                 element: withSuspense(<PlanBelkinListaPage />),
+              },
+              {
+                path: 'bi-trade/plan-recomiendame-belkin/puntos/:id',
+                element: withSuspense(<PlanBelkinPuntoPage />),
               },
               {
                 path: 'bi-trade/plan-partners',

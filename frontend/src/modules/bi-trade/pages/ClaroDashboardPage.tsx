@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   BoxesIcon,
   CalendarDaysIcon,
@@ -27,7 +27,14 @@ import { useAvanceMensual, useDescarga, useOpciones } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BarraCumplimiento } from '../components/Cumplimiento';
 import { BadgeRitmo, GraficoAvance, TablaAvance, calcularRitmo } from '../components/AvanceMensual';
-import { SelectorMes, mesActual, nombreDelMes, type Mes } from '../components/SelectorMes';
+import {
+  SelectorMes,
+  aValorMes,
+  desdeValorMes,
+  mesActual,
+  nombreDelMes,
+  type Mes,
+} from '../components/SelectorMes';
 import { ImportarInforme } from '../components/ImportarInforme';
 import { HojasBi } from '../components/HojasBi';
 import { CompartirTablero } from '../components/CompartirTablero';
@@ -46,7 +53,9 @@ const MODULOS = [
 export default function ClaroDashboardPage() {
   const fuente = useFuente();
   const { soloLectura } = fuente;
-  const [mes, setMes] = useState<Mes>(mesActual);
+  // Al volver del detalle de un punto, el tablero abre en el mismo mes.
+  const [params] = useSearchParams();
+  const [mes, setMes] = useState<Mes>(() => desdeValorMes(params.get('mes') ?? '') ?? mesActual());
   const [filtros, setFiltros] = useState<{
     regional?: string;
     marca?: string;
@@ -280,6 +289,12 @@ export default function ClaroDashboardPage() {
         hoja="regional"
         cargando={isLoading}
         onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
+        enlace={
+          fuente.detalleRegional && !soloLectura
+            ? (fila) =>
+                `${fuente.base}/regional/${encodeURIComponent(fila.key)}?mes=${aValorMes(mes)}`
+            : undefined
+        }
       />
 
       <TablaAvance
@@ -291,6 +306,11 @@ export default function ClaroDashboardPage() {
         cargando={isLoading}
         onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
         columnaInventario
+        enlace={
+          fuente.detallePunto && !soloLectura
+            ? (fila) => `${fuente.base}/punto/${encodeURIComponent(fila.key)}?mes=${aValorMes(mes)}`
+            : undefined
+        }
       />
     </div>
   );

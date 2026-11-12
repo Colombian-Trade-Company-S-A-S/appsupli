@@ -113,6 +113,10 @@ export interface FuenteDatos {
   exportarDia: (filtros: FiltrosDia, corte?: CorteDia) => Promise<unknown>;
   /** Los CRUD del canal. Solo en la app: el tablero público no edita. */
   recursos?: RecursosCanal;
+  /** El detalle de un punto de venta. Solo en la app: el tablero público no lo tiene. */
+  detallePunto?: typeof biTradeApi.detallePunto;
+  /** El detalle de una regional. Solo en la app. */
+  detalleRegional?: typeof biTradeApi.detalleRegional;
   /** El importador del informe del ERP. Solo Claro y Tmk Ecommerce Claro. */
   importarInforme?: typeof biTradeApi.importarInforme;
   /** El querie de inventario del portal de Homecenter. Solo HC. */
@@ -138,6 +142,8 @@ export const fuenteApp: FuenteDatos = {
   exportarAvance: biTradeApi.avanceMensualExportar,
   exportarDia: biTradeApi.cumplimientoDiarioExportar,
   recursos: biTradeApi,
+  detallePunto: biTradeApi.detallePunto,
+  detalleRegional: biTradeApi.detalleRegional,
   importarInforme: biTradeApi.importarInforme,
 };
 
@@ -166,6 +172,8 @@ function fuenteDeCanal(
     exportarAvance: recursos.avanceMensualExportar,
     exportarDia: recursos.cumplimientoDiarioExportar,
     recursos,
+    detallePunto: recursos.detallePunto,
+    detalleRegional: recursos.detalleRegional,
   };
 }
 
@@ -184,6 +192,8 @@ export const fuenteFalabella = fuenteDeCanal(
 export const fuenteTmk: FuenteDatos = {
   ...fuenteDeCanal('tmk', '/inicio/bi-trade/ventas-tmk', biTradeApiTmk),
   importarInforme: biTradeApiTmk.importarInforme,
+  // En Tmk el detalle es solo por punto de venta: la regional no enlaza.
+  detalleRegional: undefined,
 };
 
 // El valor por defecto es Claro en la app: las páginas que no están dentro de

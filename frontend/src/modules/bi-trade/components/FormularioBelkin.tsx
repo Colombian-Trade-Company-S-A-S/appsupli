@@ -88,13 +88,22 @@ export function FormularioBelkin({
         .map((p) => ({ value: p.value, label: p.label })),
     [opciones, datos.idRegional],
   );
-  const asesores = useMemo(
-    () =>
-      (opciones?.asesores ?? [])
-        .filter((a) => a.idPuntoVenta === datos.idPuntoVenta)
-        .map((a) => ({ value: String(a.value), label: a.label })),
-    [opciones, datos.idPuntoVenta],
-  );
+  // Solo quien era asesor del punto el día de la recomendación: lo de octubre
+  // es de quien era el asesor en octubre, aunque hoy sea otro.
+  const asesores = useMemo(() => {
+    const fecha = datos.fechaRecomendacion;
+    return (opciones?.asesores ?? [])
+      .filter(
+        (a) =>
+          a.idPuntoVenta === datos.idPuntoVenta &&
+          (!fecha || !a.desde || a.desde <= fecha) &&
+          (a.hasta ? !fecha || fecha <= a.hasta : a.activo),
+      )
+      .map((a) => ({ value: String(a.value), label: a.label }));
+  }, [opciones, datos.idPuntoVenta, datos.fechaRecomendacion]);
+
+  // Si al cambiar la fecha el asesor elegido ya no aplica, se limpia.
+  const asesorVigente = !datos.idAsesor || asesores.some((a) => a.value === datos.idAsesor);
   const categorias = useMemo(
     () => (opciones?.categorias ?? []).map((c) => ({ value: String(c.value), label: c.label })),
     [opciones],
@@ -117,7 +126,7 @@ export function FormularioBelkin({
     try {
       await onEnviar({
         idPuntoVenta: datos.idPuntoVenta,
-        idAsesor: datos.idAsesor ? Number(datos.idAsesor) : null,
+        idAsesor: datos.idAsesor && asesorVigente ? Number(datos.idAsesor) : null,
         idProducto: datos.idProducto,
         fechaRecomendacion: datos.fechaRecomendacion,
         observacion: datos.observacion,
@@ -220,7 +229,7 @@ export function FormularioBelkin({
                 label="Asesor Apple (opcional)"
                 placeholder="Sin asesor"
                 className="min-w-0"
-                value={datos.idAsesor}
+                value={asesorVigente ? datos.idAsesor : ''}
                 onChange={(idAsesor) => setDatos({ ...datos, idAsesor })}
                 opciones={asesores}
               />
@@ -228,8 +237,8 @@ export function FormularioBelkin({
                 {!datos.idPuntoVenta
                   ? 'Elige primero el punto de venta.'
                   : asesores.length === 0
-                    ? 'Este punto no tiene asesores cargados.'
-                    : `${asesores.length} asesor${asesores.length === 1 ? '' : 'es'} en este punto.`}
+                    ? 'Este punto no tenía asesores en esa fecha.'
+                    : `${asesores.length} asesor${asesores.length === 1 ? '' : 'es'} en este punto en esa fecha.`}
               </p>
             </div>
           </div>

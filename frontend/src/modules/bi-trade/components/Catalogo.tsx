@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeftIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon } from 'lucide-react';
 import {
+  AlertTriangleIcon,
+  ArrowLeftIcon,
+  PencilIcon,
+  PlusIcon,
+  SearchIcon,
+  Trash2Icon,
+} from 'lucide-react';
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
   Badge,
   Button,
   Card,
@@ -46,7 +56,8 @@ export type Opcion = { value: string; label: string };
 export interface Campo {
   clave: string;
   label: string;
-  tipo: 'texto' | 'select' | 'activo';
+  /** `fecha` es opcional: se puede dejar vacía. */
+  tipo: 'texto' | 'select' | 'activo' | 'fecha';
   placeholder?: string;
   maxLength?: number;
   /** Para los números (un precio): abre el teclado numérico en el móvil. */
@@ -79,6 +90,8 @@ export interface Config<T> {
   /** Texto en el que busca la caja de búsqueda. */
   textoDe: (fila: T) => string;
   filtro?: { label: string; opciones: Opcion[]; valorDe: (fila: T) => string };
+  /** Más controles junto a la búsqueda (un interruptor, por ejemplo). */
+  extraFiltros?: ReactNode;
   columnas: Columna<T>[];
   campos: Campo[];
   valores: (fila: T | null) => Valores;
@@ -89,6 +102,13 @@ export interface Config<T> {
   borrar: (id: string | number) => Promise<unknown>;
   /** Lo que se le advierte a quien edita: qué más cambia con el cambio. */
   avisoEdicion?: string;
+  /** Más botones en la fila, antes de editar y borrar. */
+  accionesFila?: (fila: T) => ReactNode;
+  /**
+   * Una pregunta antes de guardar la edición (o `null` si no hace falta). Si
+   * se confirma, `payload` recibe los valores con `confirmado: true`.
+   */
+  confirmarEdicion?: (fila: T, valores: Valores) => string | null;
 }
 
 export const Estado = ({ activo }: { activo: boolean }) =>
@@ -183,6 +203,7 @@ export function Catalogo<T>({
             opciones={config.filtro.opciones}
           />
         )}
+        {config.extraFiltros}
       </div>
 
       <Card className="py-0">
@@ -223,6 +244,7 @@ export function Catalogo<T>({
                   {puedeAdministrar && (
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        {config.accionesFila?.(fila)}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -292,6 +314,8 @@ function DialogoCatalogo<T>({
 }) {
   const editando = fila !== null;
   const [valores, setValores] = useState<Valores>({});
+  // La pregunta pendiente antes de guardar, si la configuración la pide.
+  const [pregunta, setPregunta] = useState<string | null>(null);
 
   const guardar = useBiTradeMutation(
     (payload: Record<string, unknown>) =>
@@ -300,14 +324,28 @@ function DialogoCatalogo<T>({
   );
 
   useEffect(() => {
-    if (abierto) setValores(config.valores(fila));
+    if (abierto) {
+      setValores(config.valores(fila));
+      setPregunta(null);
+    }
     // `config` cambia en cada render; lo que importa es abrir y la fila.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abierto, fila]);
 
+  // Lo confirmado viaja en los valores (`confirmado`): `payload` decide qué mandar.
+  const enviar = (confirmado: boolean) =>
+    guardar.mutate(config.payload(confirmado ? { ...valores, confirmado } : valores, editando), {
+      onSuccess: () => onOpenChange(false),
+    });
+
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    guardar.mutate(config.payload(valores, editando), { onSuccess: () => onOpenChange(false) });
+    const texto = fila !== null ? (config.confirmarEdicion?.(fila, valores) ?? null) : null;
+    if (texto) {
+      setPregunta(texto);
+      return;
+    }
+    enviar(false);
   };
 
   const formId = `form-${config.clave}`;
@@ -349,6 +387,21 @@ function DialogoCatalogo<T>({
                       )}
                     </Label>
                   </div>
+                );
+              }
+              if (campo.tipo === 'fecha') {
+                return (
+                  <Field key={campo.clave}>
+                    <FieldLabel htmlFor={id}>{campo.label}</FieldLabel>
+                    <Input
+                      id={id}
+                      type="date"
+                      className="w-48"
+                      value={String(valores[campo.clave] ?? '')}
+                      onChange={(e) => setValores({ ...valores, [campo.clave]: e.target.value })}
+                    />
+                    {campo.ayuda && <FieldDescription>{campo.ayuda}</FieldDescription>}
+                  </Field>
                 );
               }
               if (campo.tipo === 'select') {
@@ -393,14 +446,29 @@ function DialogoCatalogo<T>({
           </FieldGroup>
         </form>
 
+        {pregunta && (
+          <Alert>
+            <AlertTriangleIcon />
+            <AlertTitle>Antes de guardar</AlertTitle>
+            <AlertDescription>{pregunta}</AlertDescription>
+          </Alert>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button type="submit" form={formId} disabled={guardar.isPending}>
-            {guardar.isPending && <Spinner data-icon="inline-start" />}
-            {editando ? 'Guardar' : 'Crear'}
-          </Button>
+          {pregunta ? (
+            <Button onClick={() => enviar(true)} disabled={guardar.isPending}>
+              {guardar.isPending && <Spinner data-icon="inline-start" />}
+              Sí, guardar igual
+            </Button>
+          ) : (
+            <Button type="submit" form={formId} disabled={guardar.isPending}>
+              {guardar.isPending && <Spinner data-icon="inline-start" />}
+              {editando ? 'Guardar' : 'Crear'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

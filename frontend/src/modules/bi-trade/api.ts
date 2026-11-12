@@ -174,6 +174,74 @@ export interface FilaAvance {
   cumplimientoAlcanzable: number;
 }
 
+/** Una fila del corte por producto del detalle de un punto. */
+export interface FilaProductoPunto extends FilaAvance {
+  marca: string;
+  /** Meta del mes en unidades. */
+  metaCantidad: number;
+}
+
+/** Un producto con meta que va por debajo de lo esperado a esta altura del mes. */
+export interface ProductoAReforzar {
+  key: string;
+  label: string;
+  marca: string;
+  cumplimiento: number;
+  metaCantidad: number;
+  cantidad: number;
+  faltanUnidades: number;
+  unidadesPorDia: number;
+  inventario: number;
+  sinStock: boolean;
+}
+
+/** Lo común del detalle de un punto y de una regional: el tablero recortado y más. */
+export interface DetalleAvance extends AvanceMensual {
+  porMarca: FilaAvance[];
+  porProducto: FilaProductoPunto[];
+  ritmo: {
+    /** En una regional se cuentan todos los días del mes (no hay descanso); en un punto, los hábiles. */
+    todosLosDias: boolean;
+    habilesTotales: number;
+    habilesCorridos: number;
+    habilesRestantes: number;
+    /** El % del mes que debería llevar vendido a esta altura. */
+    esperado: number;
+    promedioDiario: number;
+    promedioDiarioUnidades: number;
+    falta: number;
+    faltaUnidades: number;
+    /** Lo que tiene que vender cada día hábil que queda para cumplir. */
+    necesarioDiario: number;
+    necesarioDiarioUnidades: number;
+    /** En cuánto cierra el mes si sigue a su promedio. */
+    proyectado: number;
+    cumplimientoProyectado: number;
+    diasSinVenta: number;
+  };
+  aReforzar: ProductoAReforzar[];
+  ventas: Array<{
+    fecha: string;
+    idProducto: string;
+    producto: string;
+    marca: string;
+    idPuntoVenta: string;
+    punto: string;
+    cantidad: number;
+    importe: number;
+  }>;
+}
+
+/** Todo el mes de un punto de venta. */
+export interface DetallePunto extends DetalleAvance {
+  punto: { idPuntoVenta: string; nombre: string; regional: string };
+}
+
+/** Todo el mes de una regional, con el avance de cada uno de sus puntos. */
+export interface DetalleRegional extends DetalleAvance {
+  regional: { nombre: string; puntos: number; puntosConMeta: number; puntosQueCumplen: number };
+}
+
 export interface AvanceMensual {
   periodo: {
     anio: number;
@@ -725,6 +793,10 @@ const importarInformeEn =
   };
 
 export const biTradeApi = {
+  detalleRegional: (regional: string, mes: { anio: number; mes: number }) =>
+    api.get<DetalleRegional>(`${RUTA}/regional-detalle`, { regional, ...mes }),
+  detallePunto: (idPunto: string, mes: { anio: number; mes: number }) =>
+    api.get<DetallePunto>(`${RUTA}/punto-venta-detalle`, { id_punto_venta: idPunto, ...mes }),
   opciones: () => api.get<Opciones>(`${RUTA}/opciones`),
   dashboard: (filtros: FiltrosDashboard) =>
     api.get<Dashboard>(`${RUTA}/dashboard`, filtros as Record<string, unknown>),
@@ -858,6 +930,13 @@ export const esCanalFormulario = (canal: CanalEnlace | undefined): canal is Cana
  * eso es de Claro.
  */
 const apiDeCanal = (tramo: Exclude<Canal, 'claro'>) => ({
+  detalleRegional: (regional: string, mes: { anio: number; mes: number }) =>
+    api.get<DetalleRegional>(`${RUTA}/${tramo}/regional-detalle`, { regional, ...mes }),
+  detallePunto: (idPunto: string, mes: { anio: number; mes: number }) =>
+    api.get<DetallePunto>(`${RUTA}/${tramo}/punto-venta-detalle`, {
+      id_punto_venta: idPunto,
+      ...mes,
+    }),
   opciones: () => api.get<Opciones>(`${RUTA}/${tramo}/opciones`),
   avanceMensual: (filtros: FiltrosAvance) =>
     api.get<AvanceMensual>(
@@ -1084,6 +1163,14 @@ export interface AsesorApple {
   puntoVentaEtiqueta: string;
   regional: string;
   activo: boolean;
+  /** Desde cuándo es asesor del punto (AAAA-MM-DD); null = desde antes de llevar fechas. */
+  desde: string | null;
+  /** Hasta cuándo lo fue; null = sigue siéndolo. */
+  hasta: string | null;
+  /** A quién reemplazó en el punto (la cadena de asesores). */
+  reemplaza: number | null;
+  /** Quién lo reemplazó; null si sigue siendo el asesor (es el último de su cadena). */
+  reemplazadoPor: number | null;
   registrosCount: number;
 }
 
@@ -1135,7 +1222,12 @@ export type PuntoVentaBelkinPayload = Pick<
   PuntoVentaBelkin,
   'idPuntoVenta' | 'nombrePdv' | 'idRegional' | 'categoria' | 'activo'
 >;
-export type AsesorApplePayload = Pick<AsesorApple, 'nombre' | 'idPuntoVenta' | 'activo'>;
+export type AsesorApplePayload = Pick<AsesorApple, 'nombre' | 'idPuntoVenta' | 'activo'> & {
+  /** Solo al crear: las fechas de un asesor que ya existe se cambian con `vigencia`. */
+  desde?: string | null;
+  /** Es la misma persona: solo se corrige cómo está escrito su nombre. */
+  corregirNombre?: boolean;
+};
 export type CategoriaBelkinPayload = Pick<CategoriaBelkin, 'nombre' | 'activa'>;
 export type ProductoBelkinPayload = Pick<
   ProductoBelkin,
@@ -1146,7 +1238,14 @@ export type ProductoBelkinPayload = Pick<
 export interface OpcionesBelkin {
   regionales: Array<{ value: number; label: string }>;
   puntosVenta: Array<{ value: string; label: string; idRegional: number }>;
-  asesores: Array<{ value: number; label: string; idPuntoVenta: string }>;
+  asesores: Array<{
+    value: number;
+    label: string;
+    idPuntoVenta: string;
+    desde: string | null;
+    hasta: string | null;
+    activo: boolean;
+  }>;
   categorias: Array<{ value: number; label: string }>;
   productos: Array<{ value: string; label: string; idCategoria: number }>;
 }
@@ -1240,7 +1339,21 @@ export const belkinApi = {
   registros: recurso<RegistroBelkin, Partial<RegistroBelkinPayload>>('/belkin/registros'),
   regionales: recurso<RegionalBelkin, Partial<RegionalBelkinPayload>>('/belkin/regionales'),
   puntosVenta: recurso<PuntoVentaBelkin, Partial<PuntoVentaBelkinPayload>>('/belkin/puntos-venta'),
-  asesores: recurso<AsesorApple, Partial<AsesorApplePayload>>('/belkin/asesores'),
+  asesores: {
+    ...recurso<AsesorApple, Partial<AsesorApplePayload>>('/belkin/asesores'),
+    /** Cambia el asesor del punto desde una fecha: lo de antes queda a nombre del anterior. */
+    cambiar: (id: number, datos: { nombre: string; desde: string }) =>
+      api.post<{ anterior: AsesorApple; nuevo: AsesorApple; movidos: number; message: string }>(
+        `${RUTA}/belkin/asesores/${id}/cambiar`,
+        datos,
+      ),
+    /** Desde y hasta cuándo fue asesor: el anterior y el siguiente se ajustan solos. */
+    vigencia: (id: number, datos: { desde: string | null; hasta: string | null }) =>
+      api.post<{ asesor: AsesorApple; movidos: number; message: string }>(
+        `${RUTA}/belkin/asesores/${id}/vigencia`,
+        datos,
+      ),
+  },
   categorias: recurso<CategoriaBelkin, Partial<CategoriaBelkinPayload>>('/belkin/categorias'),
   productos: recurso<ProductoBelkin, Partial<ProductoBelkinPayload>>('/belkin/productos'),
 };

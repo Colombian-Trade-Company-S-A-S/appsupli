@@ -12,6 +12,7 @@ from . import (
     views_precios,
     views_tmk,
 )
+from .canales import CLARO, FALABELLA, HC, TMK
 
 app_name = 'bi_trade'
 
@@ -98,6 +99,24 @@ urlpatterns = [
     path('dashboard', views.dashboard, name='dashboard'),
     path('cumplimiento', views.cumplimiento, name='cumplimiento'),
     path('avance-mensual', views.avance_mensual, name='avance-mensual'),
+    # El detalle de un punto de venta (?id_punto_venta=), en cada canal.
+    path('punto-venta-detalle', views.vista_detalle_punto(CLARO), name='punto-detalle'),
+    path('hc/punto-venta-detalle', views.vista_detalle_punto(HC), name='hc-punto-detalle'),
+    path(
+        'falabella/punto-venta-detalle',
+        views.vista_detalle_punto(FALABELLA),
+        name='falabella-punto-detalle',
+    ),
+    path('tmk/punto-venta-detalle', views.vista_detalle_punto(TMK), name='tmk-punto-detalle'),
+    # El detalle de una regional (?regional=), en cada canal.
+    path('regional-detalle', views.vista_detalle_regional(CLARO), name='regional-detalle'),
+    path('hc/regional-detalle', views.vista_detalle_regional(HC), name='hc-regional-detalle'),
+    path(
+        'falabella/regional-detalle',
+        views.vista_detalle_regional(FALABELLA),
+        name='falabella-regional-detalle',
+    ),
+    path('tmk/regional-detalle', views.vista_detalle_regional(TMK), name='tmk-regional-detalle'),
     path(
         'avance-mensual/exportar',
         views.avance_mensual_exportar,

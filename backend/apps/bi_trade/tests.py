@@ -5105,3 +5105,148 @@ def test_el_punto_de_venta_de_claro_dice_si_tiene_asesor(app_bi_trade, catalogo,
 
     # Es solo de Claro: las tiendas de Homecenter no lo tienen.
     assert 'asesorPdv' not in editor.get('/api/bi-trade/hc/puntos-venta').json()[0]
+
+
+# ── Detalle de un punto de venta ───────────────────────────────────────────
+
+
+def test_la_fila_del_punto_lleva_su_codigo_para_enlazar_al_detalle(app_bi_trade, catalogo):
+    con_metas((2026, 3))
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    datos = lector.get('/api/bi-trade/avance-mensual?anio=2026&mes=3').json()
+
+    claves = {fila['key']: fila['label'] for fila in datos['porPuntoVenta']}
+    assert claves == {'PDV-001': 'Claro Unicentro', 'PDV-002': 'Claro Jardín Plaza'}
+
+
+def test_el_detalle_del_punto_trae_su_mes_completo(app_bi_trade, catalogo):
+    norte, sur, caro, barato = catalogo
+    con_metas((2026, 3))
+    MetaComercial.objects.filter(id_producto=caro).update(meta_cantidad=10)
+    for dia, producto, unidades in ((4, caro, 2), (5, barato, 1)):
+        Venta.objects.create(
+            id_producto=producto,
+            id_punto_venta=norte,
+            fecha_venta=date(2026, 3, dia),
+            cantidad_vendida=unidades,
+        )
+    # Lo del otro punto no aparece.
+    Venta.objects.create(
+        id_producto=caro, id_punto_venta=sur, fecha_venta=date(2026, 3, 4), cantidad_vendida=5
+    )
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    datos = lector.get(
+        '/api/bi-trade/punto-venta-detalle?id_punto_venta=PDV-001&anio=2026&mes=3'
+    ).json()
+
+    assert datos['punto'] == {
+        'idPuntoVenta': 'PDV-001',
+        'nombre': 'Claro Unicentro',
+        'regional': Regional.ZONA_NORTE,
+    }
+    assert datos['totales']['ventasCantidad'] == 3
+    assert {fila['label'] for fila in datos['porMarca']} == {'Apple', 'Xiaomi'}
+    iphone = next(fila for fila in datos['porProducto'] if fila['key'] == 'SKU-1')
+    assert (iphone['marca'], iphone['metaCantidad'], iphone['cantidad']) == ('Apple', 10, 2)
+    assert [venta['fecha'] for venta in datos['ventas']] == ['2026-03-05', '2026-03-04']
+    # Marzo de 2026 ya pasó: todos sus hábiles están corridos y no queda ninguno.
+    ritmo = datos['ritmo']
+    assert (ritmo['habilesCorridos'], ritmo['habilesRestantes']) == (25, 0)
+    assert ritmo['esperado'] == 100.0
+    assert ritmo['diasSinVenta'] == 23
+    # Los dos productos van por debajo de lo esperado: se refuerzan, el iPhone con 8 und.
+    reforzar = {fila['key']: fila for fila in datos['aReforzar']}
+    assert reforzar['SKU-1']['faltanUnidades'] == 8
+
+
+def test_lo_que_debe_vender_por_dia_reparte_lo_que_falta(app_bi_trade, catalogo, monkeypatch):
+    """A mitad de mes: lo que falta de la meta entre los hábiles que quedan."""
+    norte, _sur, caro, _barato = catalogo
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_meta=date(2026, 3, 1), meta_cantidad=25
+    )
+    Venta.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 3, 2), cantidad_vendida=5
+    )
+    # Hoy es miércoles 4 de marzo, sin ventas cargadas: corridos el 2 y el 3.
+    monkeypatch.setattr('apps.bi_trade.views.timezone.localdate', lambda: date(2026, 3, 4))
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    ritmo = lector.get(
+        '/api/bi-trade/punto-venta-detalle?id_punto_venta=PDV-001&anio=2026&mes=3'
+    ).json()['ritmo']
+
+    assert ritmo['habilesCorridos'] == 2
+    assert ritmo['habilesRestantes'] == 23
+    assert ritmo['faltaUnidades'] == 20
+    assert ritmo['necesarioDiarioUnidades'] == 1  # 20 und entre 23 días, redondeado arriba
+    assert ritmo['promedioDiarioUnidades'] == 2.5
+
+
+def test_el_detalle_de_un_punto_que_no_existe_es_404(app_bi_trade, catalogo):
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    respuesta = lector.get('/api/bi-trade/punto-venta-detalle?id_punto_venta=NO-EXISTE')
+    assert respuesta.status_code == 404
+
+
+def test_el_detalle_del_punto_tambien_esta_en_tmk(app_bi_trade, catalogo_tmk):
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    datos = lector.get(
+        '/api/bi-trade/tmk/punto-venta-detalle?id_punto_venta=TMK-301&anio=2026&mes=3'
+    ).json()
+    assert datos['punto']['nombre'] == 'Tmk Call Center Bogotá'
+
+
+# ── Detalle de una regional ────────────────────────────────────────────────
+
+
+def test_el_detalle_de_la_regional_suma_sus_puntos(app_bi_trade, catalogo):
+    norte, sur, caro, _barato = catalogo
+    con_metas((2026, 3))
+    Venta.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 3, 4), cantidad_vendida=2
+    )
+    # Otra regional: no entra.
+    Venta.objects.create(
+        id_producto=caro, id_punto_venta=sur, fecha_venta=date(2026, 3, 4), cantidad_vendida=9
+    )
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    datos = lector.get(
+        f'/api/bi-trade/regional-detalle?regional={Regional.ZONA_NORTE}&anio=2026&mes=3'
+    ).json()
+
+    assert datos['regional']['nombre'] == Regional.ZONA_NORTE
+    assert datos['regional']['puntos'] == 1
+    assert datos['totales']['ventasCantidad'] == 2
+    assert [fila['key'] for fila in datos['porPuntoVenta']] == ['PDV-001']
+    assert datos['ventas'][0]['punto'] == 'Claro Unicentro'
+    # Sin día de descanso: cuenta los 31 días de marzo, no los 25 hábiles.
+    assert datos['ritmo']['todosLosDias'] is True
+    assert datos['ritmo']['habilesTotales'] == 31
+
+
+def test_en_la_regional_lo_que_falta_se_reparte_en_todos_los_dias(
+    app_bi_trade, catalogo, monkeypatch
+):
+    norte, _sur, caro, _barato = catalogo
+    MetaComercial.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_meta=date(2026, 3, 1), meta_cantidad=30
+    )
+    # Hoy es el 2 de marzo sin ventas: corrido solo el 1 (domingo, que en la regional cuenta).
+    monkeypatch.setattr('apps.bi_trade.views.timezone.localdate', lambda: date(2026, 3, 2))
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+
+    ritmo = lector.get(
+        f'/api/bi-trade/regional-detalle?regional={Regional.ZONA_NORTE}&anio=2026&mes=3'
+    ).json()['ritmo']
+
+    assert (ritmo['habilesCorridos'], ritmo['habilesRestantes']) == (1, 30)
+    assert ritmo['necesarioDiarioUnidades'] == 1
+
+
+def test_una_regional_que_no_existe_es_404(app_bi_trade, catalogo):
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    assert lector.get('/api/bi-trade/regional-detalle?regional=Marte').status_code == 404

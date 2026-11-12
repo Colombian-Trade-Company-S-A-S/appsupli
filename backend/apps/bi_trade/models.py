@@ -1510,6 +1510,28 @@ class AsesorApple(TimeStampedModel):
     activo = models.BooleanField(
         'activo', default=True, help_text='Si se desactiva, deja de aparecer en el formulario.'
     )
+    # La vigencia en el punto: cuándo empezó y cuándo dejó de ser su asesor.
+    # Cuando cambian el asesor de un punto no se le cambia el nombre (eso
+    # reescribiría su historial): se cierra el anterior y se abre otro desde
+    # esa fecha. Así lo de octubre queda de quien lo hizo en octubre.
+    desde = models.DateField(
+        'asesor desde', null=True, blank=True, help_text='Vacío: desde antes de llevar fechas.'
+    )
+    hasta = models.DateField(
+        'asesor hasta', null=True, blank=True, help_text='Vacío: sigue siendo asesor del punto.'
+    )
+    # A quién reemplazó: los asesores que se suceden en un punto forman una
+    # cadena sin huecos (uno termina el día antes de que empiece el otro). Un
+    # punto con dos asesores a la vez tiene dos cadenas.
+    reemplaza = models.OneToOneField(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_asesor_reemplazado',
+        related_name='reemplazado_por',
+        verbose_name='reemplaza a',
+    )
 
     class Meta:
         db_table = 'asesor_apple'
@@ -1519,6 +1541,18 @@ class AsesorApple(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.nombre
+
+    def vigente_en(self, fecha) -> bool:
+        """
+        Si era asesor del punto ese día.
+
+        Con `hasta` manda la fecha, aunque ya esté inactivo: el de octubre
+        sigue siendo el de octubre. Sin `hasta`, cuenta si sigue activo: los
+        asesores de antes de llevar fechas no dicen cuándo se fueron.
+        """
+        if self.desde and fecha < self.desde:
+            return False
+        return fecha <= self.hasta if self.hasta else self.activo
 
 
 class CategoriaBelkin(TimeStampedModel):
