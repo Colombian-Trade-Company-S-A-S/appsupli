@@ -113,9 +113,9 @@ export interface FuenteDatos {
   exportarDia: (filtros: FiltrosDia, corte?: CorteDia) => Promise<unknown>;
   /** Los CRUD del canal. Solo en la app: el tablero público no edita. */
   recursos?: RecursosCanal;
-  /** El detalle de un punto de venta. Solo en la app: el tablero público no lo tiene. */
+  /** El detalle de un punto de venta: en la app y en el enlace público. */
   detallePunto?: typeof biTradeApi.detallePunto;
-  /** El detalle de una regional. Solo en la app. */
+  /** El detalle de una regional: en la app y en el enlace público, salvo en Tmk. */
   detalleRegional?: typeof biTradeApi.detalleRegional;
   /** El importador del informe del ERP. Solo Claro y Tmk Ecommerce Claro. */
   importarInforme?: typeof biTradeApi.importarInforme;

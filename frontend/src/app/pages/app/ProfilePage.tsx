@@ -1,7 +1,8 @@
-import { BotonInstalarApp } from '@/app/layouts/InstalarApp';
+import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
+  ArrowRightIcon,
   AtSignIcon,
-  BadgeCheckIcon,
   BriefcaseIcon,
   BuildingIcon,
   KeyRoundIcon,
@@ -9,196 +10,233 @@ import {
   PhoneIcon,
   ShieldCheckIcon,
   UserRoundIcon,
+  UsersIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { aplanarApps, useAuth } from '@/core/auth';
+import { BotonInstalarApp } from '@/app/layouts/InstalarApp';
+import { useAuth } from '@/core/auth';
+import type { Application } from '@/core/auth/types';
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-  Separator,
 } from '@/shared/components/ui';
+import { iconoDeApp } from '@/shared/lib/appIcons';
 import { AppearanceCard } from './AppearanceCard';
 import { CambiarFoto } from './CambiarFoto';
 import { ChangePasswordForm } from './ChangePasswordForm';
 
-const KIND_LABELS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
+const TIPOS = { admin: 'Administrador', lider: 'Líder', colaborador: 'Colaborador' } as const;
 
+/**
+ * Mi perfil: quién eres, tus datos, a qué apps entras y cómo se ve la
+ * plataforma. Todo va a lo ancho, en retículas parejas: nada de columnas de
+ * alto distinto. Los permisos técnicos no se muestran: son de la plataforma,
+ * no de la persona.
+ */
 export default function ProfilePage() {
   const { user } = useAuth();
   if (!user) return null;
 
-  // Con sus sub-módulos: tener Objetivos y KPIs es un acceso, no solo «Supli Performance».
-  const aplicaciones = aplanarApps(user.applications);
-
-  const datos = [
+  // Seis datos: una retícula de 3 × 2 en escritorio y 2 × 3 en tableta.
+  const datos: Array<{ icon: LucideIcon; label: string; valor: string; accion?: ReactNode }> = [
     { icon: AtSignIcon, label: 'Correo', valor: user.email },
-    { icon: BuildingIcon, label: 'Área', valor: user.area || '—' },
-    { icon: BriefcaseIcon, label: 'Cargo', valor: user.position || '—' },
-    { icon: PhoneIcon, label: 'Teléfono', valor: user.phone || '—' },
-    { icon: UserRoundIcon, label: 'Usuario', valor: user.username },
-    { icon: BadgeCheckIcon, label: 'Tipo de usuario', valor: KIND_LABELS[user.kind] },
+    { icon: PhoneIcon, label: 'Teléfono', valor: user.phone },
+    { icon: BuildingIcon, label: 'Área', valor: user.area },
+    { icon: BriefcaseIcon, label: 'Cargo', valor: user.position },
+    { icon: UserRoundIcon, label: 'Jefe directo', valor: user.managerName },
+    {
+      icon: KeyRoundIcon,
+      label: 'Inicio de sesión',
+      valor: user.usaContrasena ? 'Correo y contraseña' : 'Cuenta Microsoft de Supli',
+      // Solo quien entra con contraseña puede cambiarla; el resto entra con Microsoft.
+      accion: user.usaContrasena ? <CambiarContrasena /> : undefined,
+    },
   ];
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-      {/* Identidad: una franja horizontal a todo el ancho. */}
-      <Card>
-        <CardContent className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
+      {/* Quién eres: foto, nombre y lo esencial, centrados en la misma línea. */}
+      <Card className="relative overflow-hidden">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-linear-to-br from-primary/15 via-primary/5 to-transparent"
+        />
+        <CardContent className="relative flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
           <CambiarFoto />
-          <div className="flex min-w-0 flex-col gap-1">
-            <h1 className="text-2xl font-semibold tracking-tight">{user.fullName}</h1>
+          <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5 sm:items-start">
+            <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
+              {user.fullName}
+            </h1>
             <p className="text-sm text-muted-foreground">
-              {user.position || '—'} · {user.area || '—'}
+              {[user.position, user.area].filter(Boolean).join(' · ') || 'Sin cargo asignado'}
             </p>
-            <BotonInstalarApp variante="perfil" className="mt-2 self-center sm:self-start" />
+            <div className="mt-1 flex flex-wrap justify-center gap-2 sm:justify-start">
+              <Badge variant={user.isAdmin ? 'default' : 'secondary'}>
+                {user.isAdmin && <ShieldCheckIcon data-icon="inline-start" />}
+                {user.isAdmin ? TIPOS.admin : TIPOS[user.kind]}
+              </Badge>
+              {user.teamCount > 0 && (
+                <Badge variant="outline">
+                  <UsersIcon data-icon="inline-start" />
+                  {user.teamCount} persona{user.teamCount === 1 ? '' : 's'} a cargo
+                </Badge>
+              )}
+            </div>
           </div>
-          <Badge variant={user.isAdmin ? 'default' : 'secondary'} className="sm:ml-auto">
-            {user.isAdmin && <ShieldCheckIcon data-icon="inline-start" />}
-            {KIND_LABELS[user.kind]}
-          </Badge>
-        </CardContent>
-
-        <Separator />
-
-        {/* 6 datos en una retícula pareja: 3 × 2 en escritorio. */}
-        <CardContent className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
-          {datos.map((dato) => (
-            <Dato key={dato.label} {...dato} />
-          ))}
+          <BotonInstalarApp variante="perfil" className="shrink-0" />
         </CardContent>
       </Card>
 
-      {/* Dos tarjetas del mismo ancho y la misma altura. */}
-      <div className="grid items-stretch gap-6 lg:grid-cols-2">
-        <Card className="h-full">
-          <CardHeader>
-            <CardTitle>Accesos</CardTitle>
-            <CardDescription>
-              {user.isAdmin
-                ? 'Eres administrador: entras a todas las aplicaciones con todos los permisos.'
-                : 'Lo que te habilitó el administrador de la plataforma.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-6">
-            <Seccion titulo="Aplicaciones" total={aplicaciones.length}>
-              {aplicaciones.length === 0 ? (
-                <Vacio
-                  icon={LayoutGridIcon}
-                  titulo="Sin aplicaciones"
-                  descripcion="Cuando te asignen un área, aparecerá aquí y en el menú lateral."
-                />
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {aplicaciones.map((app) => (
-                    <Badge key={app.code} variant="secondary">
-                      {app.name}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </Seccion>
+      <Card>
+        <CardHeader>
+          <CardTitle>Tu información</CardTitle>
+          <CardDescription>
+            Viene de Odoo. Si algo no está bien, pídele a People que lo corrija.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {/* Celdas iguales separadas por líneas finas. */}
+          <dl className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2 lg:grid-cols-3">
+            {datos.map((dato) => (
+              <Dato key={dato.label} {...dato} />
+            ))}
+          </dl>
+        </CardContent>
+      </Card>
 
-            <Seccion titulo="Permisos" total={user.permissions.length}>
-              {user.permissions.length === 0 ? (
-                <Vacio
-                  icon={KeyRoundIcon}
-                  titulo="Sin permisos"
-                  descripcion="Los permisos definen qué acciones puedes hacer dentro de cada app."
-                />
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {user.permissions.map((permission) => (
-                    <Badge key={permission} variant="outline" className="font-mono">
-                      {permission}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </Seccion>
-          </CardContent>
-        </Card>
-
-        <Card className="h-full">
-          <CardHeader>
-            <CardTitle>Cambiar contraseña</CardTitle>
-            <CardDescription>
-              Por seguridad, primero validamos tu contraseña actual.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChangePasswordForm />
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Tus aplicaciones</CardTitle>
+          <CardDescription>
+            {user.isAdmin
+              ? 'Eres administrador: entras a todas. Toca una para abrirla.'
+              : 'A las que te dieron acceso. Toca una para abrirla.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {user.applications.length === 0 ? (
+            <Empty className="rounded-lg border border-dashed p-6">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <LayoutGridIcon />
+                </EmptyMedia>
+                <EmptyTitle className="text-sm">Todavía no tienes aplicaciones</EmptyTitle>
+                <EmptyDescription className="text-xs">
+                  Cuando te den acceso, aparecen aquí y en el menú lateral.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            // `auto-fit`: sean dos apps o seis, reparten el ancho en partes iguales.
+            <ul className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(13rem,1fr))]">
+              {user.applications.map((app) => (
+                <TarjetaApp key={app.code} app={app} />
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <AppearanceCard />
     </div>
   );
 }
 
-function Dato({ icon: Icon, label, valor }: { icon: LucideIcon; label: string; valor: string }) {
+/**
+ * Una celda de la retícula: ícono, rótulo y valor, y a la derecha una acción
+ * si la tiene. Lo vacío se dice, no se esconde.
+ */
+function Dato({
+  icon: Icon,
+  label,
+  valor,
+  accion,
+}: {
+  icon: LucideIcon;
+  label: string;
+  valor: string;
+  accion?: ReactNode;
+}) {
   return (
-    <div className="flex items-start gap-3">
-      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      <div className="flex min-w-0 flex-col">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        <span className="truncate text-sm font-medium" title={valor}>
-          {valor}
-        </span>
+    <div className="flex min-w-0 items-center gap-3 bg-card p-4">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Icon className="size-4" />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <dt className="text-xs text-muted-foreground">{label}</dt>
+        <dd
+          className={valor ? 'truncate text-sm font-medium' : 'text-sm text-muted-foreground'}
+          title={valor || undefined}
+        >
+          {valor || 'Sin registrar'}
+        </dd>
       </div>
+      {accion}
     </div>
   );
 }
 
-function Seccion({
-  titulo,
-  total,
-  children,
-}: {
-  titulo: string;
-  total: number;
-  children: React.ReactNode;
-}) {
+/** «Cambiar» la contraseña: el formulario va en una ventana, no ocupa la página. */
+function CambiarContrasena() {
+  const [abierto, setAbierto] = useState(false);
   return (
-    <section className="flex flex-col gap-3">
-      <header className="flex items-center gap-2">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {titulo}
-        </h3>
-        <Badge variant="outline">{total}</Badge>
-      </header>
-      {children}
-    </section>
+    <Dialog open={abierto} onOpenChange={setAbierto}>
+      <Button variant="outline" size="sm" className="shrink-0" onClick={() => setAbierto(true)}>
+        Cambiar
+      </Button>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Cambiar contraseña</DialogTitle>
+          <DialogDescription>
+            Por seguridad, primero validamos tu contraseña actual.
+          </DialogDescription>
+        </DialogHeader>
+        <ChangePasswordForm onTerminar={() => setAbierto(false)} />
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function Vacio({
-  icon: Icon,
-  titulo,
-  descripcion,
-}: {
-  icon: LucideIcon;
-  titulo: string;
-  descripcion: string;
-}) {
+/**
+ * Una app, todas del mismo alto: ícono, nombre y una sola línea debajo (sus
+ * módulos, o su descripción si no tiene). Los módulos se abren desde el menú.
+ */
+function TarjetaApp({ app }: { app: Application }) {
+  const Icono = iconoDeApp(app.icon);
+  const hijas = app.children ?? [];
+  const detalle = hijas.length ? hijas.map((h) => h.name).join(' · ') : app.description;
   return (
-    <Empty className="rounded-lg border border-dashed p-6">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <Icon />
-        </EmptyMedia>
-        <EmptyTitle className="text-sm">{titulo}</EmptyTitle>
-        <EmptyDescription className="text-xs">{descripcion}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
+    <li>
+      <Link
+        to={app.basePath}
+        className="group flex h-full items-center gap-3 rounded-lg border p-3 transition-colors outline-none hover:border-primary/40 hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-gradient text-white shadow-sm">
+          <Icono className="size-5" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm font-medium">{app.name}</span>
+          <span className="truncate text-xs text-muted-foreground" title={detalle || undefined}>
+            {detalle || 'Abrir'}
+          </span>
+        </span>
+        <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+      </Link>
+    </li>
   );
 }

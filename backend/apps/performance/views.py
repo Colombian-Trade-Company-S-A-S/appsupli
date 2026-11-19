@@ -27,6 +27,7 @@ from .api_permissions import (
     CanManagePeriodos,
     HasPerformanceApp,
     aprobador_de,
+    aprobador_id,
     asesores_y_promotores,
     capacidades,
     es_asesor_o_promotor,
@@ -560,9 +561,12 @@ def cargar_resultado(request, pk):
     evidencias = serializer.validated_data.pop('evidencias', None)
 
     # El CEO no tiene jefe que lo apruebe: lo que carga de lo suyo queda
-    # aprobado de inmediato, y People lo audita después como al resto.
+    # aprobado de inmediato, y People lo audita después como al resto. Solo si
+    # es su propio aprobador: con el rol de CEO pero con jefe (como People), lo
+    # aprueba el jefe.
     autoaprobado = (
-        objetivo.colaborador_id == request.user.id and puede_autogestionar(request.user)
+        objetivo.colaborador_id == request.user.id
+        and aprobador_id(objetivo.colaborador) == request.user.id
     )
     ahora = timezone.now()
     resultado = serializer.save(

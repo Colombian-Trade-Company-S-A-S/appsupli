@@ -23,3 +23,6 @@ ODOO_SECRET = ''
 PLANNER_TENANT_ID = ''
 PLANNER_CLIENT_ID = ''
 PLANNER_CLIENT_SECRET = ''
+# En las pruebas la lectura de Planner corre en el mismo hilo: un hilo aparte
+# no ve la base de la prueba.
+PLANNER_LEER_EN_SEGUNDO_PLANO = False

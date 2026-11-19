@@ -297,29 +297,59 @@ de la del login. **El secreto vence el 3 de noviembre de 2028.**
 
 ```bash
 python manage.py seed_planner_app --como-objetivos   # sub-módulo, permisos y acceso
-python manage.py inventario_planner                  # descubre los planes y los relaciona por nombre
 python manage.py sync_planner --tipo diaria          # primera lectura
 ```
 
-People revisa la relación plan–persona en «Conexión y calidad».
+**El plan de cada persona sale de su URL de Planner**, que se pone en Gestión
+de usuarios (`User.planner_url`). De ahí se saca el ID del plan
+(`apps/planner/enlaces.py`); cambiar el enlace cambia el plan que se mide y
+borrarlo deja a la persona sin plan. Ya no se descubren planes por los grupos de
+Microsoft 365. Cada lectura pone los planes al día con las URLs y trae el
+nombre del plan y su grupo. Quién se mide lo decide el switch «Planner»
+(`User.medir_planner`), solo para correos @supli.tech. «Conexión y calidad»
+muestra el plan de cada persona, solo para consultar.
 
-**Tareas programadas** (cron de Render, en UTC; COT = UTC−5):
+**Tareas programadas** (cron jobs de Render en `render.yaml`, en UTC; COT = UTC−5):
 
 | Qué | Hora COT | Cron UTC | Comando |
 |---|---|---|---|
 | Lectura nocturna | 02:00 todos los días | `0 7 * * *` | `sync_planner --tipo diaria` |
-| Línea base | lunes 18:00 (martes si es festivo) | `0 23 * * 1,2` | `sync_planner --tipo linea_base` |
-| Cierre | domingo 23:59 | `59 4 * * 1` | `sync_planner --tipo cierre` |
+| Corte semanal | lunes 09:00 (martes si es festivo) | `0 14 * * 1,2` | `sync_planner --tipo corte` |
 
-La línea base se programa lunes y martes: el comando decide si ese día toca.
-La línea base y el cierre se toman una vez; `--forzar` los reemplaza.
+El corte cierra la semana anterior y toma la línea base de la nueva. Se
+programa lunes y martes: el comando decide si ese día toca. Cada foto se toma
+una vez; `--forzar` la reemplaza. `--tipo cierre` y `--tipo linea_base` siguen
+disponibles para correr una sola de las dos a mano.
 
-**Reglas que esperan confirmación de People** (están en el código como lo
-pide la guía y el prototipo): las tareas agregadas después de la línea base no
-cuentan; las movidas a otro depósito sí; un componente sin dato cuenta 0; el
-Hito «Sin validar» suma 100; el semáforo usa 80/60; se aceptan depósitos `W45`,
-`Week 45` o `45` con alerta de calidad; la ventana de validación se corre un día
-si el lunes es festivo.
+«Sincronizar ahora» (Conexión y calidad) corre la lectura **en segundo plano**
+(un hilo del mismo proceso, `leer_en_segundo_plano`): responde 202 de una vez y
+la pantalla consulta la bitácora hasta que termina. Si ya hay una lectura
+corriendo devuelve esa en vez de empezar otra; una que lleva más de 20 minutos
+sin terminar se da por caída («Interrumpida») y no bloquea la siguiente. Lo
+guardado de la semana se lee de una vez y se escribe por lotes: contra la base
+de Render desde local, cada consulta suelta cuesta ~150 ms.
+
+**Reglas acordadas con People** (respuestas v3 en `integration/planner/`):
+
+- Un solo corte, lunes 9:00 a. m. La semana va de corte a corte.
+- Las tareas WEEKLY creadas después del corte cuentan en esa semana. Queda su
+  fecha de creación, cuándo entró a la medición y sus movimientos de depósito
+  (`TareaMedicion` y `MovimientoTarea`).
+- El Hito no se valida: queda registrado si una tarea HITO del depósito de la
+  semana tiene al menos un ítem en su checklist (`HitoPlanner` guarda los ítems).
+- El líder ve todo su equipo, el director toda su dirección, el CEO y People
+  toda la compañía. La dirección sale del organigrama: la persona directamente
+  debajo de la raíz.
+- Pesos y semáforo versionados con vigencia (`Parametros.vigente_desde/hasta`).
+  Una versión nueva solo rige desde un lunes futuro y cada resultado guarda la
+  suya. El recálculo de una semana cerrada pide motivo y queda en
+  `RecalculoPlanner`.
+
+**Reglas provisionales** (mientras People responde los puntos 11, 12 y los
+abiertos): si a la semana le falta Weekly o Daily, ese componente sale y su
+peso se reparte; sin ninguno de los dos no hay índice. Con varios Hitos, basta
+uno registrado. Una tarea de la línea base que se mueve a otro depósito sigue
+contando en su semana.
 
 ## Producción
 

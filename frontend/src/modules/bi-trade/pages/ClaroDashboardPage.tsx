@@ -290,7 +290,7 @@ export default function ClaroDashboardPage() {
         cargando={isLoading}
         onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
         enlace={
-          fuente.detalleRegional && !soloLectura
+          fuente.detalleRegional
             ? (fila) =>
                 `${fuente.base}/regional/${encodeURIComponent(fila.key)}?mes=${aValorMes(mes)}`
             : undefined
@@ -307,7 +307,7 @@ export default function ClaroDashboardPage() {
         onExportar={(hoja) => fuente.exportarAvance(consulta, hoja)}
         columnaInventario
         enlace={
-          fuente.detallePunto && !soloLectura
+          fuente.detallePunto
             ? (fila) => `${fuente.base}/punto/${encodeURIComponent(fila.key)}?mes=${aValorMes(mes)}`
             : undefined
         }

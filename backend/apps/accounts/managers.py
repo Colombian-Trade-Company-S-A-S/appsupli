@@ -6,6 +6,18 @@ class UserManager(BaseUserManager):
 
     use_in_migrations = True
 
+    def get_queryset(self):
+        """
+        Sin la foto de perfil: es binaria y solo se lee al servirla (y esas
+        consultas la piden con `.only('foto', …)`). Traerla en cada listado, y
+        en el usuario de cada petición, pesaba cientos de KB por consulta.
+        """
+        consulta = super().get_queryset()
+        # Los modelos históricos de las migraciones anteriores a la foto no la tienen.
+        if any(campo.name == 'foto' for campo in self.model._meta.concrete_fields):
+            consulta = consulta.defer('foto')
+        return consulta
+
     def _create_user(self, email: str | None, password: str | None, **extra):
         # El correo puede venir vacío: los asesores y promotores de punto de
         # venta no tienen cuenta corporativa. Se guarda como `NULL` y no como

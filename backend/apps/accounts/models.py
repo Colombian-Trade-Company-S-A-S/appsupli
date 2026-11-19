@@ -11,6 +11,8 @@ Un usuario entra a una app si:
   · la app está en `applications` (acceso directo), o
   · algún permiso efectivo suyo pertenece a esa app.
 """
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 from django.utils import timezone
@@ -217,7 +219,7 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     avatar_url = models.URLField('avatar', blank=True)
     # La foto de perfil vive en la base y no en disco: el disco de Render se
     # borra en cada despliegue. Es pequeña (el navegador la reduce antes de
-    # subirla y la de Odoo llega en 256 px). Se sincroniza con Odoo en ambos
+    # subirla y la de Odoo llega en 512 px). Se sincroniza con Odoo en ambos
     # sentidos: la que se sube acá se escribe en el empleado de Odoo, y la que
     # cambian en Odoo llega con la sincronización.
     foto = models.BinaryField('foto de perfil', null=True, blank=True, editable=False)
@@ -240,6 +242,24 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     pais = models.CharField(
         'país', max_length=80, blank=True,
         help_text='Colombia, Perú… Lo mantiene Odoo cuando entre la integración.',
+    )
+    # Ejecución Planner: si la persona entra en la medición (decisión 5 de
+    # People). Lo enciende quien administra los usuarios.
+    # `db_default`: la versión anterior de la app no conoce estas columnas y
+    # tiene que poder seguir creando usuarios mientras se despliega la nueva.
+    medir_planner = models.BooleanField(
+        'se mide en Planner',
+        default=False,
+        db_default=False,
+        help_text='Encendido: su plan de Planner entra en la medición semanal.',
+    )
+    planner_url = models.URLField(
+        'URL de Planner',
+        max_length=500,
+        blank=True,
+        default='',
+        db_default='',
+        help_text='El enlace de su plan en Planner. Es el plan que mide Ejecución Planner.',
     )
 
     # ── Odoo: la copia local de lo que dice Recursos Humanos ──────────────
@@ -270,14 +290,21 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     )
 
     # ── App instalable ────────────────────────────────────────────────────
-    # Sin instalar: se le ofrece al entrar y, si dice «más tarde», otra vez a
-    # los 3 inicios de sesión. Instalada: cada 10 inicios se le recuerda cómo
-    # reinstalarla, por si cambió de celular o de computador.
+    # El aviso sale en el primer inicio de sesión y después cada 15 días,
+    # esté instalada o no: sin instalar se le ofrece; instalada, se le recuerda
+    # cómo instalarla en otro equipo, por si cambió de celular o de computador.
     app_instalada = models.BooleanField('instaló la app', default=False)
+    aviso_app_visto_at = models.DateTimeField(
+        'último aviso de la app',
+        null=True,
+        blank=True,
+        help_text='Vacío: nunca lo ha visto y le sale al entrar. Vuelve a salir a los 15 días.',
+    )
+    # Ya no se usa (era la cuenta de inicios de sesión). Se quita en una
+    # migración posterior, cuando la versión anterior de la app ya no corra.
     inicios_para_aviso_app = models.PositiveSmallIntegerField(
-        'inicios de sesión para volver a ofrecer la app',
+        'inicios de sesión para volver a ofrecer la app (en desuso)',
         default=0,
-        help_text='En 0 se le ofrece instalar la app al entrar.',
     )
 
     # ── Accesos: esto es lo que se asigna desde el admin ──────────────────
@@ -362,36 +389,32 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     def has_app_access(self, code: str) -> bool:
         return self.get_accessible_applications().filter(code=code).exists()
 
-    INICIOS_HASTA_OFRECER_DE_NUEVO = 3
-    INICIOS_HASTA_RECORDAR_INSTALADA = 10
+    DIAS_ENTRE_AVISOS_APP = 15
 
     def registrar_inicio_de_sesion(self) -> None:
-        """Marca el ingreso y descuenta uno de la espera del aviso de la app."""
+        """Marca el ingreso."""
         self.last_login_at = timezone.now()
-        campos = ['last_login_at', 'updated_at']
-        if self.inicios_para_aviso_app > 0:
-            self.inicios_para_aviso_app -= 1
-            campos.append('inicios_para_aviso_app')
-        self.save(update_fields=campos)
+        self.save(update_fields=['last_login_at', 'updated_at'])
 
     @property
     def aviso_app(self) -> str | None:
-        """Qué aviso le toca al entrar: `ofrecer`, `recordar` o ninguno."""
-        if self.inicios_para_aviso_app > 0:
+        """
+        Qué aviso le toca al entrar: `ofrecer` (sin instalar), `recordar`
+        (instalada) o ninguno. Sale si nunca lo ha visto —su primer inicio de
+        sesión— o si pasaron 15 días desde la última vez que lo respondió.
+        """
+        if self.aviso_app_visto_at and timezone.now() - self.aviso_app_visto_at < timedelta(
+            days=self.DIAS_ENTRE_AVISOS_APP
+        ):
             return None
         return 'recordar' if self.app_instalada else 'ofrecer'
 
     def decidir_instalacion(self, decision: str) -> None:
         """
-        `instalada`: la instaló; se le recuerda cómo reinstalarla en 10 inicios.
-        `despues`: no la quiso aún; se le vuelve a ofrecer en 3 inicios.
-        `visto`: leyó el recordatorio; vuelve a salir en 10 inicios.
+        `instalada`: la instaló. `despues`: no la quiso aún. `visto`: leyó el
+        recordatorio. En los tres casos el aviso vuelve a salir en 15 días.
         """
         if decision == 'instalada':
             self.app_instalada = True
-            self.inicios_para_aviso_app = self.INICIOS_HASTA_RECORDAR_INSTALADA
-        elif decision == 'despues':
-            self.inicios_para_aviso_app = self.INICIOS_HASTA_OFRECER_DE_NUEVO
-        else:
-            self.inicios_para_aviso_app = self.INICIOS_HASTA_RECORDAR_INSTALADA
-        self.save(update_fields=['app_instalada', 'inicios_para_aviso_app', 'updated_at'])
+        self.aviso_app_visto_at = timezone.now()
+        self.save(update_fields=['app_instalada', 'aviso_app_visto_at', 'updated_at'])

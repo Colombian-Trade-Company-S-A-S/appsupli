@@ -201,11 +201,15 @@ CAMPOS_TAREA = (
 
 
 def rutas_de_plan(plan_id: str) -> list[str]:
-    """Lo que se lee de cada plan: depósitos, etiquetas y tareas (con el conteo de checklist)."""
+    """
+    Lo que se lee de cada plan: depósitos, etiquetas, tareas (con el conteo de
+    checklist) y el plan mismo (su nombre y su grupo).
+    """
     return [
         f'/planner/plans/{plan_id}/buckets',
         f'/planner/plans/{plan_id}/details',
         f'/planner/plans/{plan_id}/tasks?$select={CAMPOS_TAREA}',
+        f'/planner/plans/{plan_id}',
     ]
 
 

@@ -13,7 +13,6 @@ import {
 import { cn } from '@/shared/lib/utils';
 import {
   formatoIndice,
-  type EstadoHito,
   type ParametrosPlanner,
   type SemaforoPlanner,
   type SemanaInfo,
@@ -52,23 +51,19 @@ export function SemaforoTag({ semaforo }: { semaforo: SemaforoPlanner | null | u
   );
 }
 
-const ESTILO_HITO: Record<EstadoHito, string> = {
-  cumplido: ESTILO.verde,
-  no_cumplido: ESTILO.rojo,
-  sin_validar: ESTILO.ambar,
-  pendiente: 'border-sky-500/40 bg-sky-500/10 text-sky-900 dark:text-sky-200',
-  sin_registrar: 'border-border bg-muted text-muted-foreground',
-};
-
-export function EstadoHitoTag({ estado, label }: { estado: EstadoHito; label: string }) {
+/**
+ * Si el Hito de la semana quedó registrado: hay una tarea HITO en el depósito
+ * de la semana con al menos un ítem en su checklist. Ya no se valida.
+ */
+export function HitoTag({ registrado }: { registrado: boolean }) {
   return (
     <span
       className={cn(
         'inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium',
-        ESTILO_HITO[estado],
+        registrado ? ESTILO.verde : 'border-border bg-muted text-muted-foreground',
       )}
     >
-      {label}
+      {registrado ? 'Registrado' : 'No registrado'}
     </span>
   );
 }

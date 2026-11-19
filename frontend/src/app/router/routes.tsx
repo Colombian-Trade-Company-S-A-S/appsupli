@@ -18,6 +18,7 @@ const AdminPage = lazy(() => import('@/modules/admin/pages/AdminPage'));
 const PuntoVentaDetallePage = lazy(() => import('@/modules/bi-trade/pages/PuntoVentaDetallePage'));
 const RegionalDetallePage = lazy(() => import('@/modules/bi-trade/pages/RegionalDetallePage'));
 const UsuarioDetallePage = lazy(() => import('@/modules/admin/pages/UsuarioDetallePage'));
+const UsuarioEditarPage = lazy(() => import('@/modules/admin/pages/UsuarioEditarPage'));
 
 // ── BI Trade Marketing ────────────────────────────────────────────────────
 const BiTradeHomePage = lazy(() => import('@/modules/bi-trade/pages/BiTradeHomePage'));
@@ -67,7 +68,6 @@ const PlannerLayout = lazy(() => import('@/modules/planner/pages/PlannerLayout')
 const ComoFuncionaPage = lazy(() => import('@/modules/planner/pages/ComoFuncionaPage'));
 const MiCumplimientoPage = lazy(() => import('@/modules/planner/pages/MiCumplimientoPage'));
 const DashboardPlannerPage = lazy(() => import('@/modules/planner/pages/DashboardPlannerPage'));
-const ValidarHitosPage = lazy(() => import('@/modules/planner/pages/ValidarHitosPage'));
 const ConexionPlannerPage = lazy(() => import('@/modules/planner/pages/ConexionPage'));
 const ParametrosPlannerPage = lazy(() => import('@/modules/planner/pages/ParametrosPage'));
 const ChallengeLayout = lazy(() => import('@/modules/challenge/pages/ChallengeLayout'));
@@ -138,6 +138,10 @@ const routes: RouteObject[] = [
             children: [
               { path: 'admin', element: withSuspense(<AdminPage />) },
               { path: 'admin/usuarios/:id', element: withSuspense(<UsuarioDetallePage />) },
+              {
+                path: 'admin/usuarios/:id/editar',
+                element: withSuspense(<UsuarioEditarPage />),
+              },
             ],
           },
           {
@@ -284,7 +288,6 @@ const routes: RouteObject[] = [
                   { index: true, element: withSuspense(<ComoFuncionaPage />) },
                   { path: 'mi-cumplimiento', element: withSuspense(<MiCumplimientoPage />) },
                   { path: 'dashboard', element: withSuspense(<DashboardPlannerPage />) },
-                  { path: 'hitos', element: withSuspense(<ValidarHitosPage />) },
                   { path: 'conexion', element: withSuspense(<ConexionPlannerPage />) },
                   { path: 'parametros', element: withSuspense(<ParametrosPlannerPage />) },
                 ],
@@ -350,6 +353,9 @@ const routes: RouteObject[] = [
       { index: true, element: <ClaroDashboardPage /> },
       { path: 'dia', element: <CumplimientoDiarioPage /> },
       { path: 'tickets', element: <TicketsPage /> },
+      // El detalle de un punto y de una regional, igual que en la app.
+      { path: 'punto/:id', element: <PuntoVentaDetallePage /> },
+      { path: 'regional/:nombre', element: <RegionalDetallePage /> },
     ],
   },
 

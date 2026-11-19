@@ -2,7 +2,6 @@ import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   BarChart3Icon,
   BookOpenIcon,
-  FlagIcon,
   PlugIcon,
   SlidersHorizontalIcon,
   UserCheckIcon,
@@ -32,12 +31,6 @@ const SECCIONES: Seccion[] = [
     icon: BarChart3Icon,
     visible: (c) => c.esLider || c.puedeVerTodo,
   },
-  {
-    to: 'hitos',
-    label: 'Validar Hitos',
-    icon: FlagIcon,
-    visible: (c) => c.esLider || c.puedeGestionar || c.autovalidaHito,
-  },
   { to: 'conexion', label: 'Conexión y calidad', icon: PlugIcon, visible: (c) => c.puedeGestionar },
   {
     to: 'parametros',
@@ -50,9 +43,9 @@ const SECCIONES: Seccion[] = [
 /**
  * Marco de Ejecución Planner: las pestañas del prototipo.
  *
- * El colaborador ve cómo funciona y su cumplimiento; el líder suma el
- * dashboard de su equipo y la validación de Hitos; People, además, la
- * conexión con Planner, la calidad del dato y los parámetros.
+ * El colaborador ve cómo funciona y su cumplimiento; el líder y el director
+ * suman el dashboard de todo lo que tienen debajo; People, además, la conexión
+ * con Planner, la calidad del dato y los parámetros. El Hito ya no se valida.
  */
 export default function PlannerLayout() {
   const { pathname } = useLocation();
@@ -73,7 +66,7 @@ export default function PlannerLayout() {
     <div className="flex min-w-0 flex-col gap-6">
       <Encabezado
         titulo="Ejecución Planner"
-        descripcion="Mide cómo se ejecutan las tareas de Microsoft Planner: Weekly y Daily por persona, y Hitos validados por el líder. appSupli solo lee Planner; no crea ni edita tareas."
+        descripcion="Mide cómo se ejecutan las tareas de Microsoft Planner: Weekly y Daily por persona, y su Hito de la semana. appSupli solo lee Planner; no crea ni edita tareas."
       />
       <nav className="-mt-2 border-b border-border pb-2">
         <ul className="flex flex-wrap items-center gap-1">

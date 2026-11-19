@@ -20,6 +20,10 @@ urlpatterns = [
         name='cumplimiento-diario',
     ),
     path('<str:token>/tickets', publico.tickets, name='tickets'),
+    path(
+        '<str:token>/punto-venta-detalle', publico.detalle_punto, name='punto-venta-detalle'
+    ),
+    path('<str:token>/regional-detalle', publico.detalle_regional, name='regional-detalle'),
     path('<str:token>/opciones', publico.opciones, name='opciones'),
     path('<str:token>/productos', publico.productos, name='productos'),
     path('<str:token>/puntos-venta', publico.puntos_venta, name='puntos-venta'),

@@ -2700,6 +2700,30 @@ def test_los_datos_publicos_son_los_mismos_de_la_app(app_bi_trade, enlace, catal
     assert publico_ == de_la_app
 
 
+def test_el_enlace_abre_el_detalle_del_punto_y_de_la_regional(app_bi_trade, enlace, catalogo):
+    """Los mismos detalles de la app, por el enlace y con su acceso."""
+    norte, _sur, caro, _barato = catalogo
+    con_metas((2026, 3))
+    Venta.objects.create(
+        id_producto=caro, id_punto_venta=norte, fecha_venta=date(2026, 3, 4), cantidad_vendida=2
+    )
+    token, clave, _id = enlace
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    cliente = _con_acceso(token, clave)
+
+    for tramo in (
+        'punto-venta-detalle?id_punto_venta=PDV-001&anio=2026&mes=3',
+        f'regional-detalle?regional={Regional.ZONA_NORTE}&anio=2026&mes=3',
+    ):
+        publico_ = cliente.get(f'{RUTA_PUBLICA}/{token}/{tramo}')
+        assert publico_.status_code == 200, tramo
+        assert publico_.json() == lector.get(f'/api/bi-trade/{tramo}').json()
+
+    # Sin acceso no se ve nada.
+    sin_acceso = APIClient().get(f'{RUTA_PUBLICA}/{token}/punto-venta-detalle?id_punto_venta=PDV-001')
+    assert sin_acceso.status_code == 403
+
+
 def test_los_catalogos_publicos_no_llevan_precios(enlace, catalogo):
     token, clave, _id = enlace
     productos = _con_acceso(token, clave).get(f'{RUTA_PUBLICA}/{token}/productos').json()
@@ -4048,6 +4072,18 @@ def test_el_enlace_publico_de_tmk_muestra_tmk(
     de_tmk = editor.get('/api/bi-trade/enlaces?canal=tmk').json()
     assert [e['nombre'] for e in de_tmk] == ['Gerencia Tmk Ecommerce Claro']
     assert editor.get('/api/bi-trade/enlaces?canal=hc').json() == []
+
+    # El detalle del punto también se abre por el enlace; el de la regional, no
+    # (en Tmk el detalle es solo por punto, igual que en la app).
+    detalle = cliente.get(
+        f'{RUTA_PUBLICA}/{token}/punto-venta-detalle?id_punto_venta=TMK-301&anio=2026&mes=3'
+    )
+    assert detalle.status_code == 200
+    assert detalle.json()['punto']['nombre'] == 'Tmk Call Center Bogotá'
+    regional = cliente.get(
+        f'{RUTA_PUBLICA}/{token}/regional-detalle?regional={RegionalTmk.ZONA_NORTE}&anio=2026&mes=3'
+    )
+    assert regional.status_code == 404
 
 
 def test_la_semilla_de_tmk_carga_datos_y_no_duplica():

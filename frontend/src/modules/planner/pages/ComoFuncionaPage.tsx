@@ -14,75 +14,74 @@ import {
 import { EsqueletoPagina } from '@/shared/components/feedback';
 import { formatoIndice } from '../api';
 import { useOpcionesPlanner } from '../hooks';
-import { EstadoHitoTag, Nota } from '../components/Piezas';
+import { HitoTag, Nota } from '../components/Piezas';
 
+// El ciclo acordado con People (v3): un solo corte el lunes a las 9:00 que
+// cierra la semana anterior y abre la nueva.
 const CICLO = [
   {
-    cuando: 'Lunes · 18:00 COT',
-    titulo: 'Línea base',
+    cuando: 'Lunes · 9:00 a. m. COT',
+    titulo: 'Corte',
     texto:
-      'Se fija la base de la semana: tareas WEEKLY e ítems DAILY. Si el lunes es festivo, pasa al martes.',
+      'Cierra la semana anterior y toma la línea base de la nueva: tareas WEEKLY e ítems DAILY. Si el lunes es festivo, el corte pasa al martes a la misma hora.',
   },
   {
     cuando: 'Durante la semana',
     titulo: 'Ejecución en Planner',
     texto:
-      'La persona trabaja sus tareas y marca su checklist DAILY. appSupli lee Planner cada noche a las 02:00 COT.',
+      'La persona trabaja sus tareas, marca su checklist DAILY y registra su Hito. appSupli lee Planner cada noche a las 2:00 a. m.',
   },
   {
-    cuando: 'Domingo · 23:59 COT',
-    titulo: 'Cierre de la semana',
-    texto: 'Se congela el estado de Weekly y Daily al cierre.',
-  },
-  {
-    cuando: 'Lunes a miércoles de la semana siguiente',
-    titulo: 'Validación de Hitos',
+    cuando: 'Si se agregan tareas',
+    titulo: 'También cuentan',
     texto:
-      'El líder marca cada Hito como Cumplido o No cumplido. Si ese lunes es festivo, la ventana se corre un día.',
+      'Una tarea WEEKLY creada después del corte cuenta en esa misma semana. Queda la fecha en que entró a la medición y sus cambios de depósito.',
   },
   {
-    cuando: 'Al cerrar la ventana',
+    cuando: 'Lunes siguiente · 9:00 a. m.',
     titulo: 'Resultado final',
-    texto: 'Lo no validado pasa a Sin validar y cuenta como Cumplido. El índice queda final.',
+    texto:
+      'El corte congela Weekly, Daily e Hito y el índice queda final con la versión de parámetros que regía esa semana.',
   },
 ];
 
-const ESTADOS = [
-  { estado: 'cumplido', label: 'Cumplido', texto: 'Validado por el líder. Suma 100 en el índice.' },
+const HITO = [
   {
-    estado: 'sin_validar',
-    label: 'Sin validar',
-    texto: 'No se validó antes de cerrar la ventana. Suma 100 en el índice.',
+    registrado: true,
+    texto:
+      'Hay una tarea HITO en el depósito de la semana con al menos un ítem en su checklist. Suma 100.',
   },
-  { estado: 'pendiente', label: 'Pendiente', texto: 'Ventana abierta. Aún se puede validar.' },
-  { estado: 'no_cumplido', label: 'No cumplido', texto: 'Validado como no cumplido. Suma 0.' },
   {
-    estado: 'sin_registrar',
-    label: 'Sin registrar',
-    texto: 'No hay tarea HITO en Planner esa semana. Suma 0.',
+    registrado: false,
+    texto: 'No hay tarea HITO, o la que hay no tiene ítems en su checklist. Suma 0.',
   },
-] as const;
+];
 
 const ROLES = [
   {
     rol: 'Colaborador',
-    hace: 'Ejecuta sus tareas en Planner y marca su checklist DAILY.',
-    ve: 'Su cumplimiento semanal y mensual.',
+    hace: 'Ejecuta sus tareas en Planner, marca su checklist DAILY y registra su Hito.',
+    ve: 'Su cumplimiento semanal y mensual, sus Hitos y la trazabilidad de sus tareas.',
   },
   {
     rol: 'Líder',
-    hace: 'Valida los Hitos de su equipo de lunes a miércoles.',
-    ve: 'Dashboard de su equipo a cargo directo y Hitos por validar.',
+    hace: 'Hace seguimiento a la ejecución de su equipo.',
+    ve: 'Todo su equipo, no solo sus directos, con el ranking de su equipo.',
+  },
+  {
+    rol: 'Director',
+    hace: 'Hace seguimiento a la ejecución de su dirección.',
+    ve: 'Toda su dirección por área y por persona, con su ranking.',
+  },
+  {
+    rol: 'CEO',
+    hace: 'Consulta la ejecución y sus brechas. Se mide con la misma regla del Hito.',
+    ve: 'Toda la compañía por dirección, área y persona.',
   },
   {
     rol: 'People',
-    hace: 'Define pesos y cortes, relaciona cada plan con su persona y revisa la calidad del dato.',
-    ve: 'Toda la organización, conexión, calidad y parámetros.',
-  },
-  {
-    rol: 'CEO y Dirección',
-    hace: 'Consultan la ejecución y sus brechas.',
-    ve: 'Toda la organización, en solo lectura.',
+    hace: 'En Gestión de usuarios decide quién se mide (switch «Planner», solo correos @supli.tech) y pone la URL de Planner de cada persona, que es el plan que se mide. Además versiona pesos y semáforo y revisa la calidad del dato.',
+    ve: 'Toda la compañía, conexión, calidad, parámetros y recálculos.',
   },
 ];
 
@@ -102,11 +101,11 @@ export default function ComoFuncionaPage() {
         <CardHeader>
           <CardTitle>Ciclo semanal</CardTitle>
           <CardDescription>
-            Cada semana sigue el mismo orden. Así se sabe qué se mide, cuándo y quién lo valida.
+            La semana va de corte a corte: de lunes 9:00 a. m. al lunes siguiente a la misma hora.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ol className="grid gap-3 md:grid-cols-5">
+          <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {CICLO.map((paso, i) => (
               <li
                 key={paso.titulo}
@@ -130,18 +129,18 @@ export default function ComoFuncionaPage() {
             <CardTitle>Cómo se calcula</CardTitle>
             <CardDescription>
               Pesos vigentes: Weekly {p.pesoWeekly}% · Daily {p.pesoDaily}% · Hito {p.pesoHito}%.
-              People los define en Parámetros.
+              People los versiona en Parámetros; un cambio solo rige hacia adelante.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 font-mono text-[13px]">
             <code className="rounded-md bg-muted px-3 py-2">
-              % Weekly = tareas WEEKLY completadas al cierre ÷ línea base × 100
+              % Weekly = WEEKLY completadas ÷ (línea base + agregadas después del corte) × 100
             </code>
             <code className="rounded-md bg-muted px-3 py-2">
               % Daily = ítems marcados ÷ total de ítems de la checklist × 100
             </code>
             <code className="rounded-md bg-muted px-3 py-2">
-              Hito = 100 si está Cumplido o Sin validar · 0 en otro caso
+              Hito = 100 si está registrado · 0 si no
             </code>
             <code className="rounded-md bg-muted px-3 py-2">
               Índice semanal = mín(100, pW × W + pD × D + pH × H)
@@ -150,36 +149,41 @@ export default function ComoFuncionaPage() {
               Índice mensual = promedio de los índices de las semanas del mes
             </code>
             <p className="mt-2 font-sans text-sm text-muted-foreground">
-              Ejemplo: 5 de 6 tareas Weekly, 7 de 10 ítems de Daily y Hito cumplido →{' '}
+              Ejemplo: 5 de 6 tareas Weekly, 7 de 10 ítems de Daily y Hito registrado →{' '}
               <b className="text-foreground tabular-nums">{formatoIndice(ejemplo)}</b>.
             </p>
             <Nota className="font-sans">
-              Por confirmar con People: las tareas agregadas a mitad de semana no cuentan, las
-              movidas a otro depósito sí cuentan con su línea base, y una semana sin Weekly o sin
-              checklist cuenta ese componente como 0.
+              Si una semana no tiene tareas Weekly o no tiene ítems Daily, ese componente sale y su
+              peso se reparte entre los demás; sin ninguno de los dos, la semana no tiene índice.
+              Una tarea de la línea base que se mueve a otro depósito sigue contando en su semana.
             </Nota>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Estados del Hito</CardTitle>
+            <CardTitle>El Hito</CardTitle>
             <CardDescription>
-              El Hito es la tarea con la etiqueta HITO en el depósito de la semana.
+              Es la tarea con la etiqueta HITO en el depósito de la semana. No se valida: basta con
+              registrarlo. Si hay varios, con uno registrado alcanza.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col">
-            {ESTADOS.map((e) => (
+            {HITO.map((h) => (
               <div
-                key={e.estado}
+                key={String(h.registrado)}
                 className="flex items-center gap-3 border-b border-border py-2.5 last:border-0"
               >
                 <span className="w-28 shrink-0">
-                  <EstadoHitoTag estado={e.estado} label={e.label} />
+                  <HitoTag registrado={h.registrado} />
                 </span>
-                <span className="text-sm text-muted-foreground">{e.texto}</span>
+                <span className="text-sm text-muted-foreground">{h.texto}</span>
               </div>
             ))}
+            <p className="mt-3 text-xs text-pretty text-muted-foreground">
+              No hace falta completar la tarea ni marcar los ítems. En el detalle de cada persona se
+              ve el contenido de la checklist tal como está en Planner.
+            </p>
           </CardContent>
         </Card>
       </div>

@@ -51,6 +51,8 @@ export interface User {
    * `recordar` (instalada: cómo reinstalarla) o `null` (nada).
    */
   avisoApp: 'ofrecer' | 'recordar' | null;
+  /** Entra con contraseña (y puede cambiarla). Con Microsoft, solo las cuentas de respaldo. */
+  usaContrasena: boolean;
   /** Admin de la plataforma: entra a todo. */
   isAdmin: boolean;
   roles: string[];

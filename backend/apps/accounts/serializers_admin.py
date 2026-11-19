@@ -157,6 +157,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'manager_name',
             'is_active',
             'is_admin',
+            'medir_planner',
+            'planner_url',
             'puede_iniciar_sesion',
             'correo_editable',
             'last_login_at',
@@ -209,6 +211,24 @@ class AdminUserSerializer(serializers.ModelSerializer):
         """Vacío se guarda como nulo: dos vacíos chocarían contra el índice único."""
         return (value or '').strip().lower() or None
 
+    def validate_planner_url(self, value: str) -> str:
+        """El enlace tiene que ser de un plan, y de un plan que no tenga otra persona."""
+        from apps.planner.enlaces import duenos_de, plan_id_de_url  # noqa: PLC0415
+
+        value = (value or '').strip()
+        if not value:
+            return ''
+        plan_id = plan_id_de_url(value)
+        if not plan_id:
+            raise serializers.ValidationError(
+                'No se reconoce el enlace. Abre el plan en Planner y copia la dirección del '
+                'navegador (planner.cloud.microsoft/…/plan/…).'
+            )
+        otros = duenos_de(plan_id, excepto=self.instance.pk if self.instance else None)
+        if otros:
+            raise serializers.ValidationError(f'Ese plan ya es de {otros[0].full_name}.')
+        return value
+
     def validate_password(self, value: str) -> str:
         if value:
             try:
@@ -243,4 +263,9 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if password:
             user.set_password(password)
             user.save(update_fields=['password', 'updated_at'])
+        if 'planner_url' in validated_data or 'is_active' in validated_data:
+            # El plan que mide Ejecución Planner es el de la URL: se cambia aquí.
+            from apps.planner.enlaces import vincular_plan  # noqa: PLC0415
+
+            vincular_plan(user)
         return user

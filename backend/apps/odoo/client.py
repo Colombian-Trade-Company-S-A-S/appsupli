@@ -125,16 +125,16 @@ class OdooClient:
 
     # ── Foto del empleado ────────────────────────────────────────────────
     def fotos(self, ids: list[int]) -> dict[int, str]:
-        """`{id del empleado: foto en base64}` en 256 px. Sin la clave si no tiene foto."""
+        """`{id del empleado: foto en base64}` en 512 px, nítida aunque se vea grande."""
         filas = []
         for inicio in range(0, len(ids), 50):
             filas += self.leer(
                 'hr.employee',
-                ['id', 'image_256'],
+                ['id', 'image_512'],
                 [('id', 'in', ids[inicio : inicio + 50])],
                 incluir_archivados=True,
             )
-        return {fila['id']: fila['image_256'] for fila in filas if fila.get('image_256')}
+        return {fila['id']: fila['image_512'] for fila in filas if fila.get('image_512')}
 
     def actualizar_foto(self, empleado_id: int, foto_base64: str) -> None:
         """La ÚNICA escritura en Odoo: la foto de un empleado. Odoo genera los tamaños menores."""

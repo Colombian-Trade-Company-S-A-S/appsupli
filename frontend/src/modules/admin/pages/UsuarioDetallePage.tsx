@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -8,11 +8,14 @@ import {
   BadgeCheckIcon,
   BriefcaseIcon,
   BuildingIcon,
+  CheckCircle2Icon,
   ClockIcon,
   CopyIcon,
+  ExternalLinkIcon,
   FingerprintIcon,
   KeyRoundIcon,
   LayersIcon,
+  ListChecksIcon,
   MailIcon,
   MapPinIcon,
   NetworkIcon,
@@ -44,6 +47,7 @@ import { EsqueletoPagina } from '@/shared/components/feedback';
 import { cn } from '@/shared/lib/utils';
 import { Cuadricula } from '@/app/layouts/Marca';
 import { adminApi, type AdminPermission, type AdminUser } from '../api';
+import { planIdDeUrl } from '../planner';
 import {
   useAdminMutation,
   useAdminUser,
@@ -52,7 +56,6 @@ import {
   usePermissions,
   useRoles,
 } from '../hooks';
-import { UserDialog } from '../components/UserDialog';
 
 const BASE = '/inicio/admin';
 const TIPOS = { admin: 'Administrador', lider: 'Líder', colaborador: 'Colaborador' } as const;
@@ -199,7 +202,6 @@ export default function UsuarioDetallePage() {
   const { data: apps = [] } = useApplications();
   const { data: roles = [] } = useRoles();
   const { data: permisos = [] } = usePermissions();
-  const [editando, setEditando] = useState(false);
 
   const alternarActivo = useAdminMutation(
     (pk: number) => adminApi.users.toggleActive(pk),
@@ -280,11 +282,11 @@ export default function UsuarioDetallePage() {
         </div>
 
         <CardContent className="flex flex-col items-center gap-4 px-6 pb-6 text-center">
-          <div className={cn('-mt-16 sm:-mt-[4.5rem]', socio ? 'aro-socio' : 'rounded-full')}>
+          <div className={cn('-mt-[4.5rem] sm:-mt-[5.5rem]', socio ? 'aro-socio' : 'rounded-full')}>
             <Foto
               usuario={usuario}
-              className="size-28 bg-card ring-4 ring-card sm:size-32"
-              claseLetra="text-4xl"
+              className="size-36 bg-card ring-4 ring-card sm:size-44"
+              claseLetra="text-5xl"
             />
           </div>
 
@@ -312,6 +314,7 @@ export default function UsuarioDetallePage() {
               {usuario.isActive ? 'Activo' : 'Inactivo'}
             </Badge>
             <Badge variant="outline">{usuario.odooId ? 'Viene de Odoo' : 'Fuera de Odoo'}</Badge>
+            {usuario.medirPlanner && <Badge variant="outline">Se mide en Planner</Badge>}
           </div>
 
           <div className="flex flex-wrap justify-center gap-2">
@@ -340,7 +343,7 @@ export default function UsuarioDetallePage() {
           </div>
 
           <div className="flex flex-wrap justify-center gap-2">
-            <Button onClick={() => setEditando(true)}>
+            <Button render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}>
               <PencilIcon data-icon="inline-start" />
               Editar accesos
             </Button>
@@ -495,9 +498,110 @@ export default function UsuarioDetallePage() {
             <Vacio>No tiene personas a cargo.</Vacio>
           )}
         </Seccion>
-      </div>
 
-      <UserDialog abierto={editando} onOpenChange={setEditando} usuario={usuario} />
+        <div className="md:col-span-2">
+          <PlannerDelUsuario usuario={usuario} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Ejecución Planner: si se mide, si tiene la URL de su plan cargada y cuál es.
+ * El plan que se mide es el de esa URL; se cambia al editar el usuario.
+ */
+function PlannerDelUsuario({ usuario }: { usuario: AdminUser }) {
+  const url = usuario.plannerUrl;
+  const planId = planIdDeUrl(url);
+  const copiar = () => {
+    void navigator.clipboard
+      .writeText(url)
+      .then(() => toast.success('URL copiada'))
+      .catch(() => toast.error('No se pudo copiar la URL'));
+  };
+
+  return (
+    <Seccion
+      icono={ListChecksIcon}
+      titulo="Ejecución Planner"
+      descripcion="El plan que se mide es el de su URL de Planner. Se cambia al editar el usuario."
+    >
+      <div className="flex flex-col gap-4">
+        {/* Tres celdas iguales separadas por líneas finas. */}
+        <dl className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-3">
+          <Celda rotulo="Se mide en Planner" valor={usuario.medirPlanner ? 'Sí' : 'No'} />
+          <Celda
+            rotulo="URL de Planner"
+            valor={
+              url ? (
+                <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2Icon className="size-4" /> Cargada
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Sin URL</span>
+              )
+            }
+          />
+          <Celda
+            rotulo="ID del plan"
+            valor={
+              planId ? (
+                <span className="font-mono text-xs">{planId}</span>
+              ) : (
+                <span className="text-muted-foreground">{url ? 'No se reconoce' : '—'}</span>
+              )
+            }
+          />
+        </dl>
+
+        {url ? (
+          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-center">
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="min-w-0 flex-1 truncate text-sm text-primary hover:underline"
+              title={url}
+            >
+              {url}
+            </a>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="outline" size="sm" onClick={copiar}>
+                <CopyIcon data-icon="inline-start" />
+                Copiar
+              </Button>
+              <Button size="sm" render={<a href={url} target="_blank" rel="noreferrer" />}>
+                <ExternalLinkIcon data-icon="inline-start" />
+                Abrir en Planner
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-4 text-center sm:flex-row sm:text-left">
+            <p className="flex-1 text-sm text-muted-foreground">
+              Sin URL de Planner: no tiene plan que medir.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}
+            >
+              <PencilIcon data-icon="inline-start" />
+              Ponerle la URL
+            </Button>
+          </div>
+        )}
+      </div>
+    </Seccion>
+  );
+}
+
+function Celda({ rotulo, valor }: { rotulo: string; valor: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 bg-card p-3">
+      <dt className="text-xs text-muted-foreground">{rotulo}</dt>
+      <dd className="truncate text-sm font-medium">{valor}</dd>
     </div>
   );
 }

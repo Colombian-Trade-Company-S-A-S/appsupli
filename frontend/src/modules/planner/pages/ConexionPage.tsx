@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  DatabaseZapIcon,
+  ExternalLinkIcon,
+  ListChecksIcon,
+  PencilIcon,
   PlugZapIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -16,13 +19,6 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Switch,
   Table,
   TableBody,
   TableCell,
@@ -33,25 +29,28 @@ import {
 import { EstadoTabla, Kpi } from '@/shared/components/layout';
 import { formatoFechaHora } from '@/shared/lib/formato';
 import { cn } from '@/shared/lib/utils';
-import type { PlanRelacion, Planes } from '../api';
-import { useConexion, useEditarPlan, useInventario, usePlanes, useSincronizar } from '../hooks';
+import type { EstadoPlan, PlanDePersona } from '../api';
+import { useAvisoDeLectura, useConexion, usePlanes, useSincronizar } from '../hooks';
 import { Nota } from '../components/Piezas';
 
-type FiltroPlanes = 'medidos' | 'sin-persona' | 'todos';
+type FiltroPlanes = 'con-plan' | 'sin-plan' | 'todos';
 
 /**
  * La conexión con Planner y la calidad del dato. Solo People.
  *
- * Desde acá se lee Planner a mano, se descubren los planes de la empresa, se
- * relaciona cada plan con su persona y se revisa lo que está fuera del
- * estándar antes de que afecte el cálculo.
+ * Desde acá se lee Planner a mano, se consulta el plan de cada persona y se
+ * revisa lo que está fuera del estándar antes de que afecte el cálculo. El
+ * plan de cada persona sale de su URL de Planner, que se pone en Gestión de
+ * usuarios: aquí ya no se descubren ni se relacionan planes.
  */
 export default function ConexionPage() {
   const [probar, setProbar] = useState(false);
   const { data, isLoading } = useConexion(probar);
   const sincronizar = useSincronizar();
-  const inventario = useInventario();
   const ultima = data?.ultimaLectura;
+  // La lectura corre en el servidor: sigue «leyendo» aunque se recargue la página.
+  const leyendo = sincronizar.isPending || !!ultima?.enCurso;
+  useAvisoDeLectura(ultima);
 
   return (
     <div className="flex flex-col gap-6">
@@ -59,9 +58,10 @@ export default function ConexionPage() {
         <CardHeader>
           <CardTitle>Lectura de Microsoft Planner</CardTitle>
           <CardDescription>
-            Sincronización nocturna a las 02:00 COT, línea base el lunes a las 18:00 y cierre el
-            domingo a las 23:59. Solo lectura: Tech mantiene los permisos de la aplicación en
-            Microsoft Graph.
+            Lectura nocturna a las 2:00 a. m. COT y corte el lunes a las 9:00 a. m. (martes si es
+            festivo), que cierra la semana anterior y toma la línea base de la nueva. Solo se leen
+            los planes de las URLs de Planner de cada persona. Solo lectura: Tech mantiene los
+            permisos de la aplicación en Microsoft Graph.
           </CardDescription>
           <CardAction className="flex flex-wrap gap-2">
             <Button
@@ -73,20 +73,30 @@ export default function ConexionPage() {
               <PlugZapIcon /> Probar conexión
             </Button>
             <Button
-              variant="outline"
               size="sm"
-              onClick={() => inventario.mutate()}
-              disabled={inventario.isPending}
+              onClick={() => {
+                // La prueba de conexión no se repite en cada consulta mientras se lee.
+                setProbar(false);
+                sincronizar.mutate();
+              }}
+              disabled={leyendo}
             >
-              <DatabaseZapIcon /> {inventario.isPending ? 'Buscando planes…' : 'Descubrir planes'}
-            </Button>
-            <Button size="sm" onClick={() => sincronizar.mutate()} disabled={sincronizar.isPending}>
-              <RefreshCwIcon className={cn(sincronizar.isPending && 'animate-spin')} />
-              {sincronizar.isPending ? 'Leyendo Planner…' : 'Sincronizar ahora'}
+              <RefreshCwIcon className={cn(leyendo && 'animate-spin')} />
+              {leyendo ? 'Leyendo Planner…' : 'Sincronizar ahora'}
             </Button>
           </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {ultima?.enCurso && (
+            <p className="flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-900 dark:text-sky-200">
+              <RefreshCwIcon className="size-4 shrink-0 animate-spin" />
+              <span>
+                {ultima.tipoLabel} en curso desde {formatoFechaHora(ultima.iniciadaAt)} (
+                {ultima.ejecutadaPor}). Tarda unos minutos: esta página se actualiza sola y puedes
+                seguir usando la app.
+              </span>
+            </p>
+          )}
           {data?.estadoGraph && (
             <p
               className={cn(
@@ -111,10 +121,10 @@ export default function ConexionPage() {
               }
             />
             <Kpi
-              label="Planes relacionados"
+              label="Personas con plan"
               cargando={isLoading}
               value={`${data?.personasConPlan ?? 0} de ${data?.personasMedidas ?? 0}`}
-              hint="Personas con el sub-módulo que tienen plan"
+              hint="De las que se miden, las que tienen URL de Planner"
             />
             <Kpi
               label="Incidencias de calidad"
@@ -187,21 +197,19 @@ export default function ConexionPage() {
         </EstadoTabla>
       </Card>
 
-      <RelacionPlanes />
+      <PlanesPorPersona />
 
       <Card className="py-0">
         <CardHeader className="pt-6">
           <CardTitle>Bitácora de lecturas</CardTitle>
-          <CardDescription>
-            Las últimas 15, incluidas las tareas programadas y los inventarios.
-          </CardDescription>
+          <CardDescription>Las últimas 15, incluidas las tareas programadas.</CardDescription>
         </CardHeader>
         <EstadoTabla
           cargando={isLoading}
           vacio={(data?.lecturas.length ?? 0) === 0}
           icono={<RefreshCwIcon />}
           titulo="Sin lecturas todavía"
-          descripcion="Usa «Descubrir planes» y luego «Sincronizar ahora» para la primera lectura."
+          descripcion="Usa «Sincronizar ahora» para la primera lectura."
           filas={3}
         >
           <Table>
@@ -231,9 +239,13 @@ export default function ConexionPage() {
                       }
                       className={cn(
                         'text-sm',
-                        l.estado === 'ok' && 'text-emerald-700 dark:text-emerald-300',
-                        l.estado === 'parcial' && 'text-amber-700 dark:text-amber-300',
-                        l.estado === 'error' && 'text-red-700 dark:text-red-300',
+                        l.enCurso
+                          ? 'text-sky-700 dark:text-sky-300'
+                          : {
+                              ok: 'text-emerald-700 dark:text-emerald-300',
+                              parcial: 'text-amber-700 dark:text-amber-300',
+                              error: 'text-red-700 dark:text-red-300',
+                            }[l.estado],
                       )}
                     >
                       {l.estadoLabel}
@@ -249,44 +261,53 @@ export default function ConexionPage() {
   );
 }
 
-/** La relación plan–persona: People elige a quién pertenece cada plan y si se mide. */
-function RelacionPlanes() {
+const CON_PLAN: EstadoPlan[] = ['Leído', 'Sin leer', 'Inaccesible'];
+
+/** El plan de cada persona con correo @supli.tech. Solo consulta: se cambia en Gestión de usuarios. */
+function PlanesPorPersona() {
   const { data, isLoading } = usePlanes();
-  const [filtro, setFiltro] = useState<FiltroPlanes>('medidos');
+  const [filtro, setFiltro] = useState<FiltroPlanes>('con-plan');
   const [busqueda, setBusqueda] = useState('');
+
+  const sinPlanQueSeMiden = (data?.personas ?? []).filter(
+    (p) => p.seMide && !CON_PLAN.includes(p.estado),
+  );
 
   const visibles = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
-    return (data?.planes ?? []).filter((p) => {
-      if (filtro === 'medidos' && !(p.activo && p.colaboradorId)) return false;
-      if (filtro === 'sin-persona' && (p.colaboradorId || !p.activo)) return false;
+    return (data?.personas ?? []).filter((p) => {
+      const conPlan = CON_PLAN.includes(p.estado);
+      if (filtro === 'con-plan' && !conPlan) return false;
+      if (filtro === 'sin-plan' && conPlan) return false;
       if (!texto) return true;
-      return [p.titulo, p.grupo, p.colaborador].some((v) => v.toLowerCase().includes(texto));
+      return [p.nombre, p.cargo, p.plan?.titulo ?? '', p.plan?.grupo ?? ''].some((v) =>
+        v.toLowerCase().includes(texto),
+      );
     });
   }, [data, filtro, busqueda]);
 
   return (
     <Card className="py-0">
       <CardHeader className="pt-6">
-        <CardTitle>Relación plan – persona</CardTitle>
+        <CardTitle>Plan de cada persona</CardTitle>
         <CardDescription>
-          Cada plan se relaciona por su ID, no por su nombre. «Descubrir planes» propone la persona
-          por el nombre del plan; acá se corrige.
+          Sale de la URL de Planner de cada persona. Para ponerlo o cambiarlo, edita a la persona en
+          Gestión de usuarios.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {data && data.sinPlan.length > 0 && (
+        {sinPlanQueSeMiden.length > 0 && (
           <Nota>
-            {data.sinPlan.length} persona(s) con el sub-módulo todavía sin plan:{' '}
-            {data.sinPlan.map((p) => p.nombre).join(', ')}.
+            {sinPlanQueSeMiden.length} persona(s) que se miden todavía sin un plan válido:{' '}
+            {sinPlanQueSeMiden.map((p) => p.nombre).join(', ')}.
           </Nota>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-lg border border-border p-0.5">
             {(
               [
-                ['medidos', 'Relacionados'],
-                ['sin-persona', 'Sin persona'],
+                ['con-plan', 'Con plan'],
+                ['sin-plan', 'Sin plan'],
                 ['todos', 'Todos'],
               ] as const
             ).map(([valor, texto]) => (
@@ -306,9 +327,9 @@ function RelacionPlanes() {
             <Input
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar plan, grupo o persona"
+              placeholder="Buscar persona, plan o grupo"
               className="pl-8"
-              aria-label="Buscar plan"
+              aria-label="Buscar"
             />
           </div>
         </div>
@@ -316,23 +337,25 @@ function RelacionPlanes() {
       <EstadoTabla
         cargando={isLoading}
         vacio={visibles.length === 0}
-        icono={<DatabaseZapIcon />}
-        titulo="No hay planes en esta vista"
-        descripcion="Usa «Descubrir planes» para traer los planes de todos los grupos de Microsoft 365."
+        icono={<ListChecksIcon />}
+        titulo="Nadie en esta vista"
+        descripcion="La URL de Planner de cada persona se pone en Gestión de usuarios."
       >
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Plan en Planner</TableHead>
-              <TableHead>Grupo</TableHead>
               <TableHead>Persona</TableHead>
-              <TableHead>Se mide</TableHead>
+              <TableHead>Plan en Planner</TableHead>
+              <TableHead className="hidden md:table-cell">Se mide</TableHead>
               <TableHead>Estado</TableHead>
+              <TableHead className="text-right">
+                <span className="sr-only">Acciones</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {visibles.map((p) => (
-              <FilaPlan key={p.id} plan={p} personas={data?.personas ?? []} />
+              <FilaPersona key={p.id} persona={p} />
             ))}
           </TableBody>
         </Table>
@@ -341,73 +364,78 @@ function RelacionPlanes() {
   );
 }
 
-const ESTILO_ESTADO: Record<PlanRelacion['estado'], string> = {
-  Relacionado: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200',
-  'Sin persona': 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200',
+const ESTILO_ESTADO: Record<EstadoPlan, string> = {
+  Leído: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200',
+  'Sin leer': 'border-sky-500/40 bg-sky-500/10 text-sky-800 dark:text-sky-200',
   Inaccesible: 'border-red-500/40 bg-red-500/10 text-red-800 dark:text-red-200',
-  Inactivo: 'border-border bg-muted text-muted-foreground',
+  'URL no válida': 'border-red-500/40 bg-red-500/10 text-red-800 dark:text-red-200',
+  'Sin URL': 'border-border bg-muted text-muted-foreground',
 };
 
-function FilaPlan({ plan, personas }: { plan: PlanRelacion; personas: Planes['personas'] }) {
-  const editar = useEditarPlan();
-  const opciones = [
-    { value: '0', label: 'Sin persona' },
-    ...personas
-      .filter((p) => !p.tienePlan || p.id === plan.colaboradorId)
-      .map((p) => ({
-        value: String(p.id),
-        label: p.cargo ? `${p.nombre} · ${p.cargo}` : p.nombre,
-      })),
-  ];
+function FilaPersona({ persona: p }: { persona: PlanDePersona }) {
   return (
     <TableRow>
       <TableCell className="font-medium">
-        {plan.titulo}
-        <span className="block text-[11px] font-normal text-muted-foreground">
-          {plan.tareas} tareas
-          {plan.ultimaTareaCreada ? ` · última creada ${plan.ultimaTareaCreada}` : ''}
-        </span>
+        {p.nombre}
+        {p.cargo && (
+          <span className="block text-[11px] font-normal text-muted-foreground">{p.cargo}</span>
+        )}
       </TableCell>
-      <TableCell className="text-muted-foreground">{plan.grupo || '—'}</TableCell>
-      <TableCell className="min-w-60">
-        <Select
-          items={opciones}
-          value={String(plan.colaboradorId ?? 0)}
-          onValueChange={(v) => editar.mutate({ id: plan.id, colaborador: Number(v) || null })}
-          disabled={editar.isPending}
-        >
-          <SelectTrigger aria-label={`Persona del plan ${plan.titulo}`} className="w-full">
-            <SelectValue placeholder="Sin persona" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {opciones.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+      <TableCell className="max-w-72 whitespace-normal">
+        {p.plan ? (
+          <>
+            {p.plan.titulo || (
+              <span className="text-muted-foreground">Se lee en la próxima sincronización</span>
+            )}
+            <span className="block text-[11px] text-muted-foreground">
+              {[
+                p.plan.grupo,
+                p.plan.ultimaLecturaAt ? `${p.plan.tareas} tareas` : '',
+                p.plan.ultimaTareaCreada ? `última creada ${p.plan.ultimaTareaCreada}` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
       </TableCell>
-      <TableCell>
-        <Switch
-          checked={plan.activo}
-          onCheckedChange={(activo) => editar.mutate({ id: plan.id, activo })}
-          disabled={editar.isPending}
-          aria-label={`Medir el plan ${plan.titulo}`}
-        />
+      <TableCell className="hidden text-muted-foreground md:table-cell">
+        {p.seMide ? 'Sí' : 'No'}
       </TableCell>
       <TableCell>
         <span
-          title={plan.errorLectura}
+          title={p.plan?.errorLectura || undefined}
           className={cn(
-            'inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium',
-            ESTILO_ESTADO[plan.estado],
+            'inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap',
+            ESTILO_ESTADO[p.estado],
           )}
         >
-          {plan.estado}
+          {p.estado}
         </span>
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-1">
+          {p.url && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Abrir el plan de ${p.nombre} en Planner`}
+              render={<a href={p.url} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLinkIcon />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Cambiar la URL de Planner de ${p.nombre} en Gestión de usuarios`}
+            render={<Link to={`/inicio/admin/usuarios/${p.id}`} />}
+          >
+            <PencilIcon />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );

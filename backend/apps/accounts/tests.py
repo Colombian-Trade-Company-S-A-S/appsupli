@@ -6,7 +6,10 @@ corporativa, pero sí tienen que existir acá: su jefe les registra objetivos y
 entran en los rankings. Cuando llegue la sincronización con Odoo van a llegar
 así, sin correo, y eso no puede romper nada.
 """
+from datetime import timedelta
+
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Application, User
@@ -133,35 +136,45 @@ def test_al_primer_ingreso_se_ofrece_instalar_la_app():
     assert entrar()['avisoApp'] == 'ofrecer'
 
 
-def test_mas_tarde_vuelve_a_ofrecerse_al_tercer_ingreso():
+def _pasan_dias(usuario: User, dias: int) -> None:
+    """Corre el reloj del aviso: como si lo hubiera respondido hace `dias` días."""
+    User.objects.filter(pk=usuario.pk).update(
+        aviso_app_visto_at=timezone.now() - timedelta(days=dias)
+    )
+
+
+def test_mas_tarde_vuelve_a_ofrecerse_a_los_15_dias():
     ana = persona()
     respuesta = decidir(ana, 'despues')
     assert respuesta.status_code == 200
     assert respuesta.json()['avisoApp'] is None
 
+    # Ni en los siguientes inicios de sesión del día ni en los de las próximas semanas.
+    for _ in range(5):
+        assert entrar()['avisoApp'] is None
+    _pasan_dias(ana, 14)
     assert entrar()['avisoApp'] is None
-    assert entrar()['avisoApp'] is None
+    _pasan_dias(ana, 15)
     assert entrar()['avisoApp'] == 'ofrecer'
 
 
-def test_instalada_se_recuerda_como_reinstalarla_cada_diez_ingresos():
+def test_instalada_tambien_sale_cada_15_dias():
     ana = persona()
     respuesta = decidir(ana, 'instalada')
     assert respuesta.json()['appInstalada'] is True
     assert respuesta.json()['avisoApp'] is None
 
-    for _ in range(9):
+    for _ in range(10):
         assert entrar()['avisoApp'] is None
+    _pasan_dias(ana, 15)
     assert entrar()['avisoApp'] == 'recordar'
 
-    # Leído el recordatorio, sigue instalada y vuelve a contar diez.
+    # Leído el recordatorio, sigue instalada y vuelve a contar 15 días.
     ana.refresh_from_db()
     respuesta = decidir(ana, 'visto')
     assert respuesta.json()['appInstalada'] is True
     assert respuesta.json()['avisoApp'] is None
-    for _ in range(9):
-        assert entrar()['avisoApp'] is None
-    assert entrar()['avisoApp'] == 'recordar'
+    assert entrar()['avisoApp'] is None
 
 
 def test_la_decision_debe_ser_una_conocida():

@@ -72,6 +72,10 @@ export interface AdminUser {
   managerName: string;
   isActive: boolean;
   isAdmin: boolean;
+  /** Si su plan de Planner entra en la medición semanal (lo decide People). */
+  medirPlanner: boolean;
+  /** El enlace de su plan en Planner: es el plan que mide Ejecución Planner. */
+  plannerUrl: string;
   lastLoginAt: string | null;
   applications: number[];
   applicationNames: string[];
@@ -94,6 +98,8 @@ export type AdminUserPayload = Partial<
     | 'kind'
     | 'phone'
     | 'isActive'
+    | 'medirPlanner'
+    | 'plannerUrl'
     | 'applications'
     | 'roles'
     | 'extraPermissions'

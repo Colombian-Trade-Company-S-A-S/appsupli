@@ -742,6 +742,72 @@ def test_el_ceo_que_tambien_es_people_se_aprueba_a_si_mismo(app_performance, equ
     ).status_code == 200
 
 
+def test_con_el_rol_de_ceo_pero_con_jefe_lo_aprueba_su_jefe(app_performance, equipo):
+    """
+    Como People Manager: tiene el rol de CEO (para ver la compañía), pero
+    reporta a alguien. Su resultado no se aprueba solo: lo aprueba su jefe, y
+    ella, aunque sea People, no se lo aprueba.
+    """
+    jefe, julian, _daniel = equipo
+    people = crear_usuario(
+        'people@supli.tech',
+        app_performance,
+        ['performance:objetivos:manage_all'],
+        jefe=jefe,
+        cargo='People Manager',
+    )
+    _rol_ceo(people)
+    objetivo = objetivo_de(people, jefe, '50')
+    otro = objetivo_de(people, jefe, '50', objetivo='Otro objetivo')
+    _empezar_el_mes(objetivo.periodo)
+    validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
+
+    resultado = cliente_de(people).put(
+        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        {'porcentajeCumplimiento': '95'},
+        format='json',
+    )
+    assert resultado.status_code == 200, resultado.data
+    assert resultado.json()['estadoValidacion'] == EstadoValidacion.PENDIENTE
+    assert [paso['accion'] for paso in resultado.json()['historial']] == ['cargado']
+    aprobar = {'estado': 'validado'}
+    assert cliente_de(people).post(validar, aprobar, format='json').status_code == 403
+    assert cliente_de(jefe).post(validar, aprobar, format='json').status_code == 200
+
+    # Si otro le carga el resultado, tampoco se lo aprueba ella.
+    assert (
+        cliente_de(jefe)
+        .put(
+            f'{RUTA}/objetivos/{otro.pk}/resultado',
+            {'porcentajeCumplimiento': '80'},
+            format='json',
+        )
+        .status_code
+        == 200
+    )
+    assert (
+        cliente_de(people)
+        .post(f'{RUTA}/objetivos/{otro.pk}/validar', {'estado': 'validado'}, format='json')
+        .status_code
+        == 403
+    )
+
+    # A los demás los sigue aprobando como People.
+    de_julian = objetivo_de(julian, jefe, '100')
+    _empezar_el_mes(de_julian.periodo)
+    cliente_de(julian).put(
+        f'{RUTA}/objetivos/{de_julian.pk}/resultado',
+        {'porcentajeCumplimiento': '70'},
+        format='json',
+    )
+    assert (
+        cliente_de(people)
+        .post(f'{RUTA}/objetivos/{de_julian.pk}/validar', {'estado': 'validado'}, format='json')
+        .status_code
+        == 200
+    )
+
+
 def test_quien_no_tiene_jefe_ni_el_rol_no_se_aprueba_solo(app_performance):
     """Un dato faltante en Odoo no convierte a nadie en su propio aprobador."""
     sin_jefe = crear_usuario('sinjefe@supli.tech', app_performance)

@@ -95,12 +95,13 @@ function guardarPendiente(usuario: number, paso: Paso | null) {
 /**
  * El aviso al entrar. Lo decide el backend con `avisoApp`:
  *
+ * Sale en el primer inicio de sesión y después cada 15 días, esté instalada o no:
+ *
  * - `ofrecer` (sin instalar): «¿Deseas instalar la app?». Si dice «más tarde»
- *   se le explica cómo hacerlo a mano y vuelve a salir en 3 inicios de sesión.
- *   Si la instala, queda guardado y se le explica cómo usarla y cómo volver a
- *   instalarla si cambia de equipo.
- * - `recordar` (ya instalada): cada 10 inicios, un recordatorio de cómo
- *   instalarla en otro dispositivo —por si perdió el celular—. Solo «He leído esta información».
+ *   se le explica cómo hacerlo a mano. Si la instala, queda guardado y se le
+ *   explica cómo usarla y cómo volver a instalarla si cambia de equipo.
+ * - `recordar` (ya instalada): un recordatorio de cómo instalarla en otro
+ *   dispositivo —por si perdió el celular—. Solo «He leído esta información».
  */
 export function AvisoInstalarApp() {
   const { user } = useAuth();
@@ -111,13 +112,14 @@ export function AvisoInstalarApp() {
   const [trabajando, setTrabajando] = useState(false);
   const mostrado = useRef(false);
 
-  // Preguntar si instala no tiene sentido dentro de la app ya instalada; el
-  // recordatorio sí, porque habla de instalarla en otro dispositivo. Si quedó
-  // una pantalla a medias antes de recargar, se retoma esa.
+  // Preguntar si instala no tiene sentido dentro de la app ya instalada: ahí,
+  // aunque la cuenta todavía no lo sepa, sale el recordatorio, que habla de
+  // instalarla en otro dispositivo. Si quedó una pantalla a medias antes de
+  // recargar, se retoma esa.
   const aviso = user?.avisoApp;
   const pendiente = leerPendiente(user?.id);
-  const toca =
-    !!pendiente || aviso === 'recordar' || (aviso === 'ofrecer' && !estado.instalada);
+  const recordatorio = aviso === 'recordar' || (aviso === 'ofrecer' && estado.instalada);
+  const toca = !!pendiente || !!aviso;
 
   useEffect(() => {
     if (!toca || mostrado.current) return;
@@ -126,11 +128,11 @@ export function AvisoInstalarApp() {
     // segundo tiene que poder abrirlo.
     const id = setTimeout(() => {
       mostrado.current = true;
-      setPaso(pendiente ?? (aviso === 'recordar' ? 'recordar' : 'pregunta'));
+      setPaso(pendiente ?? (recordatorio ? 'recordar' : 'pregunta'));
       setAbierto(true);
     }, 600);
     return () => clearTimeout(id);
-  }, [toca, aviso, pendiente]);
+  }, [toca, recordatorio, pendiente]);
 
   // Mientras está abierto, cada pantalla queda guardada. Los pasos de Safari
   // y de «navegador no compatible» se retoman desde la pregunta.
@@ -282,8 +284,7 @@ export function AvisoInstalarApp() {
                 Puedes instalarla tú mismo cuando quieras
               </DialogTitle>
               <DialogDescription className="text-pretty">
-                Te lo volveremos a recordar dentro de 3 inicios de sesión. Mientras tanto, así la
-                instalas:
+                Te lo volveremos a recordar en 15 días. Mientras tanto, así la instalas:
               </DialogDescription>
             </DialogHeader>
             <MiniInicio nombre={user?.firstName.split(' ')[0] ?? ''} />
@@ -311,7 +312,12 @@ export function AvisoInstalarApp() {
             <DondeEsta />
             <ManualPorDispositivo />
             <DialogFooter>
-              <BotonLeido disabled={trabajando} onClick={() => responder('visto', null)} />
+              <BotonLeido
+                disabled={trabajando}
+                // Si lo leyó dentro de la app instalada sin que la cuenta lo
+                // supiera, queda guardado que la tiene.
+                onClick={() => responder(user?.appInstalada ? 'visto' : 'instalada', null)}
+              />
             </DialogFooter>
           </>
         )}
@@ -431,8 +437,8 @@ function ManualPorDispositivo() {
       </summary>
       <ul className="flex flex-col gap-3 border-t px-3 py-3">
         <Linea icono={<MonitorIcon />}>
-          <b>Computador (Chrome o Edge):</b> el ícono <DownloadIcon className="inline size-3.5" /> al
-          final de la barra de direcciones, o el menú{' '}
+          <b>Computador (Chrome o Edge):</b> el ícono <DownloadIcon className="inline size-3.5" />{' '}
+          al final de la barra de direcciones, o el menú{' '}
           <EllipsisVerticalIcon className="inline size-3.5" /> → <b>Instalar {env.appName}</b>.
         </Linea>
         <Linea icono={<SmartphoneIcon />}>
@@ -440,8 +446,8 @@ function ManualPorDispositivo() {
           <b>Instalar app</b> o <b>Agregar a pantalla principal</b>.
         </Linea>
         <Linea icono={<ShareIcon />}>
-          <b>iPhone o iPad (Safari):</b> <b>Compartir</b> → <b>Agregar a inicio</b> →{' '}
-          <b>Agregar</b>.
+          <b>iPhone o iPad (Safari):</b> <b>Compartir</b> → <b>Agregar a inicio</b> → <b>Agregar</b>
+          .
         </Linea>
       </ul>
     </details>

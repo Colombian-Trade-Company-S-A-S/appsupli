@@ -5,14 +5,18 @@ Ejecución Planner: las tablas del paso 6 de la guía.
     planner_bucket        → Deposito             (depósitos de cada plan)
     planner_task_snapshot → Snapshot + TareaSnapshot
     week_result           → ResultadoSemana
-    hito_validation       → ValidacionHito
-    param_set             → Parametros
+    (Hitos de la semana)  → HitoPlanner          (sin validación: decisión 3)
+    (trazabilidad)        → TareaMedicion + MovimientoTarea (decisión 2)
+    param_set             → Parametros           (versionados por vigencia)
+    (auditoría)           → RecalculoPlanner
     data_quality_issue    → IncidenciaCalidad
     sync_run              → Sincronizacion
 
 appSupli solo lee Planner: nada de esto se escribe de vuelta. El plan se
 relaciona por su ID, no por su nombre, porque los nombres cambian.
 """
+
+from datetime import date
 from decimal import Decimal
 
 from django.conf import settings
@@ -23,9 +27,17 @@ from apps.core.models import TimeStampedModel
 
 PORCENTAJE = [MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))]
 
+#: Desde cuándo rige la primera versión de parámetros.
+VIGENCIA_INICIAL = date(2026, 1, 1)
+
 
 class PlanPlanner(TimeStampedModel):
-    """Un plan de Planner y la persona a la que pertenece. Lo administra People."""
+    """
+    Un plan de Planner y la persona a la que pertenece.
+
+    Sale de la URL de Planner de la persona (Gestión de usuarios): no se edita
+    aquí. El nombre y el grupo los trae cada lectura.
+    """
 
     plan_id = models.CharField('ID del plan', max_length=64, unique=True)
     titulo = models.CharField('nombre del plan', max_length=255)
@@ -40,7 +52,8 @@ class PlanPlanner(TimeStampedModel):
         verbose_name='persona',
     )
     activo = models.BooleanField(
-        'se mide', default=True,
+        'se mide',
+        default=True,
         help_text='Solo se leen los planes activos que tengan persona relacionada.',
     )
     accesible = models.BooleanField('se puede leer', default=True)
@@ -168,9 +181,10 @@ class TareaSnapshot(models.Model):
     titulo = models.CharField('título', max_length=500)
     bucket_id = models.CharField('ID del depósito', max_length=64)
     en_semana = models.BooleanField(
-        'en el depósito de la semana', default=True,
+        'en el depósito de la semana',
+        default=True,
         help_text='Falso si estaba en la línea base y después se movió a otro depósito: '
-                  'se guarda para saber si se completó.',
+        'se guarda para saber si se completó.',
     )
     etiquetas = models.JSONField('etiquetas', default=list, blank=True)
     es_weekly = models.BooleanField(default=False)
@@ -187,20 +201,54 @@ class TareaSnapshot(models.Model):
         verbose_name_plural = 'tareas de snapshot'
         unique_together = ('snapshot', 'task_id')
 
+    def __str__(self) -> str:
+        return self.titulo
+
 
 class Parametros(models.Model):
     """
     Pesos del índice y cortes del semáforo (param_set). Los define People.
 
-    Cada cambio es una versión nueva: los resultados guardan con qué versión se
-    calcularon, así que cambiar los pesos no reescribe el pasado sin dejar rastro.
+    Cada versión rige desde una semana (`vigente_desde`, un lunes) hasta el día
+    antes de la siguiente versión. Los cambios rigen solo para semanas futuras:
+    una semana ya empezada siempre se calcula con la versión que tenía, y cada
+    resultado guarda con cuál se calculó. Recalcular el pasado es una excepción
+    que queda en la bitácora (`RecalculoPlanner`).
     """
 
-    peso_weekly = models.DecimalField('peso Weekly (%)', max_digits=5, decimal_places=2, default=Decimal('40'), validators=PORCENTAJE)
-    peso_daily = models.DecimalField('peso Daily (%)', max_digits=5, decimal_places=2, default=Decimal('40'), validators=PORCENTAJE)
-    peso_hito = models.DecimalField('peso Hito (%)', max_digits=5, decimal_places=2, default=Decimal('20'), validators=PORCENTAJE)
-    verde_desde = models.DecimalField('verde desde', max_digits=5, decimal_places=2, default=Decimal('80'), validators=PORCENTAJE)
-    ambar_desde = models.DecimalField('ámbar desde', max_digits=5, decimal_places=2, default=Decimal('60'), validators=PORCENTAJE)
+    peso_weekly = models.DecimalField(
+        'peso Weekly (%)',
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('40'),
+        validators=PORCENTAJE,
+    )
+    peso_daily = models.DecimalField(
+        'peso Daily (%)',
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('40'),
+        validators=PORCENTAJE,
+    )
+    peso_hito = models.DecimalField(
+        'peso Hito (%)',
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('20'),
+        validators=PORCENTAJE,
+    )
+    verde_desde = models.DecimalField(
+        'verde desde', max_digits=5, decimal_places=2, default=Decimal('80'), validators=PORCENTAJE
+    )
+    ambar_desde = models.DecimalField(
+        'ámbar desde', max_digits=5, decimal_places=2, default=Decimal('60'), validators=PORCENTAJE
+    )
+    vigente_desde = models.DateField(
+        'vigente desde', default=VIGENCIA_INICIAL, help_text='Un lunes.'
+    )
+    vigente_hasta = models.DateField(
+        'vigente hasta', null=True, blank=True, help_text='Vacío: rige hasta que haya otra versión.'
+    )
     creado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
     )
@@ -209,54 +257,142 @@ class Parametros(models.Model):
     class Meta:
         verbose_name = 'versión de parámetros'
         verbose_name_plural = 'versiones de parámetros'
-        ordering = ('-created_at', '-id')
+        ordering = ('-vigente_desde', '-id')
 
     def __str__(self) -> str:
         return f'Versión {self.pk}: {self.peso_weekly}/{self.peso_daily}/{self.peso_hito}'
 
     @classmethod
+    def para_fecha(cls, dia) -> 'Parametros':
+        """La versión que rige ese día; sin ninguna, el estándar del plan (40/40/20, 80/60)."""
+        version = (
+            cls.objects.filter(vigente_desde__lte=dia)
+            .filter(models.Q(vigente_hasta__isnull=True) | models.Q(vigente_hasta__gte=dia))
+            .order_by('-vigente_desde', '-id')
+            .first()
+        )
+        return version or cls.objects.order_by('vigente_desde').first() or cls.objects.create()
+
+    @classmethod
     def vigentes(cls) -> 'Parametros':
-        """La última versión guardada; si no hay ninguna, el estándar del plan (40/40/20, 80/60)."""
-        return cls.objects.first() or cls.objects.create()
+        """La versión que rige hoy."""
+        from django.utils import timezone
+
+        return cls.para_fecha(timezone.localdate())
 
 
-class EstadoHito(models.TextChoices):
-    PENDIENTE = 'pendiente', 'Pendiente'
-    CUMPLIDO = 'cumplido', 'Cumplido'
-    NO_CUMPLIDO = 'no_cumplido', 'No cumplido'
-    SIN_VALIDAR = 'sin_validar', 'Sin validar'
-    SIN_REGISTRAR = 'sin_registrar', 'Sin registrar'
+class HitoPlanner(models.Model):
+    """
+    Una tarea HITO de una persona en una semana (decisiones 3, 6, 10 y 13).
 
-
-#: Los estados del Hito que suman 100 en el índice (prototipo, «Estados del Hito»).
-HITO_SUMA = {EstadoHito.CUMPLIDO, EstadoHito.SIN_VALIDAR}
-
-
-class ValidacionHito(models.Model):
-    """El Hito de una persona en una semana y lo que dijo su líder."""
+    El Hito no se valida: queda registrado si la tarea está en el depósito de
+    la semana y su checklist tiene al menos un ítem. No hace falta completarla
+    ni marcar los ítems. Se guardan los ítems para mostrarlos. Puede haber más
+    de uno por semana (decisión 12).
+    """
 
     colaborador = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='hitos_planner'
     )
+    plan = models.ForeignKey(PlanPlanner, on_delete=models.CASCADE, related_name='hitos')
     anio = models.PositiveSmallIntegerField('año ISO')
     semana = models.PositiveSmallIntegerField('semana')
-    texto = models.CharField('Hito', max_length=500, blank=True)
-    task_ids = models.JSONField('tareas HITO', default=list, blank=True)
-    estado = models.CharField('estado', max_length=14, choices=EstadoHito.choices, default=EstadoHito.PENDIENTE)
-    comentario = models.TextField('comentario', blank=True)
-    validado_por = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
-    )
-    validado_at = models.DateTimeField('validado el', null=True, blank=True)
+    task_id = models.CharField('ID de la tarea', max_length=64)
+    titulo = models.CharField('título', max_length=500)
+    items = models.JSONField('ítems de la checklist', default=list, blank=True)
+    total_items = models.PositiveSmallIntegerField('ítems', default=0)
+    actualizado_at = models.DateTimeField('actualizado el', auto_now=True)
 
     class Meta:
-        verbose_name = 'validación de Hito'
-        verbose_name_plural = 'validaciones de Hito'
-        unique_together = ('colaborador', 'anio', 'semana')
-        ordering = ('-anio', '-semana')
+        verbose_name = 'Hito de la semana'
+        verbose_name_plural = 'Hitos de la semana'
+        unique_together = ('colaborador', 'anio', 'semana', 'task_id')
+        ordering = ('-anio', '-semana', 'titulo')
 
     def __str__(self) -> str:
-        return f'{self.colaborador} · WEEK {self.semana} · {self.get_estado_display()}'
+        return f'{self.colaborador} · WEEK {self.semana} · {self.titulo}'
+
+    @property
+    def registrado(self) -> bool:
+        return self.total_items > 0
+
+
+class TareaMedicion(models.Model):
+    """
+    La trazabilidad de una tarea en la medición de una semana (decisión 2).
+
+    Cuándo se creó en Planner, cuándo entró a la medición (en la línea base o
+    después del corte), y en qué depósito está. Sus cambios de depósito
+    quedan en `MovimientoTarea`.
+    """
+
+    plan = models.ForeignKey(PlanPlanner, on_delete=models.CASCADE, related_name='tareas_medidas')
+    anio = models.PositiveSmallIntegerField('año ISO')
+    semana = models.PositiveSmallIntegerField('semana')
+    task_id = models.CharField('ID de la tarea', max_length=64)
+    titulo = models.CharField('título', max_length=500)
+    etiquetas = models.JSONField('etiquetas', default=list, blank=True)
+    creada_at = models.DateTimeField('creada en Planner', null=True, blank=True)
+    entro_at = models.DateTimeField('entró a la medición')
+    en_linea_base = models.BooleanField('estaba en la línea base', default=False)
+    bucket_id = models.CharField('depósito actual', max_length=64, blank=True)
+    bucket_nombre = models.CharField('nombre del depósito actual', max_length=255, blank=True)
+    completada = models.BooleanField('completada', default=False)
+
+    class Meta:
+        verbose_name = 'tarea medida'
+        verbose_name_plural = 'tareas medidas'
+        unique_together = ('plan', 'anio', 'semana', 'task_id')
+        ordering = ('entro_at', 'titulo')
+
+    def __str__(self) -> str:
+        return f'{self.titulo} · WEEK {self.semana}'
+
+
+class MovimientoTarea(models.Model):
+    """Un cambio de depósito de una tarea medida, tal como lo vio una lectura."""
+
+    tarea = models.ForeignKey(TareaMedicion, on_delete=models.CASCADE, related_name='movimientos')
+    desde_bucket = models.CharField('desde', max_length=255)
+    hacia_bucket = models.CharField('hacia', max_length=255)
+    detectado_at = models.DateTimeField('detectado el')
+
+    class Meta:
+        verbose_name = 'movimiento de tarea'
+        verbose_name_plural = 'movimientos de tareas'
+        ordering = ('detectado_at',)
+
+    def __str__(self) -> str:
+        return f'{self.desde_bucket} → {self.hacia_bucket}'
+
+
+class RecalculoPlanner(models.Model):
+    """
+    Bitácora de los recálculos excepcionales (decisión 7).
+
+    Los parámetros rigen hacia adelante; recalcular una semana ya cerrada es una
+    excepción que hace People con un motivo, y queda registrada.
+    """
+
+    anio = models.PositiveSmallIntegerField('año ISO')
+    semana = models.PositiveSmallIntegerField('semana')
+    motivo = models.TextField('motivo')
+    parametros = models.ForeignKey(
+        Parametros, on_delete=models.PROTECT, related_name='+', verbose_name='versión aplicada'
+    )
+    resultados = models.PositiveIntegerField('resultados recalculados', default=0)
+    autorizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='+'
+    )
+    hecho_at = models.DateTimeField('hecho el', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'recálculo excepcional'
+        verbose_name_plural = 'recálculos excepcionales'
+        ordering = ('-hecho_at',)
+
+    def __str__(self) -> str:
+        return f'Recálculo de WEEK {self.semana} ({self.hecho_at:%Y-%m-%d})'
 
 
 class ResultadoSemana(models.Model):
@@ -265,23 +401,43 @@ class ResultadoSemana(models.Model):
     colaborador = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='resultados_planner'
     )
-    plan = models.ForeignKey(PlanPlanner, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    plan = models.ForeignKey(
+        PlanPlanner, on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
     anio = models.PositiveSmallIntegerField('año ISO')
     semana = models.PositiveSmallIntegerField('semana')
     weekly_base = models.PositiveSmallIntegerField('Weekly en la línea base', default=0)
+    weekly_agregadas = models.PositiveSmallIntegerField(
+        'Weekly agregadas después del corte',
+        default=0,
+        help_text='Entran en la medición de la semana (decisión 2).',
+    )
+    weekly_total = models.PositiveSmallIntegerField('Weekly medidas', default=0)
     weekly_completadas = models.PositiveSmallIntegerField('Weekly completadas', default=0)
     daily_items = models.PositiveSmallIntegerField('ítems Daily', default=0)
     daily_marcados = models.PositiveSmallIntegerField('ítems Daily marcados', default=0)
-    pct_weekly = models.DecimalField('% Weekly', max_digits=6, decimal_places=2, null=True, blank=True)
-    pct_daily = models.DecimalField('% Daily', max_digits=6, decimal_places=2, null=True, blank=True)
+    pct_weekly = models.DecimalField(
+        '% Weekly', max_digits=6, decimal_places=2, null=True, blank=True
+    )
+    pct_daily = models.DecimalField(
+        '% Daily', max_digits=6, decimal_places=2, null=True, blank=True
+    )
     hito = models.DecimalField('Hito', max_digits=6, decimal_places=2, default=Decimal('0'))
-    indice = models.DecimalField('índice', max_digits=6, decimal_places=2, default=Decimal('0'))
+    hitos_registrados = models.PositiveSmallIntegerField('Hitos registrados', default=0)
+    indice = models.DecimalField(
+        'índice',
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Vacío si la semana no tuvo Weekly ni Daily que medir.',
+    )
     final = models.BooleanField(
-        'final', default=False,
-        help_text='La semana cerró y se cerró la ventana de validación del Hito.',
+        'final', default=False, help_text='La semana ya cerró: se tomó su foto de cierre.'
     )
     base_aproximada = models.BooleanField(
-        'línea base aproximada', default=False,
+        'línea base aproximada',
+        default=False,
         help_text='No hubo foto del lunes: se tomó la primera lectura de la semana.',
     )
     parametros = models.ForeignKey(Parametros, on_delete=models.PROTECT, related_name='+')
@@ -309,8 +465,9 @@ class IncidenciaCalidad(models.Model):
         ETIQUETAS_FALTANTES = 'etiquetas_faltantes', 'Faltan etiquetas'
         SIN_ETIQUETA = 'sin_etiqueta', 'Sin etiqueta'
         SIN_CHECKLIST = 'sin_checklist', 'Sin checklist'
-        VARIOS_HITOS = 'varios_hitos', 'Varios Hitos'
+        HITO_SIN_CHECKLIST = 'hito_sin_checklist', 'Hito sin ítems'
         SIN_HITO = 'sin_hito', 'Sin Hito'
+        COMPONENTE_SIN_DATO = 'componente_sin_dato', 'Semana sin Weekly o sin Daily'
 
     class Severidad(models.TextChoices):
         CRITICA = 'critica', 'Crítica'
@@ -318,9 +475,15 @@ class IncidenciaCalidad(models.Model):
 
     tipo = models.CharField('tipo', max_length=24, choices=Tipo.choices)
     severidad = models.CharField('severidad', max_length=8, choices=Severidad.choices)
-    plan = models.ForeignKey(PlanPlanner, on_delete=models.CASCADE, null=True, blank=True, related_name='incidencias')
+    plan = models.ForeignKey(
+        PlanPlanner, on_delete=models.CASCADE, null=True, blank=True, related_name='incidencias'
+    )
     colaborador = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name='incidencias_planner'
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='incidencias_planner',
     )
     anio = models.PositiveSmallIntegerField('año ISO', null=True, blank=True)
     semana = models.PositiveSmallIntegerField('semana', null=True, blank=True)

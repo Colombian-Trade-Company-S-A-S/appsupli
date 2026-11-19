@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { MoreHorizontalIcon, PencilIcon, SearchIcon, UserCheckIcon, UserXIcon } from 'lucide-react';
 import { useDebounced } from '@/shared/hooks';
 import { urlFotoDe, useAuth } from '@/core/auth';
@@ -40,7 +40,6 @@ import {
 } from '@/shared/components/ui';
 import { adminApi, type AdminUser } from '../api';
 import { useAdminMutation, useAdminUsers, useAreas } from '../hooks';
-import { UserDialog } from './UserDialog';
 
 const TIPOS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
 const ESTADOS = [
@@ -54,8 +53,7 @@ export function UsersTab() {
   const [busqueda, setBusqueda] = useState('');
   const [estado, setEstado] = useState('todos');
   const [area, setArea] = useState('');
-  const [editando, setEditando] = useState<AdminUser | null>(null);
-  const [dialogoAbierto, setDialogoAbierto] = useState(false);
+  const navigate = useNavigate();
 
   const { data: areas = [] } = useAreas();
   // Se busca cuando se deja de escribir, no con cada letra.
@@ -71,10 +69,9 @@ export function UsersTab() {
     'Estado actualizado',
   );
 
-  const abrirEdicion = (usuario: AdminUser) => {
-    setEditando(usuario);
-    setDialogoAbierto(true);
-  };
+  // Editar es una página aparte, no una ventana.
+  const abrirEdicion = (usuario: AdminUser) =>
+    navigate(`/inicio/admin/usuarios/${usuario.id}/editar`);
 
   return (
     <div className="flex flex-col gap-4">
@@ -243,8 +240,6 @@ export function UsersTab() {
       <p className="text-xs text-muted-foreground">
         {usuarios.length} usuario{usuarios.length === 1 ? '' : 's'}
       </p>
-
-      <UserDialog abierto={dialogoAbierto} onOpenChange={setDialogoAbierto} usuario={editando} />
     </div>
   );
 }

@@ -1,36 +1,38 @@
 """
-El cálculo de la ejecución semanal (guía, paso 6, y prototipo «Cómo se calcula»).
+El cálculo de la ejecución semanal, con las decisiones de People (v3).
 
-    % Weekly = tareas WEEKLY completadas al cierre ÷ línea base × 100
+    % Weekly = tareas WEEKLY completadas al cierre ÷ tareas WEEKLY medidas × 100
     % Daily  = ítems de checklist DAILY marcados ÷ ítems totales × 100
-    Hito     = 100 si está Cumplido o Sin validar; 0 en otro caso
-    Índice   = mín(100; pW·W + pD·D + pH·H), con pesos de Parámetros
+    Hito     = 100 si hay al menos un Hito registrado; 0 si no
+    Índice   = mín(100; pesos × componentes), con la versión de parámetros de la semana
 
-Reglas que todavía debe confirmar People (ver Novedades_y_pendientes):
+Reglas:
 
-- Decisión 2: las tareas agregadas después de la línea base no cuentan ni en
-  el numerador ni en el denominador; las movidas a otro depósito siguen
-  contando en la semana de su línea base. Se implementa así, que es la
-  propuesta del plan.
-- Fila 11: una semana sin Weekly o sin checklist cuenta ese componente como 0,
-  igual que en el prototipo, y queda la alerta en el panel de calidad.
+- Decisión 2: las tareas WEEKLY medidas son las de la línea base más las
+  creadas después del corte que estén en el depósito de la semana. Una de la
+  línea base que se movió a otro depósito sigue contando en su semana (regla
+  provisional, pendiente de confirmar).
+- Decisión 3: el Hito queda registrado si hay una tarea HITO en el depósito de
+  la semana con al menos un ítem en su checklist. No se valida ni hace falta
+  completarla. Con varios, basta uno (decisión 12, provisional).
+- Fila 11 (provisional): si la semana no tiene Weekly o no tiene ítems Daily,
+  ese componente sale y su peso se reparte entre los otros. Sin Weekly ni
+  Daily, la semana queda sin índice (no cuenta en los promedios).
+- Decisión 7: cada semana se calcula con la versión de parámetros que regía en
+  ella, y el resultado guarda cuál fue.
 """
+
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
-from .models import (
-    HITO_SUMA,
-    EstadoHito,
-    Parametros,
-    PlanPlanner,
-    ResultadoSemana,
-    Snapshot,
-    ValidacionHito,
-)
+from .api_permissions import personas_medidas
+from .models import Parametros, PlanPlanner, ResultadoSemana, Snapshot
 from .semanas import Semana, semanas_del_mes
 
 CIEN = Decimal('100')
@@ -53,25 +55,29 @@ def indice(
     pct_daily: Decimal | None,
     hito: Decimal,
     parametros: Parametros,
-) -> Decimal:
+) -> Decimal | None:
     """
     El Índice Planner semanal, de 0 a 100.
 
-    Un componente que no se pudo medir (None) cuenta como 0, como en el
-    prototipo. Con 5 de 6 Weekly, 7 de 10 ítems y el Hito cumplido da 81,3.
+    Un componente que no se pudo medir (None) sale del cálculo y su peso se
+    reparte entre los demás en proporción. Sin Weekly ni Daily no hay índice.
+    Con todo medido: 5 de 6 Weekly, 7 de 10 ítems y Hito registrado dan 81,3.
     """
-    w = pct_weekly if pct_weekly is not None else CERO
-    d = pct_daily if pct_daily is not None else CERO
-    total = (parametros.peso_weekly * w + parametros.peso_daily * d + parametros.peso_hito * hito) / CIEN
-    return min(CIEN, total)
-
-
-def valor_hito(estado: str) -> Decimal:
-    return CIEN if estado in HITO_SUMA else CERO
+    if pct_weekly is None and pct_daily is None:
+        return None
+    partes = [(parametros.peso_hito, hito)]
+    if pct_weekly is not None:
+        partes.append((parametros.peso_weekly, pct_weekly))
+    if pct_daily is not None:
+        partes.append((parametros.peso_daily, pct_daily))
+    pesos = sum(peso for peso, _ in partes)
+    if not pesos:
+        return None
+    return min(CIEN, sum(peso * valor for peso, valor in partes) / pesos)
 
 
 def semaforo(valor: Decimal | float | None, parametros: Parametros) -> str | None:
-    """verde / ambar / rojo con los cortes vigentes, o None si no hay dato."""
+    """verde / ambar / rojo con los cortes de la versión, o None si no hay dato."""
     if valor is None:
         return None
     valor = Decimal(str(valor))
@@ -82,132 +88,167 @@ def semaforo(valor: Decimal | float | None, parametros: Parametros) -> str | Non
     return 'rojo'
 
 
-# ── Estado del Hito ───────────────────────────────────────────────────────
-
-
-def cerrar_ventana(semana: Semana, ahora: datetime | None = None) -> int:
-    """
-    Al cerrar la ventana, lo que quedó pendiente pasa a «Sin validar».
-
-    Cuenta como Cumplido (prototipo, paso 5 del ciclo). Devuelve cuántos cambió.
-    """
-    if not semana.ventana_cerrada(ahora):
-        return 0
-    return ValidacionHito.objects.filter(
-        anio=semana.anio, semana=semana.numero, estado=EstadoHito.PENDIENTE
-    ).update(estado=EstadoHito.SIN_VALIDAR)
+def parametros_de(semana: Semana) -> Parametros:
+    """La versión de parámetros que rige la semana: la vigente su lunes."""
+    return Parametros.para_fecha(semana.lunes)
 
 
 # ── Resultado de una semana ───────────────────────────────────────────────
 
 
-def _fotos(plan: PlanPlanner, semana: Semana) -> dict[str, Snapshot]:
-    return {
-        s.tipo: s
-        for s in Snapshot.objects.filter(plan=plan, anio=semana.anio, semana=semana.numero)
-        .prefetch_related('tareas')
-    }
+def _fotos_de_la_semana(planes: list[PlanPlanner], semana: Semana) -> dict[int, dict]:
+    """Las fotos de la semana de todos los planes, con sus tareas: {plan_id: {tipo: foto}}."""
+    fotos: dict[int, dict[str, Snapshot]] = defaultdict(dict)
+    for s in Snapshot.objects.filter(
+        plan__in=planes, anio=semana.anio, semana=semana.numero
+    ).prefetch_related('tareas'):
+        fotos[s.plan_id][s.tipo] = s
+    return fotos
 
 
-def calcular_resultado(plan: PlanPlanner, semana: Semana, parametros: Parametros,
-                       ahora: datetime | None = None) -> ResultadoSemana | None:
-    """Calcula y guarda el resultado de la persona del plan. None si todavía no hay fotos."""
-    fotos = _fotos(plan, semana)
+def calcular_resultado(
+    plan: PlanPlanner, fotos: dict[str, Snapshot], parametros: Parametros
+) -> dict | None:
+    """Los valores del resultado de la persona del plan. None si todavía no hay fotos."""
     if not fotos:
         return None
     base = fotos.get(Snapshot.Tipo.LINEA_BASE)
     final = fotos.get(Snapshot.Tipo.CIERRE) or fotos.get(Snapshot.Tipo.ACTUAL)
     base_aproximada = base is None
     if base is None:
-        # Sin foto del lunes (la semana empezó antes de la integración, o la
+        # Sin foto del corte (la semana empezó antes de la integración, o la
         # tarea programada falló): se toma la lectura que haya, y se avisa.
         base = final
     if final is None:
         final = base
+    tareas_finales = list(final.tareas.all())
 
-    # Weekly: solo las de la línea base. Las agregadas después no cuentan; las
-    # que se movieron a otro depósito siguen contando (la foto las guarda).
+    # Weekly: las de la línea base más las agregadas después del corte que
+    # están en el depósito de la semana (decisión 2).
     ids_base = {t.task_id for t in base.tareas.all() if t.es_weekly and t.en_semana}
-    estado_final = {t.task_id: t for t in final.tareas.all()}
-    completadas = sum(1 for tid in ids_base if tid in estado_final and estado_final[tid].completada)
+    ids_agregadas = {t.task_id for t in tareas_finales if t.es_weekly and t.en_semana} - ids_base
+    medidas = ids_base | ids_agregadas
+    estado_final = {t.task_id: t for t in tareas_finales}
+    completadas = sum(1 for tid in medidas if tid in estado_final and estado_final[tid].completada)
 
     # Daily: lo que está en el depósito de la semana al cierre (o hoy).
-    dailies = [t for t in final.tareas.all() if t.es_daily and t.en_semana]
+    dailies = [t for t in tareas_finales if t.es_daily and t.en_semana]
     items = sum(t.checklist_total for t in dailies)
     marcados = sum(t.checklist_marcados for t in dailies)
 
-    validacion = ValidacionHito.objects.filter(
-        colaborador=plan.colaborador, anio=semana.anio, semana=semana.numero
-    ).first()
-    estado = validacion.estado if validacion else EstadoHito.SIN_REGISTRAR
+    # Hito: registrado si hay una tarea HITO en la semana con al menos un ítem.
+    hitos = sum(1 for t in tareas_finales if t.es_hito and t.en_semana and t.checklist_total > 0)
 
-    pct_w = porcentaje(completadas, len(ids_base))
+    pct_w = porcentaje(completadas, len(medidas))
     pct_d = porcentaje(marcados, items)
-    hito = valor_hito(estado)
-    es_final = (
-        Snapshot.Tipo.CIERRE in fotos
-        and semana.ventana_cerrada(ahora)
-        and estado != EstadoHito.PENDIENTE
-    )
-    resultado, _ = ResultadoSemana.objects.update_or_create(
-        colaborador=plan.colaborador,
-        anio=semana.anio,
-        semana=semana.numero,
-        defaults={
-            'plan': plan,
-            'weekly_base': len(ids_base),
-            'weekly_completadas': completadas,
-            'daily_items': items,
-            'daily_marcados': marcados,
-            'pct_weekly': redondear(pct_w),
-            'pct_daily': redondear(pct_d),
-            'hito': hito,
-            'indice': redondear(indice(pct_w, pct_d, hito, parametros)),
-            'final': es_final,
-            'base_aproximada': base_aproximada,
-            'parametros': parametros,
-        },
-    )
-    return resultado
+    hito = CIEN if hitos else CERO
+    return {
+        'plan': plan,
+        'weekly_base': len(ids_base),
+        'weekly_agregadas': len(ids_agregadas),
+        'weekly_total': len(medidas),
+        'weekly_completadas': completadas,
+        'daily_items': items,
+        'daily_marcados': marcados,
+        'pct_weekly': redondear(pct_w),
+        'pct_daily': redondear(pct_d),
+        'hito': hito,
+        'hitos_registrados': hitos,
+        'indice': redondear(indice(pct_w, pct_d, hito, parametros)),
+        'final': Snapshot.Tipo.CIERRE in fotos,
+        'base_aproximada': base_aproximada,
+        'parametros': parametros,
+    }
 
 
 @transaction.atomic
 def recalcular_semana(semana: Semana, ahora: datetime | None = None, forzar: bool = False) -> int:
     """
-    Recalcula el resultado de todas las personas con plan activo en la semana.
+    Recalcula el resultado de todas las personas medidas en la semana.
 
-    Los resultados finales no se tocan, salvo con `forzar` (por ejemplo, si
-    People cambia los pesos y decide recalcular hacia atrás).
+    Los resultados finales (semana cerrada) no se tocan, salvo con `forzar`:
+    es el recálculo excepcional, que People autoriza y queda en la bitácora.
+
+    Se lee y se guarda por lotes (unas pocas consultas para toda la compañía):
+    la base está en Render y cada consulta suelta cuesta.
     """
-    cerrar_ventana(semana, ahora)
-    parametros = Parametros.vigentes()
-    finales = set(
-        ResultadoSemana.objects.filter(anio=semana.anio, semana=semana.numero, final=True)
-        .values_list('colaborador_id', flat=True)
-    )
-    calculados = 0
-    planes = PlanPlanner.objects.filter(activo=True, colaborador__isnull=False).select_related('colaborador')
+    parametros = parametros_de(semana)
+    existentes = {
+        r.colaborador_id: r
+        for r in ResultadoSemana.objects.filter(anio=semana.anio, semana=semana.numero)
+    }
+    planes = [
+        plan
+        for plan in PlanPlanner.objects.filter(activo=True, colaborador__in=personas_medidas())
+        if forzar
+        or plan.colaborador_id not in existentes
+        or not existentes[plan.colaborador_id].final
+    ]
+    fotos = _fotos_de_la_semana(planes, semana)
+    momento = timezone.now()
+    nuevos, cambiados = [], []
     for plan in planes:
-        if plan.colaborador_id in finales and not forzar:
+        valores = calcular_resultado(plan, fotos.get(plan.id, {}), parametros)
+        if valores is None:
             continue
-        if calcular_resultado(plan, semana, parametros, ahora):
-            calculados += 1
-    return calculados
+        resultado = existentes.get(plan.colaborador_id)
+        if resultado is None:
+            nuevos.append(
+                ResultadoSemana(
+                    colaborador_id=plan.colaborador_id,
+                    anio=semana.anio,
+                    semana=semana.numero,
+                    **valores,
+                )
+            )
+            continue
+        for campo, valor in valores.items():
+            setattr(resultado, campo, valor)
+        resultado.calculado_at = momento  # bulk_update no lo pone solo
+        cambiados.append(resultado)
+    ResultadoSemana.objects.bulk_create(nuevos)
+    ResultadoSemana.objects.bulk_update(cambiados, [*CAMPOS_RESULTADO, 'calculado_at'])
+    return len(nuevos) + len(cambiados)
+
+
+CAMPOS_RESULTADO = (
+    'plan',
+    'weekly_base',
+    'weekly_agregadas',
+    'weekly_total',
+    'weekly_completadas',
+    'daily_items',
+    'daily_marcados',
+    'pct_weekly',
+    'pct_daily',
+    'hito',
+    'hitos_registrados',
+    'indice',
+    'final',
+    'base_aproximada',
+    'parametros',
+)
 
 
 # ── Agregados ─────────────────────────────────────────────────────────────
 
 
 def indice_mensual(colaborador_id: int, anio: int, mes: int) -> Decimal | None:
-    """Promedio de los índices semanales cuyo lunes cae en el mes."""
+    """Promedio de los índices semanales cuyo lunes cae en el mes.
+
+    Las semanas sin índice (sin Weekly ni Daily) no cuentan.
+    """
     semanas = semanas_del_mes(anio, mes)
-    valores = list(
-        ResultadoSemana.objects.filter(
+    valores = [
+        v
+        for (a, s, v) in ResultadoSemana.objects.filter(
             colaborador_id=colaborador_id,
             anio__in={s.anio for s in semanas},
             semana__in={s.numero for s in semanas},
-        ).values_list('indice', flat=True)
-    )
+            indice__isnull=False,
+        ).values_list('anio', 'semana', 'indice')
+        if Semana(a, s) in semanas
+    ]
     if not valores:
         return None
     return redondear(sum(valores) / len(valores))

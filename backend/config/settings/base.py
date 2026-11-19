@@ -232,6 +232,9 @@ PLANNER_TENANT_ID = config('PLANNER_TENANT_ID', default='')
 PLANNER_CLIENT_ID = config('PLANNER_CLIENT_ID', default='')
 PLANNER_CLIENT_SECRET = config('PLANNER_CLIENT_SECRET', default='')
 PLANNER_TIMEOUT = config('PLANNER_TIMEOUT', default=30, cast=int)
+# «Sincronizar ahora» lee en otro hilo y la pantalla consulta hasta que termina:
+# la lectura tarda minutos y la petición no puede esperarla.
+PLANNER_LEER_EN_SEGUNDO_PLANO = True
 
 # ── Informe del ERP de Claro por correo ────────────────────────────────────
 # Llega a un buzón compartido (una regla de Exchange lo copia ahí) y la misma

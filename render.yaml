@@ -44,6 +44,80 @@ services:
       - key: WEB_CONCURRENCY
         value: "2"
 
+  # ── Ejecución Planner: las lecturas programadas (decisión 17, aprobada) ──
+  # Render programa en UTC; Colombia es UTC−5. Toman la base y las claves de
+  # Planner del backend, así que no hay que volver a pegarlas.
+  #
+  # Lectura nocturna: todos los días a las 02:00 COT (07:00 UTC).
+  - type: cron
+    name: planner-lectura-diaria
+    runtime: docker
+    plan: starter
+    region: oregon
+    schedule: "0 7 * * *"
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: python manage.py sync_planner --tipo diaria
+    envVars:
+      - key: DB_HOST
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_HOST }
+      - key: DB_PORT
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_PORT }
+      - key: DB_NAME
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_NAME }
+      - key: DB_USER
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_USER }
+      - key: DB_PASSWORD
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_PASSWORD }
+      - key: DB_SSLMODE
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_SSLMODE }
+      - key: DB_SCHEMA
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_SCHEMA }
+      - key: SECRET_KEY
+        fromService: { type: web, name: supli-api-backend, envVarKey: SECRET_KEY }
+      - key: PLANNER_TENANT_ID
+        fromService: { type: web, name: supli-api-backend, envVarKey: PLANNER_TENANT_ID }
+      - key: PLANNER_CLIENT_ID
+        fromService: { type: web, name: supli-api-backend, envVarKey: PLANNER_CLIENT_ID }
+      - key: PLANNER_CLIENT_SECRET
+        fromService: { type: web, name: supli-api-backend, envVarKey: PLANNER_CLIENT_SECRET }
+
+  # El corte (decisión 1): lunes 9:00 COT, o martes 9:00 si el lunes es
+  # festivo (14:00 UTC). Corre los dos días; el comando no hace nada el día
+  # que no toca. Cierra la semana anterior y toma la línea base de la nueva.
+  - type: cron
+    name: planner-corte-semanal
+    runtime: docker
+    plan: starter
+    region: oregon
+    schedule: "0 14 * * 1,2"
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: python manage.py sync_planner --tipo corte
+    envVars:
+      - key: DB_HOST
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_HOST }
+      - key: DB_PORT
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_PORT }
+      - key: DB_NAME
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_NAME }
+      - key: DB_USER
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_USER }
+      - key: DB_PASSWORD
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_PASSWORD }
+      - key: DB_SSLMODE
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_SSLMODE }
+      - key: DB_SCHEMA
+        fromService: { type: web, name: supli-api-backend, envVarKey: DB_SCHEMA }
+      - key: SECRET_KEY
+        fromService: { type: web, name: supli-api-backend, envVarKey: SECRET_KEY }
+      - key: PLANNER_TENANT_ID
+        fromService: { type: web, name: supli-api-backend, envVarKey: PLANNER_TENANT_ID }
+      - key: PLANNER_CLIENT_ID
+        fromService: { type: web, name: supli-api-backend, envVarKey: PLANNER_CLIENT_ID }
+      - key: PLANNER_CLIENT_SECRET
+        fromService: { type: web, name: supli-api-backend, envVarKey: PLANNER_CLIENT_SECRET }
+
   - type: web
     name: appsupli
     runtime: static

@@ -22,8 +22,11 @@ type Fase = 'verificar' | 'cambiar' | 'listo';
 /**
  * Cambio de contraseña en dos fases: primero se confirma la identidad con la
  * contraseña actual y solo entonces aparecen los campos de la nueva.
+ *
+ * `onTerminar`, si viene (cuando va en una ventana), cierra al final o al
+ * cancelar en vez de volver al primer paso.
  */
-export function ChangePasswordForm() {
+export function ChangePasswordForm({ onTerminar }: { onTerminar?: () => void } = {}) {
   const [fase, setFase] = useState<Fase>('verificar');
   const [actual, setActual] = useState('');
   const [nueva, setNueva] = useState('');
@@ -104,8 +107,8 @@ export function ChangePasswordForm() {
           <CheckIcon />
           <AlertDescription>Tu contraseña se actualizó correctamente.</AlertDescription>
         </Alert>
-        <Button variant="outline" onClick={reiniciar}>
-          Cambiarla de nuevo
+        <Button variant="outline" onClick={onTerminar ?? reiniciar}>
+          {onTerminar ? 'Listo' : 'Cambiarla de nuevo'}
         </Button>
       </div>
     );
@@ -196,7 +199,7 @@ export function ChangePasswordForm() {
                 {enviando && <Spinner data-icon="inline-start" />}
                 Actualizar contraseña
               </Button>
-              <Button type="button" variant="ghost" onClick={reiniciar}>
+              <Button type="button" variant="ghost" onClick={onTerminar ?? reiniciar}>
                 Cancelar
               </Button>
             </Field>
@@ -234,7 +237,10 @@ function Pasos({ fase }: { fase: Fase }) {
             {paso.hecho ? <CheckIcon className="size-3.5" /> : paso.n}
           </span>
           <span
-            className={cn('truncate text-sm', paso.activo ? 'font-medium' : 'text-muted-foreground')}
+            className={cn(
+              'truncate text-sm',
+              paso.activo ? 'font-medium' : 'text-muted-foreground',
+            )}
           >
             {paso.label}
           </span>

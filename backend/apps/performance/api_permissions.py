@@ -72,6 +72,9 @@ def puede_autogestionar(user) -> bool:
     """
     El CEO: define sus propios objetivos y su resultado queda aprobado al cargarlo.
 
+    Lo segundo, solo si no tiene jefe (ver `aprobador_id`): quien tenga este
+    rol y también un jefe —por ejemplo People— lo aprueba su jefe.
+
     A diferencia del resto, no lo hereda el admin: tiene que estar asignado en
     un rol (o como permiso extra). Si no, cada administrador se aprobaría sus
     propios resultados sin que nadie los mire.
@@ -197,9 +200,12 @@ def puede_validar_resultado(user, objetivo) -> bool:
     Es el jefe inmediato, salvo con asesores y promotores (el Trade Marketing
     Manager). Nadie valida lo que él mismo cargó, salvo ese aprobador: el jefe
     puede registrar el % por un colaborador incapacitado y darlo por bueno.
-    People, si lo cargó, no se lo valida a sí mismo.
+    People, si lo cargó, no se lo valida a sí mismo. Y nadie valida su propio
+    resultado, aunque sea People, salvo que sea su propio aprobador (el CEO).
     """
     aprueba = es_aprobador_de(user, objetivo.colaborador)
+    if objetivo.colaborador_id == user.id and not aprueba:
+        return False
     resultado = getattr(objetivo, 'resultado', None)
     if resultado and resultado.cargado_por_id == user.id and not aprueba:
         return False

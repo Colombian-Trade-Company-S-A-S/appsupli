@@ -1,28 +1,35 @@
 """
-Quién puede hacer qué en Ejecución Planner.
+Quién puede hacer qué en Ejecución Planner (decisiones 4, 8 y 9 de People).
 
-Sigue las reglas que ya usa Objetivos y KPIs:
-
-    People        → toda la organización, conexión, calidad, planes y parámetros
-    CEO/Dirección → toda la organización, en solo lectura
-    Líder         → su equipo a cargo directo (`User.manager`) y sus Hitos
+    People        → toda la compañía, conexión, calidad, planes y parámetros
+    CEO           → toda la compañía, en solo lectura
+    Director      → toda su dirección: todos los que tiene debajo
+    Líder         → todo su equipo: todos los que tiene debajo, no solo los directos
     Colaborador   → su propio cumplimiento
 
-Quién se mide: quien tiene el sub-módulo asignado, sin asesores ni promotores
-de punto de venta (no planean en Planner). Es una decisión pendiente con
-People (población); mientras tanto, People controla el alcance asignando el
-sub-módulo.
+«Debajo» sale del organigrama (`User.manager`), siguiendo la cadena hasta el
+final: el director ve a los equipos de sus líderes. El ranking respeta el
+mismo alcance.
+
+Quién se mide (decisión 5): quien tiene encendido el switch «Planner» en
+Gestión de usuarios (`User.medir_planner`) y tiene correo corporativo
+@supli.tech. Solo los planes de esas personas se guardan y se leen.
+
+El Hito ya no se valida (decisión 3): no hay permiso de validación.
 """
-from django.db.models import Q
+
 from rest_framework.permissions import BasePermission
 
 from apps.accounts.models import User
-from apps.performance.api_permissions import asesores_y_promotores, es_lider, puede_autogestionar
+from apps.performance.api_permissions import es_lider
 
 APP_CODE = 'ejecucion-planner'
 
 GESTIONAR = 'planner:gestionar'
 VER_TODO = 'planner:ver_todo'
+
+# Solo cuentan los planes de quien tiene correo corporativo.
+DOMINIO = '@supli.tech'
 
 
 def _codes(user) -> set[str]:
@@ -40,57 +47,86 @@ def _tiene(user, code: str) -> bool:
 
 
 def puede_gestionar(user) -> bool:
-    """People: planes, parámetros, sincronización y calidad del dato."""
+    """People: planes, parámetros, sincronización, recálculos y calidad del dato."""
     return _tiene(user, GESTIONAR)
 
 
 def puede_ver_todo(user) -> bool:
-    """People, CEO y Dirección: el dashboard de toda la organización."""
+    """People y el CEO: toda la compañía."""
     return _tiene(user, VER_TODO) or puede_gestionar(user)
+
+
+def jerarquia() -> dict[int, int | None]:
+    """`{persona: su jefe}` de todas las personas activas."""
+    return dict(User.objects.filter(is_active=True).values_list('id', 'manager_id'))
+
+
+def debajo_de(user_id: int, jefes: dict[int, int | None] | None = None) -> set[int]:
+    """Todos los que la persona tiene debajo en el organigrama, a cualquier nivel."""
+    jefes = jefes if jefes is not None else jerarquia()
+    hijos: dict[int, list[int]] = {}
+    for persona, jefe in jefes.items():
+        if jefe is not None:
+            hijos.setdefault(jefe, []).append(persona)
+    vistos: set[int] = set()
+    pendientes = list(hijos.get(user_id, []))
+    while pendientes:
+        persona = pendientes.pop()
+        if persona in vistos or persona == user_id:
+            continue
+        vistos.add(persona)
+        pendientes.extend(hijos.get(persona, []))
+    return vistos
+
+
+def direccion_de(user_id: int, jefes: dict[int, int | None]) -> int | None:
+    """
+    La dirección de una persona: el directivo de primer nivel por encima de ella.
+
+    Es quien reporta directamente a la cabeza de la compañía (quien no tiene
+    jefe). La cabeza y quien no tiene jefe no pertenecen a ninguna dirección.
+    """
+    cadena = [user_id]
+    vistos = {user_id}
+    while (jefe := jefes.get(cadena[-1])) is not None and jefe not in vistos:
+        cadena.append(jefe)
+        vistos.add(jefe)
+    # cadena = [persona, jefe, …, cabeza]. El directivo es el penúltimo.
+    return cadena[-2] if len(cadena) >= 2 else None
 
 
 def puede_ver(user, colaborador) -> bool:
     if colaborador is None:
         return False
-    return colaborador.id == user.id or puede_ver_todo(user) or colaborador.manager_id == user.id
-
-
-def puede_validar_hito(user, colaborador) -> bool:
-    """
-    El jefe inmediato valida el Hito; People también puede.
-
-    El CEO no tiene jefe: valida el suyo si tiene el rol de autogestión de
-    Performance (decisión pendiente con People, fila 6 de las novedades).
-    """
-    if colaborador is None:
-        return False
-    if puede_gestionar(user):
+    if colaborador.id == user.id or puede_ver_todo(user):
         return True
-    if colaborador.id == user.id:
-        return colaborador.manager_id is None and puede_autogestionar(user)
-    return colaborador.manager_id == user.id
+    return colaborador.id in debajo_de(user.id)
+
+
+def personas_planner():
+    """Las personas que pueden tener plan: activas y con correo @supli.tech."""
+    return User.objects.filter(is_active=True, email__iendswith=DOMINIO)
 
 
 def personas_medidas():
-    """Las personas que deberían tener plan: con el sub-módulo y sin ser de punto de venta."""
-    return (
-        User.objects.filter(is_active=True)
-        .filter(
-            Q(applications__code=APP_CODE)
-            | Q(roles__permissions__application__code=APP_CODE)
-            | Q(extra_permissions__application__code=APP_CODE)
-        )
-        .exclude(asesores_y_promotores())
-        .distinct()
-    )
+    """Las personas que entran en la medición: con correo @supli.tech y switch encendido."""
+    return personas_planner().filter(medir_planner=True)
 
 
-def alcance(user):
-    """A quiénes puede ver en el dashboard: toda la compañía o su equipo directo."""
+def tiene_correo_supli(user) -> bool:
+    return (user.email or '').lower().endswith(DOMINIO)
+
+
+def se_mide(user) -> bool:
+    return bool(user.is_active and user.medir_planner and tiene_correo_supli(user))
+
+
+def alcance(user, jefes: dict[int, int | None] | None = None):
+    """A quiénes ve en el dashboard: toda la compañía o todo su equipo."""
     personas = User.objects.filter(is_active=True)
     if puede_ver_todo(user):
         return personas
-    return personas.filter(Q(manager=user) | Q(pk=user.pk))
+    return personas.filter(pk__in=debajo_de(user.id, jefes))
 
 
 def capacidades(user) -> dict:
@@ -98,7 +134,6 @@ def capacidades(user) -> dict:
         'puede_gestionar': puede_gestionar(user),
         'puede_ver_todo': puede_ver_todo(user),
         'es_lider': es_lider(user),
-        'autovalida_hito': user.manager_id is None and puede_autogestionar(user),
     }
 
 
@@ -122,4 +157,6 @@ class CanGestionarPlanner(BasePermission):
     message = 'Solo People puede administrar Ejecución Planner.'
 
     def has_permission(self, request, view) -> bool:
-        return bool(request.user and request.user.is_authenticated and puede_gestionar(request.user))
+        return bool(
+            request.user and request.user.is_authenticated and puede_gestionar(request.user)
+        )

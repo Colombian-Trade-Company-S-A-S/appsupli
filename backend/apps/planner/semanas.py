@@ -1,17 +1,19 @@
 """
 El calendario de la medición: semanas ISO, festivos de Colombia y los cortes.
 
-Cada semana tiene cuatro momentos (guía, «Ciclo semanal»):
+Cada semana va de corte a corte (decisión 1 de People):
 
-    1. Línea base: lunes 18:00 COT, o martes si el lunes es festivo.
-    2. Ejecución: la sincronización nocturna lee Planner a las 02:00 COT.
-    3. Cierre: domingo 23:59 COT.
-    4. Validación del Hito: de lunes a miércoles de la semana siguiente. Si
-       ese lunes es festivo, la ventana se corre un día (martes a jueves).
+    Corte: lunes 9:00 a. m. COT, o martes 9:00 si el lunes es festivo. En ese
+    mismo momento se cierra la semana anterior y se toma la línea base de la
+    nueva.
+    Ejecución: la sincronización nocturna lee Planner a las 02:00 COT.
+
+El Hito ya no se valida (decisiones 3, 10 y 13): no hay ventana de validación.
 
 Las semanas se nombran como en Planner: «WEEK 46». Por dentro se guardan con
 el año ISO para no confundir la WEEK 1 de dos años distintos.
 """
+
 from __future__ import annotations
 
 import re
@@ -22,8 +24,8 @@ from zoneinfo import ZoneInfo
 
 COT = ZoneInfo('America/Bogota')
 
-HORA_LINEA_BASE = time(18, 0)
-HORA_CIERRE = time(23, 59)
+#: La hora del corte semanal: cierra la semana anterior y abre la nueva.
+HORA_CORTE = time(9, 0)
 
 #: Nombres de depósito que se reconocen como semana. El estándar es
 #: «WEEK 45», pero hoy muchos planes usan «W45», «W 45», «Week 45» o solo «45»:
@@ -111,7 +113,15 @@ class Semana:
 
     @classmethod
     def actual(cls, ahora: datetime | None = None) -> Semana:
-        return cls.de_fecha(_local(ahora).date())
+        """
+        La semana que se está midiendo: va de corte a corte.
+
+        El lunes antes de las 9:00 (o el martes, si el lunes es festivo) la
+        semana en curso todavía es la anterior: el corte no ha pasado.
+        """
+        local = _local(ahora)
+        semana = cls.de_fecha(local.date())
+        return semana.anterior() if local < semana.linea_base else semana
 
     @classmethod
     def desde_codigo(cls, codigo: str) -> Semana:
@@ -158,35 +168,24 @@ class Semana:
     def anterior(self) -> Semana:
         return Semana.de_fecha(self.lunes - timedelta(days=7))
 
-    # Cortes
+    # El corte
     @property
     def dia_linea_base(self) -> date:
-        """El lunes, o el siguiente día hábil si el lunes es festivo."""
+        """El día del corte que la abre: el lunes, o el siguiente día hábil si es festivo."""
         return _primer_dia_habil_desde(self.lunes)
 
     @property
     def linea_base(self) -> datetime:
-        return datetime.combine(self.dia_linea_base, HORA_LINEA_BASE, tzinfo=COT)
+        """El corte que abre la semana: lunes 9:00 (martes si el lunes es festivo)."""
+        return datetime.combine(self.dia_linea_base, HORA_CORTE, tzinfo=COT)
 
     @property
     def cierre(self) -> datetime:
-        return datetime.combine(self.domingo, HORA_CIERRE, tzinfo=COT)
-
-    @property
-    def ventana_hitos(self) -> tuple[date, date]:
-        """Lunes a miércoles de la semana siguiente; un día después si ese lunes es festivo."""
-        inicio = self.siguiente().dia_linea_base
-        return inicio, inicio + timedelta(days=2)
-
-    def ventana_abierta(self, ahora: datetime | None = None) -> bool:
-        inicio, fin = self.ventana_hitos
-        return inicio <= _local(ahora).date() <= fin
-
-    def ventana_cerrada(self, ahora: datetime | None = None) -> bool:
-        return _local(ahora).date() > self.ventana_hitos[1]
+        """El corte que la cierra: el que abre la semana siguiente."""
+        return self.siguiente().linea_base
 
     def cerrada(self, ahora: datetime | None = None) -> bool:
-        return _local(ahora) > self.cierre
+        return _local(ahora) >= self.cierre
 
 
 _MES = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
@@ -212,11 +211,19 @@ def semana_del_corte(tipo: str, ahora: datetime | None = None) -> Semana:
     """
     A qué semana le toca un snapshot que se toma ahora.
 
-    El cierre se programa el domingo a las 23:59, pero si la tarea corre tarde
-    —ya el lunes de madrugada— sigue siendo el cierre de la semana anterior.
+    El corte cierra la semana anterior y abre la de hoy: el cierre es de la
+    anterior y la línea base, de la que empieza. Las lecturas son de la semana
+    en curso, que antes del corte del lunes todavía es la anterior.
     """
-    local = _local(ahora)
-    semana = Semana.de_fecha(local.date())
-    if tipo == 'cierre' and local.weekday() == 0 and local.hour < 12:
+    semana = Semana.de_fecha(_local(ahora).date())
+    if tipo == 'cierre':
         return semana.anterior()
-    return semana
+    if tipo == 'linea_base':
+        return semana
+    return Semana.actual(ahora)
+
+
+def es_dia_de_corte(ahora: datetime | None = None) -> bool:
+    """Si hoy toca el corte: el lunes, o el martes cuando el lunes es festivo."""
+    local = _local(ahora)
+    return local.date() == Semana.de_fecha(local.date()).dia_linea_base

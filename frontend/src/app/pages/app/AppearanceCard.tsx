@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { CheckIcon, MonitorIcon, MoonIcon, SunIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/core/auth';
@@ -19,7 +19,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Separator,
   Spinner,
 } from '@/shared/components/ui';
 
@@ -30,8 +29,9 @@ const TEMAS: Array<{ value: Theme; label: string; icon: LucideIcon }> = [
 ];
 
 /**
- * Apariencia de la plataforma. Se aplica al instante y se guarda en la cuenta,
- * así la persona ve lo mismo desde cualquier equipo.
+ * Apariencia de la plataforma, en una sola franja: tema, acento y bordes.
+ * Se aplica al instante y se guarda en la cuenta, así la persona ve lo mismo
+ * desde cualquier equipo.
  */
 export function AppearanceCard() {
   const { setUser } = useAuth();
@@ -61,40 +61,29 @@ export function AppearanceCard() {
           {guardando && <Spinner className="size-3.5 text-muted-foreground" />}
         </CardTitle>
         <CardDescription>
-          Se guarda en tu cuenta: la verás igual desde cualquier computador.
+          Se guarda en tu cuenta: la verás igual en cualquier equipo.
         </CardDescription>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-6">
+      {/* Tres columnas iguales separadas por líneas; en el celular, una debajo de otra. */}
+      <CardContent className="grid divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <Grupo titulo="Tema">
-          <div className="grid grid-cols-3 gap-3">
+          <Segmentos>
             {TEMAS.map(({ value, label, icon: Icon }) => (
-              <button
+              <Segmento
                 key={value}
-                type="button"
+                activo={theme === value}
                 onClick={() => cambiar({ theme: value })}
-                aria-pressed={theme === value}
-                className={cn(
-                  'flex flex-col items-center gap-2 rounded-lg border p-3 text-sm transition-colors',
-                  theme === value
-                    ? 'border-primary bg-primary/5 font-medium'
-                    : 'hover:bg-muted/50',
-                )}
               >
-                <VistaPrevia tema={value} />
-                <span className="flex items-center gap-1.5">
-                  <Icon className="size-3.5" />
-                  {label}
-                </span>
-              </button>
+                <Icon className="size-3.5" />
+                {label}
+              </Segmento>
             ))}
-          </div>
+          </Segmentos>
         </Grupo>
 
-        <Separator />
-
-        <Grupo titulo="Color de acento">
-          <div className="flex flex-wrap gap-2">
+        <Grupo titulo="Acento">
+          <div className="flex h-9 items-center gap-2">
             {ACCENTS.map((opcion) => (
               <button
                 key={opcion.value}
@@ -104,16 +93,20 @@ export function AppearanceCard() {
                 aria-pressed={accent === opcion.value}
                 onClick={() => cambiar({ accent: opcion.value as Accent })}
                 className={cn(
-                  'flex size-9 items-center justify-center rounded-full border-2 transition-colors',
+                  'flex size-8 items-center justify-center rounded-full border-2 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                   accent === opcion.value ? 'border-foreground' : 'border-transparent',
                 )}
               >
                 <span
-                  className="flex size-7 items-center justify-center rounded-full ring-1 ring-border"
+                  className="flex size-6 items-center justify-center rounded-full ring-1 ring-border"
                   style={{ background: opcion.swatch }}
                 >
                   {accent === opcion.value && (
-                    <CheckIcon className="size-4" style={{ color: opcion.check }} strokeWidth={3} />
+                    <CheckIcon
+                      className="size-3.5"
+                      style={{ color: opcion.check }}
+                      strokeWidth={3}
+                    />
                   )}
                 </span>
               </button>
@@ -121,77 +114,68 @@ export function AppearanceCard() {
           </div>
         </Grupo>
 
-        <Separator />
-
         <Grupo titulo="Bordes">
-          <div className="grid grid-cols-3 gap-3">
+          <Segmentos>
             {RADII.map((opcion) => (
-              <button
+              <Segmento
                 key={opcion.value}
-                type="button"
+                activo={radius === opcion.value}
                 onClick={() => cambiar({ radius: opcion.value as Radius })}
-                aria-pressed={radius === opcion.value}
-                className={cn(
-                  'flex flex-col items-center gap-2 rounded-lg border p-3 text-sm transition-colors',
-                  radius === opcion.value
-                    ? 'border-primary bg-primary/5 font-medium'
-                    : 'hover:bg-muted/50',
-                )}
               >
                 <span
-                  className="h-8 w-full border-2 border-foreground/70"
+                  aria-hidden
+                  className="size-3 border-[1.5px] border-current"
                   style={{ borderRadius: opcion.preview }}
                 />
                 {opcion.label}
-              </button>
+              </Segmento>
             ))}
-          </div>
+          </Segmentos>
         </Grupo>
       </CardContent>
     </Card>
   );
 }
 
-function Grupo({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+/** Una columna: su título arriba y el control debajo, centrados. */
+function Grupo({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    <section className="flex flex-col items-center gap-3 py-4 first:pt-0 last:pb-0 sm:px-6 sm:py-1 sm:first:pl-0 sm:first:pt-1 sm:last:pr-0 sm:last:pb-1">
+      <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
         {titulo}
       </h3>
-      {children}
+      <div className="flex w-full max-w-xs justify-center">{children}</div>
     </section>
   );
 }
 
-/** Miniatura con los colores de marca de cada tema: blanco puro o azul noche. */
-const MINIATURA = {
-  light: { fondo: 'bg-white', barra: 'bg-[#e6e1f5]', tenue: 'bg-[#efebfa]' },
-  dark: { fondo: 'bg-[#0a0818]', barra: 'bg-[#2a2450]', tenue: 'bg-[#1d1838]' },
-};
-
-function VistaPrevia({ tema }: { tema: Theme }) {
-  if (tema === 'system') {
-    return (
-      <span className="flex h-12 w-full overflow-hidden rounded border">
-        <Mitad tema="light" className="w-1/2" />
-        <Mitad tema="dark" className="w-1/2" />
-      </span>
-    );
-  }
-  return (
-    <span className="flex h-12 w-full overflow-hidden rounded border">
-      <Mitad tema={tema} className="w-full" />
-    </span>
-  );
+/** Un grupo de botones que se comporta como un solo control, todos del mismo ancho. */
+function Segmentos({ children }: { children: ReactNode }) {
+  return <div className="grid h-9 w-full grid-cols-3 rounded-lg border p-0.5">{children}</div>;
 }
 
-function Mitad({ tema, className }: { tema: 'light' | 'dark'; className: string }) {
-  const c = MINIATURA[tema];
+function Segmento({
+  activo,
+  onClick,
+  children,
+}: {
+  activo: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
   return (
-    <span className={cn('flex flex-col gap-1 p-1.5', c.fondo, className)}>
-      <span className="h-1.5 w-1/3 rounded-full bg-primary" />
-      <span className={cn('h-1.5 w-full rounded-full', c.barra)} />
-      <span className={cn('h-1.5 w-2/3 rounded-full', c.tenue)} />
-    </span>
+    <button
+      type="button"
+      aria-pressed={activo}
+      onClick={onClick}
+      className={cn(
+        'flex min-w-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-xs transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        activo
+          ? 'bg-primary/10 font-medium text-foreground'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   );
 }

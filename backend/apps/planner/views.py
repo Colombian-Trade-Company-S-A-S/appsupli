@@ -6,17 +6,21 @@ Las pestañas del prototipo, una por bloque:
     Cómo funciona     → opciones (ciclo, fórmulas y parámetros vigentes)
     Mi cumplimiento   → mi-cumplimiento
     Dashboard         → dashboard, personas/<id>
-    Validar Hitos     → hitos, hitos/<id>/validar
-    Conexión y calidad→ conexion, sincronizar, inventario, planes
-    Parámetros        → parametros
+    Conexión y calidad→ conexion, sincronizar (en segundo plano), planes (solo
+                        lectura: el plan de cada persona sale de su URL de Planner)
+    Parámetros        → parametros, parametros/recalcular
+
+El Hito ya no se valida (decisión 3 de People): no hay pestaña de validación.
 """
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db import transaction
+from django.db.models import ProtectedError, Q
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -29,30 +33,34 @@ from .api_permissions import (
     HasPlannerApp,
     alcance,
     capacidades,
+    direccion_de,
+    jerarquia,
     personas_medidas,
+    personas_planner,
     puede_gestionar,
-    puede_validar_hito,
     puede_ver,
     puede_ver_todo,
+    se_mide,
 )
-from .calculo import calcular_resultado, indice_mensual, promedio, recalcular_semana, semaforo
+from .calculo import indice_mensual, parametros_de, promedio, recalcular_semana, semaforo
 from .graph import GraphClient
-from .inventario import descubrir_planes
 from .models import (
-    EstadoHito,
+    HitoPlanner,
     IncidenciaCalidad,
     Parametros,
     PlanPlanner,
+    RecalculoPlanner,
     ResultadoSemana,
     Sincronizacion,
-    ValidacionHito,
+    TareaMedicion,
 )
-from .semanas import Semana, semanas_del_mes
+from .semanas import Semana, semana_del_corte, semanas_del_mes
+from .sync import LECTURA_MAXIMA, lectura_en_curso, leer_en_segundo_plano
 
 ACCESO = [HasPlannerApp]
 GESTION = [HasPlannerApp, CanGestionarPlanner]
 SEMANAS_EN_HISTORIA = 8
-SIN_DIRECCION = 'Sin dirección'
+SIN_DIRECCION = 'sin'
 SIN_AREA = 'Sin área'
 
 
@@ -78,17 +86,14 @@ def _semana(request, por_defecto: Semana | None = None) -> Semana:
 
 
 def _semana_json(semana: Semana) -> dict:
-    inicio, fin = semana.ventana_hitos
     return {
         'codigo': semana.codigo,
         'etiqueta': semana.etiqueta,
         'rango': semana.rango,
+        # El corte que la abre y el que la cierra (lunes 9:00; martes si es festivo).
         'linea_base': semana.linea_base.isoformat(),
         'cierre': semana.cierre.isoformat(),
-        'ventana_desde': inicio.isoformat(),
-        'ventana_hasta': fin.isoformat(),
         'cerrada': semana.cerrada(),
-        'ventana_abierta': semana.ventana_abierta(),
     }
 
 
@@ -100,6 +105,8 @@ def _parametros_json(p: Parametros) -> dict:
         'peso_hito': _num(p.peso_hito),
         'verde_desde': _num(p.verde_desde),
         'ambar_desde': _num(p.ambar_desde),
+        'vigente_desde': p.vigente_desde.isoformat(),
+        'vigente_hasta': p.vigente_hasta.isoformat() if p.vigente_hasta else None,
         'creado_por': _nombre(p.creado_por),
         'created_at': p.created_at.isoformat() if p.created_at else None,
     }
@@ -114,59 +121,81 @@ def _semanas_disponibles() -> list[Semana]:
     return sorted(vistas, reverse=True)[:26]
 
 
-def _estado_hito(colaborador_id: int, semana: Semana, hitos: dict) -> tuple[str, str, str]:
-    validacion = hitos.get((colaborador_id, semana.anio, semana.numero))
-    if not validacion:
-        return EstadoHito.SIN_REGISTRAR, EstadoHito.SIN_REGISTRAR.label, ''
-    return validacion.estado, validacion.get_estado_display(), validacion.texto
-
-
-def _fila_semana(resultado: ResultadoSemana | None, semana: Semana, hitos: dict,
-                 parametros: Parametros, colaborador_id: int) -> dict:
-    estado, estado_label, texto = _estado_hito(colaborador_id, semana, hitos)
+def _fila_semana(resultado: ResultadoSemana | None, semana: Semana) -> dict:
+    base = {'semana': semana.codigo, 'etiqueta': semana.etiqueta, 'rango': semana.rango}
     if resultado is None:
-        return {
-            'semana': semana.codigo, 'etiqueta': semana.etiqueta, 'rango': semana.rango,
-            'con_dato': False, 'hito_estado': estado, 'hito_estado_label': estado_label, 'hito_texto': texto,
-        }
+        return {**base, 'con_dato': False, 'hito_registrado': False, 'hitos_registrados': 0}
     return {
-        'semana': semana.codigo,
-        'etiqueta': semana.etiqueta,
-        'rango': semana.rango,
+        **base,
         'con_dato': True,
         'weekly_base': resultado.weekly_base,
+        'weekly_agregadas': resultado.weekly_agregadas,
+        'weekly_total': resultado.weekly_total,
         'weekly_completadas': resultado.weekly_completadas,
         'daily_items': resultado.daily_items,
         'daily_marcados': resultado.daily_marcados,
         'pct_weekly': _num(resultado.pct_weekly),
         'pct_daily': _num(resultado.pct_daily),
         'hito': _num(resultado.hito),
-        'hito_estado': estado,
-        'hito_estado_label': estado_label,
-        'hito_texto': texto,
+        'hito_registrado': resultado.hito == Decimal('100'),
+        'hitos_registrados': resultado.hitos_registrados,
         'indice': _num(resultado.indice),
-        'semaforo': semaforo(resultado.indice, parametros),
+        'semaforo': semaforo(resultado.indice, resultado.parametros),
         'final': resultado.final,
         'base_aproximada': resultado.base_aproximada,
+        'parametros_id': resultado.parametros_id,
     }
 
 
-def _historia(colaborador: User, hasta: Semana, parametros: Parametros) -> list[dict]:
+def _historia(colaborador: User, hasta: Semana) -> list[dict]:
     semanas = [hasta]
     for _ in range(SEMANAS_EN_HISTORIA - 1):
         semanas.append(semanas[-1].anterior())
     semanas.reverse()
     resultados = {
         (r.anio, r.semana): r
-        for r in ResultadoSemana.objects.filter(colaborador=colaborador, anio__in={s.anio for s in semanas})
+        for r in ResultadoSemana.objects.filter(
+            colaborador=colaborador, anio__in={s.anio for s in semanas}
+        ).select_related('parametros')
     }
-    hitos = {
-        (v.colaborador_id, v.anio, v.semana): v
-        for v in ValidacionHito.objects.filter(colaborador=colaborador, anio__in={s.anio for s in semanas})
-    }
+    return [_fila_semana(resultados.get((s.anio, s.numero)), s) for s in semanas]
+
+
+def _hitos_de(colaborador: User, semana: Semana) -> list[dict]:
     return [
-        _fila_semana(resultados.get((s.anio, s.numero)), s, hitos, parametros, colaborador.id)
-        for s in semanas
+        {
+            'titulo': h.titulo,
+            'registrado': h.registrado,
+            'total_items': h.total_items,
+            'items': h.items,
+        }
+        for h in HitoPlanner.objects.filter(
+            colaborador=colaborador, anio=semana.anio, semana=semana.numero
+        )
+    ]
+
+
+def _tareas_de(plan: PlanPlanner | None, semana: Semana) -> list[dict]:
+    """La trazabilidad de la semana: cuándo entró cada tarea y por dónde se movió."""
+    if plan is None:
+        return []
+    return [
+        {
+            'titulo': t.titulo,
+            'etiquetas': t.etiquetas,
+            'creada_at': t.creada_at.isoformat() if t.creada_at else None,
+            'entro_at': t.entro_at.isoformat(),
+            'en_linea_base': t.en_linea_base,
+            'deposito': t.bucket_nombre,
+            'completada': t.completada,
+            'movimientos': [
+                {'desde': m.desde_bucket, 'hacia': m.hacia_bucket, 'at': m.detectado_at.isoformat()}
+                for m in t.movimientos.all()
+            ],
+        }
+        for t in TareaMedicion.objects.filter(
+            plan=plan, anio=semana.anio, semana=semana.numero
+        ).prefetch_related('movimientos')
     ]
 
 
@@ -180,26 +209,35 @@ def opciones(request):
     actual = Semana.actual()
     plan = PlanPlanner.objects.filter(colaborador=request.user, activo=True).first()
     meses = sorted({s.mes for s in _semanas_disponibles()}, reverse=True)
-    return Response({
-        'semana_actual': _semana_json(actual),
-        'semanas': [_semana_json(s) for s in _semanas_disponibles()],
-        'meses': [{'codigo': f'{a}-{m:02d}', 'anio': a, 'mes': m} for a, m in meses],
-        'parametros': _parametros_json(Parametros.vigentes()),
-        'capacidades': capacidades(request.user),
-        'mi_plan': {'titulo': plan.titulo, 'grupo': plan.grupo_nombre} if plan else None,
-    })
+    return Response(
+        {
+            'semana_actual': _semana_json(actual),
+            'semanas': [_semana_json(s) for s in _semanas_disponibles()],
+            'meses': [{'codigo': f'{a}-{m:02d}', 'anio': a, 'mes': m} for a, m in meses],
+            'parametros': _parametros_json(Parametros.vigentes()),
+            'capacidades': capacidades(request.user),
+            'mi_plan': {'titulo': plan.titulo, 'grupo': plan.grupo_nombre} if plan else None,
+            'me_mido': se_mide(request.user),
+        }
+    )
 
 
 @api_view(['GET'])
 @permission_classes(ACCESO)
 def mi_cumplimiento(request):
     """El índice semanal y mensual propio, con las últimas semanas y el detalle de la elegida."""
-    return Response(_cumplimiento_de(request.user, _semana(request)))
+    # Con su área y su jefe en la misma consulta (el usuario de la petición no los trae).
+    yo = (
+        User.objects.select_related('area', 'manager')
+        .defer('manager__foto')
+        .get(pk=request.user.pk)
+    )
+    return Response(_cumplimiento_de(yo, _semana(request)))
 
 
 def _cumplimiento_de(persona: User, semana: Semana) -> dict:
-    parametros = Parametros.vigentes()
-    historia = _historia(persona, semana, parametros)
+    parametros = parametros_de(semana)
+    historia = _historia(persona, semana)
     anio, mes = semana.mes
     mensual = indice_mensual(persona.id, anio, mes)
     plan = PlanPlanner.objects.filter(colaborador=persona, activo=True).first()
@@ -210,61 +248,72 @@ def _cumplimiento_de(persona: User, semana: Semana) -> dict:
             'cargo': persona.position,
             'area': persona.area.name if persona.area_id else '',
             'lider': _nombre(persona.manager) if persona.manager_id else '',
+            'se_mide': se_mide(persona),
         },
         'plan': {'titulo': plan.titulo, 'grupo': plan.grupo_nombre} if plan else None,
         'semana': _semana_json(semana),
         'actual': historia[-1],
         'historia': historia,
+        'hitos': _hitos_de(persona, semana),
+        'tareas': _tareas_de(plan, semana),
+        'parametros': _parametros_json(parametros),
         'indice_mensual': _num(mensual),
         'semanas_del_mes': len(semanas_del_mes(anio, mes)),
-        'semaforo_mensual': semaforo(mensual, parametros),
+        'semaforo_mensual': semaforo(mensual, Parametros.para_fecha(date(anio, mes, 1))),
     }
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────
 
 
-def _entradas(personas: list[User], semanas: list[Semana]) -> dict[int, list[dict]]:
-    """Por persona, sus semanas del periodo con su resultado y el estado del Hito."""
+def _entradas(personas: list[User], semanas: list[Semana]) -> dict[int, list[ResultadoSemana]]:
+    """Por persona, sus resultados de las semanas del periodo."""
     ids = [p.id for p in personas]
-    anios = {s.anio for s in semanas}
-    numeros = {s.numero for s in semanas}
-    resultados = defaultdict(dict)
-    for r in ResultadoSemana.objects.filter(colaborador_id__in=ids, anio__in=anios, semana__in=numeros):
-        resultados[r.colaborador_id][(r.anio, r.semana)] = r
-    hitos = {
-        (v.colaborador_id, v.anio, v.semana): v.estado
-        for v in ValidacionHito.objects.filter(colaborador_id__in=ids, anio__in=anios, semana__in=numeros)
-    }
-    salida = {}
-    for persona in personas:
-        filas = []
-        for s in semanas:
-            r = resultados[persona.id].get((s.anio, s.numero))
-            if r is None:
-                continue
-            estado = hitos.get((persona.id, s.anio, s.numero), EstadoHito.SIN_REGISTRAR)
-            filas.append({'r': r, 'estado': estado})
-        salida[persona.id] = filas
+    salida: dict[int, list[ResultadoSemana]] = defaultdict(list)
+    for r in ResultadoSemana.objects.filter(
+        colaborador_id__in=ids,
+        anio__in={s.anio for s in semanas},
+        semana__in={s.numero for s in semanas},
+    ):
+        if Semana(r.anio, r.semana) in semanas:
+            salida[r.colaborador_id].append(r)
     return salida
 
 
-def _agregar(entradas: list[dict]) -> dict | None:
+def _agregar(resultados: list[ResultadoSemana]) -> dict | None:
     """Promedios de un grupo (persona, área, dirección u organización), como en el prototipo."""
-    if not entradas:
+    if not resultados:
         return None
-    hitos_ok = sum(1 for e in entradas if e['r'].hito == Decimal('100'))
+    hitos = sum(1 for r in resultados if r.hito == Decimal('100'))
     alertas = sum(
-        (1 if e['r'].daily_items == 0 else 0)
-        + (1 if e['estado'] in (EstadoHito.PENDIENTE, EstadoHito.SIN_VALIDAR) else 0)
-        for e in entradas
+        (1 if r.hito != Decimal('100') else 0)
+        + (1 if r.weekly_total == 0 or r.daily_items == 0 else 0)
+        for r in resultados
     )
     return {
-        'pct_weekly': _num(promedio(e['r'].pct_weekly for e in entradas)),
-        'pct_daily': _num(promedio(e['r'].pct_daily for e in entradas)),
-        'hito_cumplido': round(hitos_ok * 100 / len(entradas), 1),
-        'indice': _num(promedio(e['r'].indice for e in entradas)),
+        'pct_weekly': _num(promedio(r.pct_weekly for r in resultados)),
+        'pct_daily': _num(promedio(r.pct_daily for r in resultados)),
+        'hito_registrado': round(hitos * 100 / len(resultados), 1),
+        'indice': _num(promedio(r.indice for r in resultados)),
         'alertas': alertas,
+    }
+
+
+def _fila_grupo(nombre, tipo, clave, miembros, por_persona, lider, parametros) -> dict:
+    resultados = [r for m in miembros for r in por_persona.get(m.id, [])]
+    agregado = _agregar(resultados) or {}
+    return {
+        'nombre': nombre,
+        'tipo': tipo,
+        'clave': clave,
+        'lider': lider,
+        'personas': len(miembros),
+        'pct_weekly': agregado.get('pct_weekly'),
+        'pct_daily': agregado.get('pct_daily'),
+        'hito_registrado': agregado.get('hito_registrado'),
+        'indice': agregado.get('indice'),
+        'semaforo': semaforo(agregado.get('indice'), parametros),
+        'alertas': agregado.get('alertas', 0),
     }
 
 
@@ -272,13 +321,18 @@ def _agregar(entradas: list[dict]) -> dict | None:
 @permission_classes(ACCESO)
 def dashboard(request):
     """
-    El índice por organización → dirección → área → persona.
+    El índice por compañía → dirección → área → persona (decisiones 4, 8 y 9).
 
-    People, CEO y Dirección empiezan en la organización y bajan de nivel. Un
-    líder ve directamente a sus personas a cargo, como en Objetivos y KPIs.
+    Cada quien ve lo que tiene debajo: el líder todo su equipo, el director
+    toda su dirección, y People y el CEO toda la compañía. La dirección es la
+    del organigrama: quien reporta a la cabeza de la compañía y todos los que
+    tiene debajo. El ranking (la lista de personas) respeta el mismo alcance.
+
+    `nivel`: org (por dirección), direccion (por área), area (personas) o
+    persona (todas las personas del alcance). `direccion` es el id del
+    directivo; `area`, el nombre del área.
     """
     user = request.user
-    parametros = Parametros.vigentes()
     periodo = request.query_params.get('periodo', 'semana')
     semana = _semana(request)
     if periodo == 'mes':
@@ -288,98 +342,134 @@ def dashboard(request):
             anio, mes = semana.mes
         semanas = semanas_del_mes(anio, mes)
         etiqueta = f'{mes:02d}/{anio}'
+        parametros = Parametros.para_fecha(date(anio, mes, 1))
     else:
         semanas = [semana]
         etiqueta = f'{semana.etiqueta} · {semana.rango}'
+        parametros = parametros_de(semana)
 
     ver_todo = puede_ver_todo(user)
-    personas = alcance(user).select_related('area', 'manager')
-    if not ver_todo:
-        personas = personas.filter(manager=user)
-    nivel = request.query_params.get('nivel', 'org' if ver_todo else 'persona')
+    jefes = jerarquia()
+    personas = list(
+        alcance(user, jefes)
+        .filter(pk__in=personas_medidas())
+        .select_related('area', 'manager')
+        .defer('manager__foto')
+    )
+    direcciones = {p.id: direccion_de(p.id, jefes) for p in personas}
+
+    areas_del_alcance = {p.area_id for p in personas}
+    por_defecto = 'org' if ver_todo else ('direccion' if len(areas_del_alcance) > 1 else 'persona')
+    nivel = request.query_params.get('nivel') or por_defecto
     direccion = request.query_params.get('direccion')
     area = request.query_params.get('area')
-    if ver_todo:
-        if nivel in ('direccion', 'area') and direccion is not None:
-            personas = personas.filter(direccion=('' if direccion == SIN_DIRECCION else direccion))
-        if nivel == 'area' and area is not None:
-            personas = personas.filter(area__isnull=True) if area == SIN_AREA else personas.filter(area__name=area)
-    else:
-        nivel = 'persona'
-    personas = list(personas.filter(Q(resultados_planner__isnull=False) | Q(planes_planner__activo=True)).distinct())
+
+    if direccion and nivel in ('direccion', 'area'):
+        clave = None if direccion == SIN_DIRECCION else int(direccion)
+        personas = [p for p in personas if direcciones[p.id] == clave]
+    if area and nivel == 'area':
+        personas = [p for p in personas if (p.area.name if p.area_id else SIN_AREA) == area]
+
     por_persona = _entradas(personas, semanas)
-    todas = [e for filas in por_persona.values() for e in filas]
+    todas = [r for filas in por_persona.values() for r in filas]
+    directivos = {
+        u.id: u
+        for u in User.objects.filter(pk__in={d for d in direcciones.values() if d}).select_related(
+            'area'
+        )
+    }
+
+    def nombre_direccion(clave: int | None) -> str:
+        jefe = directivos.get(clave)
+        return f'{jefe.area.name if jefe.area_id else _nombre(jefe)}' if jefe else 'Sin dirección'
 
     filas = []
     if nivel == 'org':
         grupos = defaultdict(list)
         for p in personas:
-            grupos[p.direccion or SIN_DIRECCION].append(p)
-        for nombre, miembros in sorted(grupos.items()):
-            filas.append(_fila_grupo(nombre, 'direccion', miembros, por_persona, '—', parametros))
+            grupos[direcciones[p.id]].append(p)
+        for clave, miembros in grupos.items():
+            jefe = directivos.get(clave)
+            nombre = nombre_direccion(clave)
+            filas.append(
+                _fila_grupo(
+                    nombre,
+                    'direccion',
+                    str(clave) if clave else SIN_DIRECCION,
+                    miembros,
+                    por_persona,
+                    _nombre(jefe) if jefe else '—',
+                    parametros,
+                )
+            )
     elif nivel == 'direccion':
         grupos = defaultdict(list)
         for p in personas:
             grupos[p.area.name if p.area_id else SIN_AREA].append(p)
-        for nombre, miembros in sorted(grupos.items()):
+        for nombre, miembros in grupos.items():
             lider = Counter(_nombre(m.manager) for m in miembros if m.manager_id).most_common(1)
-            filas.append(_fila_grupo(nombre, 'area', miembros, por_persona,
-                                     lider[0][0] if lider else '—', parametros))
+            filas.append(
+                _fila_grupo(
+                    nombre,
+                    'area',
+                    nombre,
+                    miembros,
+                    por_persona,
+                    lider[0][0] if lider else '—',
+                    parametros,
+                )
+            )
     else:
-        for p in sorted(personas, key=_nombre):
-            fila = _fila_grupo(_nombre(p), 'persona', [p], por_persona,
-                               _nombre(p.manager) if p.manager_id else '—', parametros)
+        for p in personas:
+            fila = _fila_grupo(
+                _nombre(p),
+                'persona',
+                str(p.id),
+                [p],
+                por_persona,
+                _nombre(p.manager) if p.manager_id else '—',
+                parametros,
+            )
             fila['id'] = p.id
             fila['cargo'] = p.position
+            # Para filtrar la lista en el navegador sin volver a pedirla.
+            fila['area'] = p.area.name if p.area_id else SIN_AREA
+            fila['direccion'] = nombre_direccion(direcciones[p.id])
+            fila['direccion_clave'] = str(direcciones[p.id]) if direcciones[p.id] else SIN_DIRECCION
             filas.append(fila)
+    # El ranking: de mayor a menor índice; los que no tienen dato, al final.
+    filas.sort(key=lambda f: (f['indice'] is None, -(f['indice'] or 0), f['nombre']))
 
     agregado = _agregar(todas)
-    pendientes = ValidacionHito.objects.filter(
-        colaborador__in=personas, estado=EstadoHito.PENDIENTE,
-        anio__in={s.anio for s in semanas}, semana__in={s.numero for s in semanas},
-    ).count()
-    return Response({
-        'periodo': periodo,
-        'etiqueta': etiqueta,
-        'nivel': nivel,
-        'direccion': direccion,
-        'area': area,
-        'alcance': 'compania' if ver_todo else 'equipo',
-        'kpis': {
-            'indice': agregado and agregado['indice'],
-            'pct_weekly': agregado and agregado['pct_weekly'],
-            'pct_daily': agregado and agregado['pct_daily'],
-            'hitos_por_validar': pendientes,
-            'alertas': agregado['alertas'] if agregado else 0,
-            'semaforo': semaforo(agregado and agregado['indice'], parametros),
-        },
-        'filas': filas,
-        'parametros': _parametros_json(parametros),
-    })
-
-
-def _fila_grupo(nombre, tipo, miembros, por_persona, lider, parametros) -> dict:
-    entradas = [e for m in miembros for e in por_persona.get(m.id, [])]
-    agregado = _agregar(entradas) or {}
-    return {
-        'nombre': nombre,
-        'tipo': tipo,
-        'lider': lider,
-        'personas': len(miembros),
-        'pct_weekly': agregado.get('pct_weekly'),
-        'pct_daily': agregado.get('pct_daily'),
-        'hito_cumplido': agregado.get('hito_cumplido'),
-        'indice': agregado.get('indice'),
-        'semaforo': semaforo(agregado.get('indice'), parametros),
-        'alertas': agregado.get('alertas', 0),
-    }
+    return Response(
+        {
+            'periodo': periodo,
+            'etiqueta': etiqueta,
+            'nivel': nivel,
+            'direccion': direccion,
+            'area': area,
+            'alcance': 'compania' if ver_todo else 'equipo',
+            'kpis': {
+                'indice': agregado and agregado['indice'],
+                'pct_weekly': agregado and agregado['pct_weekly'],
+                'pct_daily': agregado and agregado['pct_daily'],
+                'hito_registrado': agregado and agregado['hito_registrado'],
+                'alertas': agregado['alertas'] if agregado else 0,
+                'semaforo': semaforo(agregado and agregado['indice'], parametros),
+            },
+            'filas': filas,
+            'parametros': _parametros_json(parametros),
+        }
+    )
 
 
 @api_view(['GET'])
 @permission_classes(ACCESO)
 def persona(request, pk: int):
-    """El detalle de una persona: sus últimas semanas. Para el líder, solo su equipo."""
-    colaborador = User.objects.select_related('area', 'manager').filter(pk=pk).first()
+    """El detalle de una persona: sus últimas semanas. Cada quien, solo lo que tiene debajo."""
+    colaborador = (
+        User.objects.select_related('area', 'manager').defer('manager__foto').filter(pk=pk).first()
+    )
     if colaborador is None:
         raise NotFound('No existe esa persona.')
     if not puede_ver(request.user, colaborador):
@@ -387,115 +477,13 @@ def persona(request, pk: int):
     return Response(_cumplimiento_de(colaborador, _semana(request)))
 
 
-# ── Validar Hitos ─────────────────────────────────────────────────────────
-
-
-def _semana_a_validar() -> Semana:
-    """La semana anterior: su Hito se valida de lunes a miércoles de esta semana."""
-    return Semana.actual().anterior()
-
-
-@api_view(['GET'])
-@permission_classes(ACCESO)
-def hitos(request):
-    """
-    Los Hitos de una semana para validar.
-
-    El líder ve los de su equipo a cargo directo; People los de todos (o los
-    de un líder, con `lider`). Se validan de lunes a miércoles de la semana
-    siguiente; People puede corregir fuera de la ventana.
-    """
-    user = request.user
-    semana = _semana(request, _semana_a_validar())
-    qs = ValidacionHito.objects.filter(anio=semana.anio, semana=semana.numero).select_related(
-        'colaborador', 'colaborador__manager', 'validado_por'
-    )
-    if puede_gestionar(user):
-        lider = request.query_params.get('lider')
-        if lider:
-            qs = qs.filter(colaborador__manager_id=lider)
-    else:
-        filtro = Q(colaborador__manager=user)
-        if capacidades(user)['autovalida_hito']:
-            filtro |= Q(colaborador=user)
-        qs = qs.filter(filtro)
-    lideres = []
-    if puede_gestionar(user):
-        lideres = [
-            {'id': u.id, 'nombre': _nombre(u)}
-            for u in User.objects.filter(
-                pk__in=ValidacionHito.objects.filter(anio=semana.anio, semana=semana.numero)
-                .values('colaborador__manager')
-            ).order_by('first_name')
-        ]
-    abierta = semana.ventana_abierta()
-    return Response({
-        'semana': _semana_json(semana),
-        'ventana_abierta': abierta,
-        'puede_fuera_de_ventana': puede_gestionar(user),
-        'lideres': lideres,
-        'hitos': [
-            {
-                'id': v.id,
-                'persona_id': v.colaborador_id,
-                'persona': _nombre(v.colaborador),
-                'lider': _nombre(v.colaborador.manager) if v.colaborador.manager_id else '',
-                'texto': v.texto,
-                'estado': v.estado,
-                'estado_label': v.get_estado_display(),
-                'comentario': v.comentario,
-                'validado_por': _nombre(v.validado_por),
-                'validado_at': v.validado_at.isoformat() if v.validado_at else None,
-                'puede_validar': (abierta or puede_gestionar(user))
-                and v.estado != EstadoHito.SIN_REGISTRAR
-                and puede_validar_hito(user, v.colaborador),
-            }
-            for v in sorted(qs, key=lambda v: _nombre(v.colaborador))
-        ],
-    })
-
-
-@api_view(['POST'])
-@permission_classes(ACCESO)
-def validar_hito(request, pk: int):
-    """Marca el Hito como Cumplido o No cumplido, con un comentario opcional."""
-    validacion = ValidacionHito.objects.select_related('colaborador').filter(pk=pk).first()
-    if validacion is None:
-        raise NotFound('No existe ese Hito.')
-    user = request.user
-    if not puede_validar_hito(user, validacion.colaborador):
-        raise PermissionDenied('Solo el líder de esta persona o People validan su Hito.')
-    semana = Semana(validacion.anio, validacion.semana)
-    if not semana.ventana_abierta() and not puede_gestionar(user):
-        inicio, fin = semana.ventana_hitos
-        raise ValidationError({'estado': [
-            f'La ventana de validación de {semana.etiqueta} fue del {inicio:%d/%m} al {fin:%d/%m}.'
-        ]})
-    if validacion.estado == EstadoHito.SIN_REGISTRAR:
-        raise ValidationError({'estado': ['Esta persona no registró Hito en Planner esa semana.']})
-    estado = request.data.get('estado')
-    if estado not in (EstadoHito.CUMPLIDO, EstadoHito.NO_CUMPLIDO):
-        raise ValidationError({'estado': ['Debe ser «cumplido» o «no_cumplido».']})
-    validacion.estado = estado
-    validacion.comentario = (request.data.get('comentario') or '').strip()[:2000]
-    validacion.validado_por = user
-    validacion.validado_at = timezone.now()
-    validacion.save()
-    plan = PlanPlanner.objects.filter(colaborador=validacion.colaborador, activo=True).first()
-    if plan:
-        calcular_resultado(plan, semana, Parametros.vigentes())
-    return Response({
-        'id': validacion.id,
-        'estado': validacion.estado,
-        'estado_label': validacion.get_estado_display(),
-        'mensaje': f'Hito de {_nombre(validacion.colaborador)}: {validacion.get_estado_display().lower()}.',
-    })
-
-
 # ── Conexión, calidad y planes (People) ───────────────────────────────────
 
 
 def _lectura_json(s: Sincronizacion) -> dict:
+    # Sin terminar: en curso, o caída si ya pasó el máximo (se reinició el servidor).
+    en_curso = s.terminada_at is None and s.iniciada_at >= timezone.now() - LECTURA_MAXIMA
+    caida = s.terminada_at is None and not en_curso
     return {
         'id': s.id,
         'tipo': s.tipo,
@@ -504,8 +492,11 @@ def _lectura_json(s: Sincronizacion) -> dict:
         'iniciada_at': s.iniciada_at.isoformat(),
         'terminada_at': s.terminada_at.isoformat() if s.terminada_at else None,
         'ejecutada_por': _nombre(s.ejecutada_por) or 'Tarea programada',
-        'estado': s.estado,
-        'estado_label': s.get_estado_display(),
+        'en_curso': en_curso,
+        'estado': Sincronizacion.Estado.ERROR if caida else s.estado,
+        'estado_label': (
+            'En curso' if en_curso else 'Interrumpida' if caida else s.get_estado_display()
+        ),
         'planes_leidos': s.planes_leidos,
         'resumen': s.resumen,
         'errores': s.errores,
@@ -517,150 +508,183 @@ def _lectura_json(s: Sincronizacion) -> dict:
 @permission_classes(GESTION)
 def conexion(request):
     """Última lectura, planes relacionados, incidencias abiertas y la bitácora."""
-    lecturas = list(Sincronizacion.objects.select_related('ejecutada_por')[:15])
+    lecturas = list(
+        Sincronizacion.objects.select_related('ejecutada_por').defer('ejecutada_por__foto')[:15]
+    )
     ultima = next((s for s in lecturas if s.tipo != Sincronizacion.Tipo.INVENTARIO), None)
     medidas = personas_medidas()
     con_plan = medidas.filter(planes_planner__activo=True).distinct().count()
-    abiertas = IncidenciaCalidad.objects.filter(abierta=True).select_related('plan', 'colaborador')
+    abiertas = (
+        IncidenciaCalidad.objects.filter(abierta=True)
+        .select_related('plan', 'colaborador')
+        .defer('colaborador__foto')
+    )
     estado = GraphClient().estado() if request.query_params.get('probar') else None
-    return Response({
-        'estado_graph': estado,
-        'ultima_lectura': _lectura_json(ultima) if ultima else None,
-        'personas_medidas': medidas.count(),
-        'personas_con_plan': con_plan,
-        'planes_relacionados': PlanPlanner.objects.filter(activo=True, colaborador__isnull=False).count(),
-        'incidencias_abiertas': abiertas.count(),
-        'incidencias_criticas': abiertas.filter(severidad=IncidenciaCalidad.Severidad.CRITICA).count(),
-        'incidencias': [
-            {
-                'id': i.id,
-                'tipo': i.tipo,
-                'tipo_label': i.get_tipo_display(),
-                'severidad': i.severidad,
-                'quien': i.plan.titulo if i.plan else _nombre(i.colaborador),
-                'persona': _nombre(i.colaborador),
-                'detalle': i.detalle,
-                'semana': f'WEEK {i.semana}' if i.semana else '',
-                'detectada_at': i.detectada_at.isoformat(),
-            }
-            for i in abiertas[:200]
-        ],
-        'lecturas': [_lectura_json(s) for s in lecturas],
-    })
+    return Response(
+        {
+            'estado_graph': estado,
+            'ultima_lectura': _lectura_json(ultima) if ultima else None,
+            'personas_medidas': medidas.count(),
+            'personas_con_plan': con_plan,
+            'planes_relacionados': PlanPlanner.objects.filter(
+                activo=True, colaborador__isnull=False
+            ).count(),
+            'incidencias_abiertas': abiertas.count(),
+            'incidencias_criticas': abiertas.filter(
+                severidad=IncidenciaCalidad.Severidad.CRITICA
+            ).count(),
+            'incidencias': [
+                {
+                    'id': i.id,
+                    'tipo': i.tipo,
+                    'tipo_label': i.get_tipo_display(),
+                    'severidad': i.severidad,
+                    'quien': i.plan.titulo if i.plan else _nombre(i.colaborador),
+                    'persona': _nombre(i.colaborador),
+                    'detalle': i.detalle,
+                    'semana': f'WEEK {i.semana}' if i.semana else '',
+                    'detectada_at': i.detectada_at.isoformat(),
+                }
+                for i in abiertas[:200]
+            ],
+            'lecturas': [_lectura_json(s) for s in lecturas],
+        }
+    )
 
 
 @api_view(['POST'])
 @permission_classes(GESTION)
 def sincronizar(request):
-    """«Sincronizar ahora»: lee Planner y actualiza la semana en curso."""
-    from .sync import sincronizar as correr
+    """
+    «Sincronizar ahora»: lee Planner y actualiza la semana en curso.
 
-    registro = correr(Sincronizacion.Tipo.MANUAL, ejecutada_por=request.user)
-    return Response(_lectura_json(registro))
+    La lectura tarda minutos, así que corre en segundo plano y la respuesta
+    sale de una vez (202): la pantalla consulta la conexión hasta que termina.
+    Si ya hay una lectura corriendo, devuelve esa en vez de empezar otra.
+    """
+    en_curso = lectura_en_curso()
+    if en_curso:
+        return Response({**_lectura_json(en_curso), 'ya_en_curso': True})
+    tipo = Sincronizacion.Tipo.MANUAL
+    semana = semana_del_corte(tipo, timezone.now())
+    registro = Sincronizacion.objects.create(
+        tipo=tipo, anio=semana.anio, semana=semana.numero, ejecutada_por=request.user
+    )
+    leer_en_segundo_plano(registro)
+    return Response({**_lectura_json(registro), 'ya_en_curso': False}, status=202)
 
 
-@api_view(['POST'])
-@permission_classes(GESTION)
-def inventario(request):
-    """Descubre los planes de todos los grupos y relaciona los que tienen el nombre de alguien."""
-    registro = descubrir_planes(ejecutada_por=request.user, vincular=bool(request.data.get('vincular', True)))
-    return Response(_lectura_json(registro))
-
-
-def _plan_json(p: PlanPlanner) -> dict:
-    if not p.activo:
-        estado = 'Inactivo'
-    elif not p.accesible:
-        estado = 'Inaccesible'
-    elif p.colaborador_id is None:
-        estado = 'Sin persona'
-    else:
-        estado = 'Relacionado'
-    return {
-        'id': p.id,
-        'plan_id': p.plan_id,
-        'titulo': p.titulo,
-        'grupo': p.grupo_nombre,
-        'colaborador_id': p.colaborador_id,
-        'colaborador': _nombre(p.colaborador),
-        'area': p.colaborador.area.name if p.colaborador and p.colaborador.area_id else '',
-        'activo': p.activo,
-        'accesible': p.accesible,
-        'error_lectura': p.error_lectura,
-        'tareas': p.tareas,
-        'ultima_tarea_creada': p.ultima_tarea_creada.isoformat() if p.ultima_tarea_creada else None,
-        'ultima_lectura_at': p.ultima_lectura_at.isoformat() if p.ultima_lectura_at else None,
-        'estado': estado,
-    }
+def _estado_plan(persona: User, plan: PlanPlanner | None) -> str:
+    if not persona.planner_url:
+        return 'Sin URL'
+    if plan is None:
+        return 'URL no válida'
+    if not plan.accesible:
+        return 'Inaccesible'
+    if plan.ultima_lectura_at is None:
+        return 'Sin leer'
+    return 'Leído'
 
 
 @api_view(['GET'])
 @permission_classes(GESTION)
 def planes(request):
-    """La relación plan–persona y quién falta por relacionar."""
-    todos = PlanPlanner.objects.select_related('colaborador', 'colaborador__area')
-    relacionados = set(
-        PlanPlanner.objects.filter(activo=True, colaborador__isnull=False).values_list('colaborador_id', flat=True)
-    )
-    sin_plan = personas_medidas().exclude(pk__in=relacionados).select_related('area').order_by('first_name')
-    candidatos = (
-        User.objects.filter(is_active=True).select_related('area').order_by('first_name', 'last_name')
-    )
-    return Response({
-        'planes': [_plan_json(p) for p in todos],
-        'sin_plan': [
-            {'id': u.id, 'nombre': _nombre(u), 'cargo': u.position, 'area': u.area.name if u.area_id else ''}
-            for u in sin_plan
-        ],
-        'personas': [
-            {'id': u.id, 'nombre': _nombre(u), 'cargo': u.position, 'tiene_plan': u.id in relacionados}
-            for u in candidatos
-        ],
-    })
+    """
+    El plan de cada persona con correo @supli.tech, tal como sale de su URL.
 
-
-@api_view(['PATCH'])
-@permission_classes(GESTION)
-def plan(request, pk: int):
-    """People cambia a quién pertenece un plan, o si se mide."""
-    p = PlanPlanner.objects.select_related('colaborador').filter(pk=pk).first()
-    if p is None:
-        raise NotFound('No existe ese plan.')
-    if 'colaborador' in request.data:
-        valor = request.data.get('colaborador')
-        p.colaborador = User.objects.filter(pk=valor, is_active=True).first() if valor else None
-        if valor and p.colaborador is None:
-            raise ValidationError({'colaborador': ['No existe esa persona o está inactiva.']})
-    if 'activo' in request.data:
-        p.activo = bool(request.data.get('activo'))
-    try:
-        with transaction.atomic():
-            p.save()
-    except IntegrityError:
-        raise ValidationError({'colaborador': [
-            'Esa persona ya tiene otro plan activo. Desactiva el otro primero.'
-        ]}) from None
-    p.refresh_from_db()
-    return Response(_plan_json(p))
+    Solo lectura: el plan se cambia en Gestión de usuarios (campo «URL de
+    Planner»).
+    """
+    personas = list(personas_planner().select_related('area').order_by('first_name', 'last_name'))
+    activos = {
+        p.colaborador_id: p
+        for p in PlanPlanner.objects.filter(activo=True, colaborador__in=[u.id for u in personas])
+    }
+    filas = []
+    for u in personas:
+        p = activos.get(u.id)
+        filas.append(
+            {
+                'id': u.id,
+                'nombre': _nombre(u),
+                'cargo': u.position,
+                'area': u.area.name if u.area_id else '',
+                'se_mide': u.medir_planner,
+                'url': u.planner_url,
+                'estado': _estado_plan(u, p),
+                'plan': {
+                    'plan_id': p.plan_id,
+                    'titulo': p.titulo,
+                    'grupo': p.grupo_nombre,
+                    'error_lectura': p.error_lectura,
+                    'tareas': p.tareas,
+                    'ultima_tarea_creada': (
+                        p.ultima_tarea_creada.isoformat() if p.ultima_tarea_creada else None
+                    ),
+                    'ultima_lectura_at': (
+                        p.ultima_lectura_at.isoformat() if p.ultima_lectura_at else None
+                    ),
+                }
+                if p
+                else None,
+            }
+        )
+    return Response({'personas': filas})
 
 
 # ── Parámetros (People) ───────────────────────────────────────────────────
+
+
+def _proximo_lunes() -> date:
+    """El primer lunes en que puede regir una versión nueva: el de la semana siguiente."""
+    return Semana.actual().siguiente().lunes
+
+
+def _recalculo_json(r: RecalculoPlanner) -> dict:
+    return {
+        'id': r.id,
+        'semana': Semana(r.anio, r.semana).codigo,
+        'etiqueta': f'WEEK {r.semana}',
+        'motivo': r.motivo,
+        'parametros_id': r.parametros_id,
+        'resultados': r.resultados,
+        'autorizado_por': _nombre(r.autorizado_por),
+        'hecho_at': r.hecho_at.isoformat(),
+    }
 
 
 @api_view(['GET', 'POST'])
 @permission_classes(ACCESO)
 def parametros(request):
     """
-    GET: los vigentes y las versiones anteriores. POST (People): guarda una versión nueva.
+    GET: la versión vigente, las versiones con su vigencia y los recálculos.
+    POST (People): una versión nueva, que rige desde un lunes futuro (decisión 7).
 
-    Los pesos deben sumar 100 y el corte verde ser mayor que el ámbar. Al
-    guardar se recalculan las semanas que todavía no son finales.
+    Los pesos deben sumar 100 y el corte verde ser mayor que el ámbar. La
+    versión nueva no toca nada ya calculado: rige desde la semana que se elija,
+    que tiene que ser una que todavía no empieza. La versión anterior queda
+    vigente hasta el día antes.
     """
     if request.method == 'GET':
-        return Response({
-            'vigentes': _parametros_json(Parametros.vigentes()),
-            'versiones': [_parametros_json(p) for p in Parametros.objects.select_related('creado_por')[:10]],
-        })
+        hoy = Semana.actual().lunes
+        return Response(
+            {
+                'vigentes': _parametros_json(Parametros.vigentes()),
+                'versiones': [
+                    {**_parametros_json(p), 'programada': p.vigente_desde > hoy}
+                    for p in Parametros.objects.select_related('creado_por').defer(
+                        'creado_por__foto'
+                    )[:20]
+                ],
+                'proximo_lunes': _proximo_lunes().isoformat(),
+                'recalculos': [
+                    _recalculo_json(r)
+                    for r in RecalculoPlanner.objects.select_related('autorizado_por').defer(
+                        'autorizado_por__foto'
+                    )[:20]
+                ],
+            }
+        )
     if not puede_gestionar(request.user):
         raise PermissionDenied('Solo People define los pesos y los cortes.')
     campos = ('peso_weekly', 'peso_daily', 'peso_hito', 'verde_desde', 'ambar_desde')
@@ -676,10 +700,77 @@ def parametros(request):
         errores['peso_weekly'] = ['Los pesos deben sumar 100%.']
     if valores['verde_desde'] <= valores['ambar_desde']:
         errores['verde_desde'] = ['El corte verde debe ser mayor que el ámbar.']
+
+    minimo = _proximo_lunes()
+    try:
+        pedido = date.fromisoformat(str(request.data.get('vigente_desde') or minimo))
+    except ValueError:
+        errores['vigente_desde'] = ['La fecha no es válida.']
+        pedido = minimo
+    # Rige desde el lunes de la semana elegida.
+    desde = pedido - timedelta(days=pedido.weekday())
+    if desde < minimo:
+        errores['vigente_desde'] = [
+            'Los cambios rigen solo para semanas futuras: elige desde el '
+            f'{minimo:%d/%m/%Y} en adelante.'
+        ]
     if errores:
         raise ValidationError(errores)
-    nuevos = Parametros.objects.create(creado_por=request.user, **valores)
-    actual = Semana.actual()
-    recalcular_semana(actual)
-    recalcular_semana(actual.anterior())
+
+    with transaction.atomic():
+        # Si todavía no había ninguna versión, las semanas anteriores quedan con
+        # la estándar: así ninguna semana se queda sin parámetros.
+        Parametros.para_fecha(desde - timedelta(days=1))
+        # Las versiones programadas desde esa semana en adelante se reemplazan.
+        try:
+            Parametros.objects.filter(vigente_desde__gte=desde).delete()
+        except ProtectedError:
+            raise ValidationError(
+                {
+                    'vigente_desde': [
+                        'Ya hay resultados calculados con una versión de esa fecha en adelante.'
+                    ]
+                }
+            ) from None
+        Parametros.objects.filter(
+            Q(vigente_hasta__isnull=True) | Q(vigente_hasta__gte=desde), vigente_desde__lt=desde
+        ).update(vigente_hasta=desde - timedelta(days=1))
+        nuevos = Parametros.objects.create(creado_por=request.user, vigente_desde=desde, **valores)
     return Response(_parametros_json(nuevos), status=201)
+
+
+@api_view(['POST'])
+@permission_classes(GESTION)
+def recalcular(request):
+    """
+    Recálculo excepcional de una semana: `{semana, motivo}` (decisión 7).
+
+    Recalcula también los resultados ya cerrados, con la versión de parámetros
+    que rige esa semana, y queda en la bitácora con quién lo autorizó y por qué.
+    """
+    try:
+        semana = Semana.desde_codigo(request.data.get('semana') or '')
+    except ValueError as e:
+        raise ValidationError({'semana': [str(e)]}) from None
+    motivo = (request.data.get('motivo') or '').strip()
+    if len(motivo) < 10:
+        raise ValidationError(
+            {'motivo': ['Explica el motivo del recálculo (mínimo 10 caracteres).']}
+        )
+    with transaction.atomic():
+        n = recalcular_semana(semana, forzar=True)
+        registro = RecalculoPlanner.objects.create(
+            anio=semana.anio,
+            semana=semana.numero,
+            motivo=motivo[:2000],
+            parametros=parametros_de(semana),
+            resultados=n,
+            autorizado_por=request.user,
+        )
+    return Response(
+        {
+            **_recalculo_json(registro),
+            'mensaje': f'{semana.etiqueta} recalculada: {n} resultado(s).',
+        },
+        status=201,
+    )

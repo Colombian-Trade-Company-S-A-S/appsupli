@@ -9,6 +9,8 @@ import type {
   Concurso,
   CumplimientoDiario,
   DashboardBelkin,
+  DetallePunto,
+  DetalleRegional,
   FuenteTableroBelkin,
   Opciones,
   OpcionesBelkin,
@@ -225,5 +227,13 @@ export function crearFuentePublica(
     campanas: () => pedir<Campana[]>('campanas'),
     exportarAvance: soloLectura,
     exportarDia: soloLectura,
+    // El detalle de un punto y de una regional, igual que en la app. En Tmk
+    // el detalle es solo por punto: la regional no enlaza (tampoco en la app).
+    detallePunto: (idPunto, mes) =>
+      pedir<DetallePunto>('punto-venta-detalle', { id_punto_venta: idPunto, ...mes }),
+    detalleRegional:
+      canal === 'tmk'
+        ? undefined
+        : (regional, mes) => pedir<DetalleRegional>('regional-detalle', { regional, ...mes }),
   };
 }

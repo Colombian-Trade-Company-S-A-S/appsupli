@@ -53,6 +53,11 @@ class ApplicationSerializer(serializers.ModelSerializer):
         # Solo los sub-módulos a los que la persona llega: el contenedor se
         # dibuja igual, pero adentro no aparece lo que no tiene asignado.
         permitidas = self.context.get('permitidas')
+        por_padre = self.context.get('hijas')
+        if por_padre is not None:
+            # Ya vienen armadas desde la misma consulta: no se pide nada más.
+            hijas = sorted(por_padre.get(obj.pk, []), key=lambda app: (app.order, app.name))
+            return ApplicationSerializer(hijas, many=True, context=self.context).data
         hijas = [app for app in obj.children.all() if app.is_active]
         if permitidas is not None:
             hijas = [app for app in hijas if app.pk in permitidas]
@@ -74,6 +79,9 @@ class UserSerializer(serializers.ModelSerializer):
     foto = serializers.SerializerMethodField()
     applications = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
+    # Si entra con contraseña (y entonces puede cambiarla). Con Microsoft activo,
+    # solo las cuentas de respaldo.
+    usa_contrasena = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -100,6 +108,7 @@ class UserSerializer(serializers.ModelSerializer):
             'radius',
             'app_instalada',
             'aviso_app',
+            'usa_contrasena',
             'avatar_url',
             'foto',
             'is_active',
@@ -114,17 +123,25 @@ class UserSerializer(serializers.ModelSerializer):
 
         return ruta_de_foto(obj)
 
+    def get_usa_contrasena(self, obj: User) -> bool:
+        return contrasena_permitida(obj.email or '')
+
     def get_team_count(self, obj: User) -> int:
         """Personas activas que lo tienen como jefe directo."""
         return obj.team.filter(is_active=True).count()
 
     def get_applications(self, obj: User):
         # El menú se arma con los contenedores; los sub-módulos van adentro.
-        accesibles = obj.get_accessible_applications().prefetch_related('children')
-        permitidas = {app.pk for app in accesibles}
+        # Todo sale de una sola lista: las hijas accesibles de cada contenedor
+        # se agrupan aquí, sin una consulta por sub-módulo.
+        accesibles = list(obj.get_accessible_applications())
+        hijas: dict[int, list] = {}
+        for app in accesibles:
+            if app.parent_id is not None:
+                hijas.setdefault(app.parent_id, []).append(app)
         raiz = [app for app in accesibles if app.parent_id is None]
         return ApplicationSerializer(
-            raiz, many=True, context={'permitidas': permitidas}
+            raiz, many=True, context={'permitidas': {a.pk for a in accesibles}, 'hijas': hijas}
         ).data
 
     def get_permissions(self, obj: User) -> list[str]:

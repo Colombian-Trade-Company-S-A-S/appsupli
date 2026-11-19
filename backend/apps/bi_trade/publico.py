@@ -16,9 +16,10 @@ navegador ni viaja en cada petición. Regenerar la contraseña sube la versión
 del enlace y deja sin efecto los accesos que ya se habían emitido.
 
 Lo que ve el enlace es de solo lectura y está acotado a propósito: los tres
-cálculos del tablero y los catálogos mínimos para sus filtros, o el tablero del
-plan Belkin si el enlace es de ese. No hay exportación, importación ni CRUD, y
-los catálogos no llevan precios.
+cálculos del tablero, el detalle de un punto de venta y de una regional (los
+mismos que en la app; en Tmk, solo el del punto), y los catálogos mínimos para
+sus filtros, o el tablero del plan Belkin si el enlace es de ese. No hay
+exportación, importación ni CRUD, y los catálogos no llevan precios.
 """
 import secrets
 
@@ -39,9 +40,16 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
 from .api_permissions import CanManageData, HasBiTradeApp
-from .canales import CANALES, CLARO, Canal
+from .canales import CANALES, CLARO, TMK, Canal
 from .models import CANALES_FORMULARIO, Campana, CanalEnlace, EnlacePublico
-from .views import _calcular_avance, _calcular_concurso, _calcular_dia, opciones_de
+from .views import (
+    _calcular_avance,
+    _calcular_concurso,
+    _calcular_dia,
+    detalle_punto_de,
+    detalle_regional_de,
+    opciones_de,
+)
 from .views_belkin import _calcular_tablero as _calcular_tablero_belkin
 
 #: Cuánto dura un acceso antes de volver a pedir la contraseña: una jornada.
@@ -212,6 +220,21 @@ def tickets(request, token):
     if canal_del_enlace(request) is not CLARO:
         raise exceptions.NotFound('Este tablero no tiene concurso de tickets.')
     return Response(_calcular_concurso(request))
+
+
+@_vista_publica
+def detalle_punto(request, token):
+    """El detalle de un punto de venta, el mismo de la app: `?id_punto_venta=…&anio=…&mes=…`."""
+    return detalle_punto_de(request, canal_del_enlace(request))
+
+
+@_vista_publica
+def detalle_regional(request, token):
+    """El detalle de una regional, el mismo de la app. Tmk no lo tiene: allá es por punto."""
+    canal = canal_del_enlace(request)
+    if canal is TMK:
+        raise exceptions.NotFound('En este tablero el detalle es por punto de venta.')
+    return detalle_regional_de(request, canal)
 
 
 @_vista_publica
