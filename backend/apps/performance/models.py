@@ -7,7 +7,8 @@ modelos de Django en la misma base, con migraciones y con `TimeStampedModel`
 para la auditoría de fechas.
 
     Periodo    → el mes de medición y su estado (definición → medición → cerrado)
-    Objetivo   → lo que se define para una persona en un mes (Fase 1)
+    Objetivo   → lo que se define para una persona en un mes (Fase 1), que ella
+                 acepta o rechaza con un motivo (HistorialObjetivo)
     Resultado  → el % de cumplimiento registrado y su validación (Fase 2)
     Evidencia  → el soporte de ese resultado (Fase 2)
 
@@ -71,6 +72,20 @@ class EstadoObjetivo(models.TextChoices):
 class EstadoValidacion(models.TextChoices):
     PENDIENTE = 'pendiente', 'Pendiente'
     VALIDADO = 'validado', 'Validado'
+    RECHAZADO = 'rechazado', 'Rechazado'
+
+
+class EstadoAceptacion(models.TextChoices):
+    """
+    Lo que respondió el colaborador al objetivo que le asignaron.
+
+    Lo acepta o lo rechaza con un motivo; si lo rechaza, el jefe lo corrige y
+    vuelve a quedar por aceptar. Cualquier cambio del jefe lo devuelve a
+    «por aceptar»: lo que se aceptó ya no es lo que dice la fila.
+    """
+
+    PENDIENTE = 'pendiente', 'Por aceptar'
+    ACEPTADO = 'aceptado', 'Aceptado'
     RECHAZADO = 'rechazado', 'Rechazado'
 
 
@@ -219,6 +234,20 @@ class Objetivo(TimeStampedModel):
     estado = models.CharField(
         'estado', max_length=20, choices=EstadoObjetivo.choices, default=EstadoObjetivo.BORRADOR
     )
+    # Vacío (`None`) en los objetivos de antes de la aceptación (octubre y
+    # noviembre de 2026): nadie los aceptó ni los rechazó, y no se les pide
+    # ahora. Es a propósito: `None` dice «no aplica», distinto de cualquiera de
+    # los estados. El `db_default` cubre lo que se inserte sin pasar por este
+    # modelo (por ejemplo, una versión anterior del backend durante un deploy).
+    estado_aceptacion = models.CharField(  # noqa: DJ001
+        'aceptación del colaborador',
+        max_length=20,
+        choices=EstadoAceptacion.choices,
+        default=EstadoAceptacion.PENDIENTE,
+        db_default=EstadoAceptacion.PENDIENTE,
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         verbose_name = 'objetivo'
@@ -322,6 +351,48 @@ class Evidencia(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.nombre or self.link_soporte
+
+
+class AccionObjetivo(models.TextChoices):
+    ASIGNADO = 'asignado', 'Objetivo asignado'
+    CORREGIDO = 'corregido', 'Objetivo corregido'
+    ACEPTADO = 'aceptado', 'Aceptado'
+    RECHAZADO = 'rechazado', 'Rechazado'
+
+
+class HistorialObjetivo(TimeStampedModel):
+    """
+    Cada paso de la aceptación del objetivo: quién lo asignó o lo corrigió, y si
+    el colaborador lo aceptó o lo rechazó y por qué.
+
+    Guarda el texto, el KPI y el peso de ese momento: así se ve qué fue lo que
+    se rechazó aunque el jefe ya lo haya cambiado.
+    """
+
+    objetivo = models.ForeignKey(
+        Objetivo, on_delete=models.CASCADE, related_name='historial', verbose_name='objetivo'
+    )
+    accion = models.CharField('acción', max_length=20, choices=AccionObjetivo.choices)
+    autor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='historial_objetivos',
+        verbose_name='autor',
+    )
+    comentario = models.TextField('comentario o motivo', blank=True)
+    texto_objetivo = models.TextField('objetivo en ese momento')
+    kpi = models.TextField('KPI en ese momento')
+    peso = models.DecimalField('peso en ese momento', max_digits=5, decimal_places=2)
+
+    class Meta:
+        verbose_name = 'paso de la aceptación'
+        verbose_name_plural = 'historial de objetivos'
+        ordering = ('created_at', 'id')
+
+    def __str__(self) -> str:
+        return f'{self.get_accion_display()} · objetivo {self.objetivo_id}'
 
 
 class AccionHistorial(models.TextChoices):

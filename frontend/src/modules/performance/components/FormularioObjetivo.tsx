@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { InfoIcon, SaveIcon, XIcon } from 'lucide-react';
+import { CircleXIcon, InfoIcon, SaveIcon, XIcon } from 'lucide-react';
 import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
   Button,
   Field,
   FieldDescription,
@@ -11,6 +14,7 @@ import {
 } from '@/shared/components/ui';
 import type { Objetivo, ObjetivoPayload, Persona } from '../api';
 import { useCrearObjetivo, useEditarObjetivo } from '../hooks';
+import { ultimoRechazo } from './AceptacionObjetivo';
 
 /** Todo se escribe como texto; el backend valida y convierte. */
 interface Campos {
@@ -34,7 +38,7 @@ const desde = (objetivo: Objetivo): Campos => ({
  *
  * Todos los objetivos se miden igual, con el % de cumplimiento de 0 a 100: no
  * hay tipo de medición, unidad ni meta que escoger. El % lo registra el
- * colaborador cuando empieza el mes —su jefe, con asesores y promotores— y lo
+ * colaborador cuando termina el mes —su jefe, con asesores y promotores— y lo
  * aprueba quien corresponda después de revisar la evidencia.
  */
 export function FormularioObjetivo({
@@ -53,6 +57,7 @@ export function FormularioObjetivo({
   onCancelar?: () => void;
 }) {
   const [datos, setDatos] = useState<Campos>(objetivo ? desde(objetivo) : VACIO);
+  const [comentario, setComentario] = useState('');
   const crear = useCrearObjetivo();
   const editar = useEditarObjetivo();
   const guardando = crear.isPending || editar.isPending;
@@ -61,7 +66,14 @@ export function FormularioObjetivo({
   // recarga con lo que corresponda.
   useEffect(() => {
     setDatos(objetivo ? desde(objetivo) : VACIO);
+    setComentario('');
   }, [objetivo]);
+
+  // Si el colaborador lo rechazó, el jefe ve el motivo mientras lo corrige.
+  // Cualquier cambio a un objetivo que entró a la aceptación lo devuelve a
+  // «por aceptar»; el comentario le explica al colaborador qué cambió.
+  const rechazo = objetivo?.estadoAceptacion === 'rechazado' ? ultimoRechazo(objetivo) : undefined;
+  const enAceptacion = !!objetivo && objetivo.estadoAceptacion !== null;
 
   // El responsable del resultado no se escoge: es siempre el jefe directo del
   // colaborador (sale de la jerarquía, y el backend lo impone igual).
@@ -79,11 +91,13 @@ export function FormularioObjetivo({
       kpi: datos.kpi,
       peso: datos.peso,
       fuenteDatos: datos.fuenteDatos,
+      ...(comentario.trim() ? { comentario: comentario.trim() } : {}),
     };
     try {
       if (objetivo) await editar.mutateAsync({ id: objetivo.id, ...payload });
       else await crear.mutateAsync(payload);
       setDatos(VACIO);
+      setComentario('');
       onListo();
     } catch {
       // El aviso lo da la mutación con su toast.
@@ -92,6 +106,15 @@ export function FormularioObjetivo({
 
   return (
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+      {rechazo && (
+        <Alert variant="destructive">
+          <CircleXIcon />
+          <AlertTitle>{rechazo.autorNombre || colaborador.nombre} rechazó este objetivo</AlertTitle>
+          <AlertDescription className="text-pretty whitespace-pre-line">
+            {rechazo.comentario}
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="grid gap-4 md:grid-cols-2">
         <Field className="min-w-0 md:col-span-2">
           <FieldLabel htmlFor="obj-objetivo">Objetivo</FieldLabel>
@@ -174,12 +197,36 @@ export function FormularioObjetivo({
               </>
             ) : (
               <>
-                Cuando empiece el mes, el colaborador registra su % con la evidencia y lo aprueba{' '}
+                Cuando termine el mes, el colaborador registra su % con la evidencia y lo aprueba{' '}
                 <b className="text-foreground">{aprobador}</b>.
               </>
             )}
           </span>
         </div>
+
+        {enAceptacion && (
+          <Field className="min-w-0 md:col-span-2">
+            <FieldLabel htmlFor="obj-comentario">
+              Comentario para {colaborador.nombre} (opcional)
+            </FieldLabel>
+            <Textarea
+              id="obj-comentario"
+              rows={2}
+              maxLength={2000}
+              placeholder={
+                rechazo
+                  ? 'Ajusté la meta a lo que se vendió el mes pasado…'
+                  : 'Qué cambió y por qué'
+              }
+              value={comentario}
+              onChange={(e) => setComentario(e.target.value)}
+            />
+            <FieldDescription>
+              Al guardar cambios, el objetivo le vuelve a llegar para que lo acepte o lo rechace. El
+              comentario queda en el historial.
+            </FieldDescription>
+          </Field>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2 border-t pt-4">

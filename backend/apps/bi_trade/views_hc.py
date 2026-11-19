@@ -137,21 +137,22 @@ def _archivo_query(request):
 
 class _Cruce:
     """
-    Qué SKU y tiendas del archivo existen en HC, en dos consultas.
+    Qué SKU y tiendas del archivo existen en el canal, en dos consultas.
 
     Lo que no existe no entra: se cuenta por fila y se guarda el código, para
-    decir cuáles hay que crear antes de volver a subir el archivo.
+    decir cuáles hay que crear antes de volver a subir el archivo. Por defecto
+    cruza con HC; Falabella le pasa sus modelos.
     """
 
-    def __init__(self, pares):
+    def __init__(self, pares, modelo_producto=ProductoHc, modelo_punto=PuntoVentaHc):
         pares = list(pares)
         self.productos = set(
-            ProductoHc.objects.filter(pk__in={sku for sku, _ in pares}).values_list(
+            modelo_producto.objects.filter(pk__in={sku for sku, _ in pares}).values_list(
                 'id_producto', flat=True
             )
         )
         self.puntos = set(
-            PuntoVentaHc.objects.filter(pk__in={tienda for _, tienda in pares}).values_list(
+            modelo_punto.objects.filter(pk__in={tienda for _, tienda in pares}).values_list(
                 'id_punto_venta', flat=True
             )
         )
@@ -178,7 +179,7 @@ class _Cruce:
         return {
             'sin_producto': self.filas_sin_producto,
             'sin_punto_venta': self.filas_sin_punto,
-            # Los códigos, no solo cuántos: son los que hay que crear en HC.
+            # Los códigos, no solo cuántos: son los que hay que crear en el canal.
             'productos_faltantes': sorted(self.sin_producto),
             'puntos_faltantes': sorted(self.sin_punto),
         }

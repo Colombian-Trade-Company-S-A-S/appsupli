@@ -37,8 +37,9 @@ import { ConfirmarBorrado, EsqueletoPagina } from '@/shared/components/feedback'
 import { ApiError } from '@/shared/api/http-client';
 import {
   etiquetaMes,
+  inicioDeMedicion,
   mesDe,
-  mesEnCurso,
+  mesTerminado,
   performanceApi,
   periodoPorDefecto,
   type Objetivo,
@@ -166,13 +167,15 @@ export default function ObjetivosEquipoPage() {
   // Al asesor de otro líder solo se le revisa el resultado: sus objetivos los
   // define su jefe directo.
   const editable = (resumen?.editable ?? true) && !soloRevision;
-  const empezado = periodoElegido.slice(0, 7) <= mesEnCurso();
+  // El cumplimiento se carga y se aprueba cuando el mes termina: los de
+  // noviembre, desde el 1 de diciembre.
+  const terminado = mesTerminado(periodoElegido);
 
   return (
     <div className="flex flex-col gap-6">
       <Encabezado
         titulo="Registrar objetivos y KPIs"
-        descripcion="Los objetivos los define el jefe. Cuando el mes empieza, el colaborador registra su % de cumplimiento (0 a 100) con la evidencia y el jefe lo aprueba."
+        descripcion="Los objetivos los define el jefe. Cuando el mes termina, el colaborador registra su % de cumplimiento (0 a 100) con la evidencia y el jefe lo aprueba."
       >
         <EstadoDelMes estado={estadoPeriodo} label={resumen?.estadoLabel ?? 'En definición'} />
         {opciones.capacidades.puedeGestionarPeriodos && enDefinicion && (
@@ -337,6 +340,9 @@ export default function ObjetivosEquipoPage() {
           <CardDescription>
             {etiquetaMes(periodoElegido)} · {completos} de {opciones.maximoObjetivos} objetivos · El
             colaborador ve esta tabla en solo lectura.
+            {periodoElegido && !terminado && (
+              <> El cumplimiento se registra desde el {inicioDeMedicion(periodoElegido)}.</>
+            )}
           </CardDescription>
         </CardHeader>
         <EstadoTabla
@@ -356,9 +362,9 @@ export default function ObjetivosEquipoPage() {
             // cargado, deja feedback, aprueba o devuelve) y también puede
             // registrarlo por él. Con asesores y promotores lo registra el
             // jefe y lo aprueba el Trade Marketing Manager: el backend dice
-            // quién puede qué. Antes de que empiece el mes no hay qué cargar.
+            // quién puede qué. Hasta que el mes termine no hay qué cargar.
             onRevisar={(objetivo) => setRevisandoId(objetivo.id)}
-            puedeCargar={(objetivo) => empezado && objetivo.puedeCargar}
+            puedeCargar={(objetivo) => terminado && objetivo.puedeCargar}
           />
         </EstadoTabla>
         <div className="px-6 pb-6">

@@ -4,6 +4,7 @@ import { ApiError } from '@/shared/api/http-client';
 import {
   mesDe,
   performanceApi,
+  type EstadoAceptacion,
   type EstadoValidacion,
   type ObjetivoPayload,
   type ResultadoPayload,
@@ -143,6 +144,24 @@ export const useValidarResultado = () =>
       resultado.estadoValidacion === 'validado'
         ? 'Resultado aprobado'
         : 'Resultado devuelto al colaborador',
+  );
+
+/** El colaborador acepta o rechaza (con el motivo) un objetivo que le asignaron. */
+export const useResponderObjetivo = () =>
+  usePerformanceMutation(
+    ({
+      objetivo,
+      estado,
+      motivo,
+    }: {
+      objetivo: number;
+      estado: Exclude<EstadoAceptacion, 'pendiente'>;
+      motivo?: string;
+    }) => performanceApi.responderObjetivo(objetivo, estado, motivo),
+    (objetivo) =>
+      objetivo.estadoAceptacion === 'aceptado'
+        ? 'Objetivo aceptado'
+        : 'Objetivo rechazado: tu jefe verá el motivo',
   );
 
 /** La excepción del A9: solo People, y siempre hasta un día. */

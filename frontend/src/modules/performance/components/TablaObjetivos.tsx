@@ -34,6 +34,12 @@ import {
   ultimoRechazo,
   type EstadoRevision,
 } from '../flujo';
+import {
+  AceptacionBadge,
+  BotonesRespuesta,
+  HistorialObjetivo,
+  MotivoDelRechazo,
+} from './AceptacionObjetivo';
 import { HistorialResultado } from './HistorialResultado';
 import { SemaforoBadge } from './Piezas';
 
@@ -126,9 +132,16 @@ export function TablaObjetivos({
   const [historialDe, setHistorialDe] = useState<Objetivo | null>(null);
   // El historial lo abre cualquiera que vea la fila: el colaborador, su jefe,
   // People y admin (el backend solo manda los objetivos que cada quien ve).
-  // Quien revisa lo tiene dentro de la revisión, así que no se le repite.
+  // Trae la aceptación del objetivo y el resultado; el del resultado, quien
+  // revisa lo tiene dentro de la revisión, así que no se le repite.
+  const conHistorialDeResultado = (objetivo: Objetivo) => !!objetivo.resultado && !onRevisar;
+  const conHistorial = (objetivo: Objetivo) =>
+    objetivo.historial.length > 0 || conHistorialDeResultado(objetivo);
   const conAcciones =
-    !soloLectura || !!onCargar || !!onRevisar || objetivos.some((o) => !!o.resultado);
+    !soloLectura ||
+    !!onCargar ||
+    !!onRevisar ||
+    objetivos.some((o) => !!o.resultado || o.puedeResponder || conHistorial(o));
 
   return (
     <>
@@ -155,6 +168,8 @@ export function TablaObjetivos({
                     Aprueba: {objetivo.aprobadorNombre}
                   </p>
                 )}
+                <AceptacionBadge objetivo={objetivo} />
+                <MotivoDelRechazo objetivo={objetivo} />
               </TableCell>
               <TableCell className="text-right font-medium tabular-nums">
                 {Number(objetivo.peso)}%
@@ -170,6 +185,8 @@ export function TablaObjetivos({
               </TableCell>
               {conAcciones && (
                 <TableCell className="text-right whitespace-nowrap">
+                  {/* Solo al colaborador, mientras el mes no termina: lo dice el backend. */}
+                  {objetivo.puedeResponder && <BotonesRespuesta objetivo={objetivo} />}
                   {onCargar &&
                     puedeCargar?.(objetivo) &&
                     (objetivo.resultado?.estadoValidacion === 'rechazado' ? (
@@ -194,12 +211,12 @@ export function TablaObjetivos({
                         <UploadIcon />
                       </Button>
                     ))}
-                  {objetivo.resultado && !onRevisar && (
+                  {conHistorial(objetivo) && (
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Historial del resultado de ${objetivo.objetivo}`}
-                      title="Historial: cargas, rechazos con su motivo y aprobaciones"
+                      aria-label={`Historial de ${objetivo.objetivo}`}
+                      title="Historial: asignación, aceptación o rechazo con su motivo, y resultado"
                       onClick={() => setHistorialDe(objetivo)}
                     >
                       <HistoryIcon />
@@ -256,12 +273,24 @@ export function TablaObjetivos({
       <Dialog open={!!historialDe} onOpenChange={(abierto) => !abierto && setHistorialDe(null)}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Historial del resultado</DialogTitle>
+            <DialogTitle>Historial del objetivo</DialogTitle>
             <DialogDescription className="text-pretty">
-              {historialDe?.objetivo} · quién cargó, quién validó o devolvió y por qué.
+              {historialDe?.objetivo} · quién lo asignó, si se aceptó o se rechazó y por qué, y su
+              resultado.
             </DialogDescription>
           </DialogHeader>
-          {historialDe && <HistorialResultado objetivo={historialDe} />}
+          {historialDe && historialDe.historial.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <h3 className="text-sm font-medium">Aceptación</h3>
+              <HistorialObjetivo objetivo={historialDe} />
+            </section>
+          )}
+          {historialDe && conHistorialDeResultado(historialDe) && (
+            <section className="flex flex-col gap-3">
+              <h3 className="text-sm font-medium">Resultado</h3>
+              <HistorialResultado objetivo={historialDe} />
+            </section>
+          )}
         </DialogContent>
       </Dialog>
     </>

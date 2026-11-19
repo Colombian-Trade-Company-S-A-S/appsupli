@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ClipboardCheckIcon, ListTodoIcon, SearchIcon, TargetIcon, UploadIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -31,10 +32,10 @@ const LISTAS: Record<
   { titulo: string; corto: string; quien: string; vacio: string; icono: LucideIcon }
 > = {
   porAsignar: {
-    titulo: 'Pendientes por asignar objetivos y KPIs',
+    titulo: 'Pendientes por asignar o corregir objetivos y KPIs',
     corto: 'Por asignar',
     quien: 'Jefe que los asigna',
-    vacio: 'Todas las personas tienen sus objetivos completos (100%).',
+    vacio: 'Todas las personas tienen sus objetivos completos (100%) y ninguno rechazado.',
     icono: TargetIcon,
   },
   porCargar: {
@@ -63,7 +64,9 @@ const LISTAS: Record<
  */
 export default function PendientesPage() {
   const { data: opciones } = useOpcionesPerformance();
-  const [periodo, setPeriodo] = useState('');
+  // `?periodo=2026-12-01` abre ese mes: el aviso de objetivos rechazados lleva acá.
+  const [params] = useSearchParams();
+  const [periodo, setPeriodo] = useState(params.get('periodo') ?? '');
   const [lista, setLista] = useState<Lista>('porAsignar');
   const [busqueda, setBusqueda] = useState('');
 
@@ -174,10 +177,10 @@ export default function PendientesPage() {
           cargando={isLoading}
           vacio={filas.length === 0}
           icono={<ListTodoIcon />}
-          titulo={sinMedicion ? 'El mes todavía no empieza' : 'Sin pendientes'}
+          titulo={sinMedicion ? 'El mes todavía no termina' : 'Sin pendientes'}
           descripcion={
             sinMedicion
-              ? 'Los cumplimientos se cargan y se aprueban cuando el mes ya empezó.'
+              ? 'Los cumplimientos se cargan y se aprueban cuando el mes termina: desde el 1 del mes siguiente.'
               : busqueda
                 ? 'Nadie coincide con la búsqueda.'
                 : config.vacio

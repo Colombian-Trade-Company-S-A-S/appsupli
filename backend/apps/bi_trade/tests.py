@@ -3592,6 +3592,37 @@ def _venta_falabella(punto, producto, unidades, fecha=date(2026, 3, 4)):
     )
 
 
+def _meta_falabella(punto, producto, unidades=5, fecha=date(2026, 3, 1)):
+    """Falabella solo cuenta lo que tiene meta: sin ella, la venta no se ve en el tablero."""
+    return MetaComercialFalabella.objects.create(
+        id_producto=producto, id_punto_venta=punto, fecha_meta=fecha, meta_cantidad=unidades
+    )
+
+
+def test_el_tablero_de_falabella_solo_cuenta_lo_que_tiene_meta(app_bi_trade, catalogo_falabella):
+    tienda, audifonos = catalogo_falabella
+    sin_meta = PuntoVentaFalabella.objects.create(
+        id_punto_venta='2000', nombre_pdv='Tienda Falabella.com'
+    )
+    _meta_falabella(tienda, audifonos)
+    _venta_falabella(tienda, audifonos, 2)
+    _venta_falabella(sin_meta, audifonos, 40)
+    InventarioFalabella.objects.create(
+        id_producto=audifonos, id_punto_venta=tienda, cantidad_inventario=3
+    )
+    InventarioFalabella.objects.create(
+        id_producto=audifonos, id_punto_venta=sin_meta, cantidad_inventario=90
+    )
+
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    totales = cliente.get('/api/bi-trade/falabella/avance-mensual?anio=2026&mes=3').json()[
+        'totales'
+    ]
+    assert totales['ventasCantidad'] == 2
+    assert totales['ventasDinero'] == 500_000
+    assert totales['inventarioUnidades'] == 3
+
+
 def test_las_tablas_y_llaves_de_falabella_terminan_en_falabella():
     modelos = (
         PuntoVentaFalabella,
@@ -3615,6 +3646,7 @@ def test_los_tres_canales_no_se_mezclan(app_bi_trade, catalogo_hc, catalogo_fala
     tienda, audifonos = catalogo_falabella
     _venta_hc(tienda_hc, torre, 3)
     _venta_falabella(tienda, audifonos, 2)
+    _meta_falabella(tienda, audifonos)
 
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
     mes = '?anio=2026&mes=3'
@@ -3779,6 +3811,7 @@ def test_el_enlace_publico_de_falabella_muestra_falabella(
     cache.clear()
     tienda, audifonos = catalogo_falabella
     _venta_falabella(tienda, audifonos, 2)
+    _meta_falabella(tienda, audifonos)
     editor = _editor(app_bi_trade)
     creado = editor.post(
         '/api/bi-trade/enlaces',
@@ -3819,6 +3852,234 @@ def test_la_semilla_de_falabella_carga_datos_y_no_duplica():
     # Lo de Claro y Homecenter no se toca.
     assert not Venta.objects.exists()
     assert not VentaHc.objects.exists()
+
+
+# ── Falabella: los reportes .csv del portal ────────────────────────────────
+
+RUTA_REPORTE_VENTAS_FAL = '/api/bi-trade/falabella/ventas/importar-reporte'
+RUTA_REPORTE_INVENTARIO_FAL = '/api/bi-trade/falabella/inventario/importar-reporte'
+
+_ENCABEZADO_VENTAS_FAL = (
+    'Fecha,Categoría,Subcategorí,Clase,Subclase,SKU,Producto,Modelo,Marca,Zona,ID Local,'
+    'Local,Prod Ean ID,Venta bruta,Venta neta,Unidades,Costo'
+)
+
+
+def _csv(nombre: str, lineas: list[str]) -> SimpleUploadedFile:
+    contenido = '\r\n'.join(lineas) + '\r\n'
+    return SimpleUploadedFile(nombre, contenido.encode('utf-8'), content_type='text/csv')
+
+
+def _venta_csv(fecha, sku, local, unidades, costo='870.000'):
+    return (
+        f'{fecha},J11 ELECTRO HOGAR,J1102 AUDIO,J110213,J11021301,{sku},Producto,Modelo,JBL,'
+        f'BOGOTA,{local},Tienda,840080527079,339.900,283.331,{unidades},{costo}'
+    )
+
+
+def _reporte_ventas_fal(*filas) -> SimpleUploadedFile:
+    return _csv('Ventas diarias (8).csv', [_ENCABEZADO_VENTAS_FAL, *filas])
+
+
+@pytest.fixture
+def catalogo_reporte_falabella():
+    """Dos tiendas con su ID Local y dos productos con su SKU, como en el portal."""
+    unicentro = PuntoVentaFalabella.objects.create(id_punto_venta='123', nombre_pdv='UNICENTRO')
+    punto_com = PuntoVentaFalabella.objects.create(
+        id_punto_venta='2000', nombre_pdv='TIENDA FALABELLA .COM'
+    )
+    echo = ProductoFalabella.objects.create(
+        id_producto='58563423', nombre_producto='Echo Dot', marca=marca('JBL'),
+        precio_venta_falabella=339_900, precio_venta_coltrade=214_990,
+    )
+    switch = ProductoFalabella.objects.create(
+        id_producto='73722474', nombre_producto='Nintendo Switch 2', marca=marca('JBL'),
+        precio_venta_falabella=1_899_900, precio_venta_coltrade=1_819_355,
+    )
+    # Falabella solo carga ventas con meta: todo el catálogo la tiene en noviembre.
+    for punto in (unicentro, punto_com):
+        for producto in (echo, switch):
+            MetaComercialFalabella.objects.create(
+                id_producto=producto, id_punto_venta=punto,
+                fecha_meta=date(2026, 11, 1), meta_cantidad=10,
+            )
+    return unicentro, punto_com, echo, switch
+
+
+def test_el_reporte_de_ventas_falabella_solo_carga_lo_que_tiene_meta(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    unicentro, _com, _echo, switch = catalogo_reporte_falabella
+    MetaComercialFalabella.objects.filter(id_producto=switch, id_punto_venta=unicentro).delete()
+    archivo = _reporte_ventas_fal(
+        _venta_csv('2026-11-16', '58563423', '123', 1),
+        # Sin meta en Unicentro: no entra.
+        _venta_csv('2026-11-16', '73722474', '123', 2),
+        # Con meta en noviembre, pero la venta es de octubre: no entra.
+        _venta_csv('2026-10-31', '58563423', '123', 4),
+    )
+    editor = _editor(app_bi_trade)
+    respuesta = editor.post(RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo}, format='multipart')
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['creadas'] == 1
+    assert datos['sinMeta'] == 2
+    assert 'no tiene meta' in datos['message']
+    assert VentaFalabella.objects.get().id_producto_id == '58563423'
+
+    solo_sin_meta = _reporte_ventas_fal(_venta_csv('2026-11-16', '73722474', '123', 2))
+    respuesta = editor.post(
+        RUTA_REPORTE_VENTAS_FAL, {'archivo': solo_sin_meta}, format='multipart'
+    )
+    assert respuesta.status_code == 400
+    assert 'metas' in respuesta.json()['message']
+
+
+def test_el_reporte_de_ventas_falabella_carga_solo_lo_que_tiene_unidades(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    archivo = _reporte_ventas_fal(
+        _venta_csv('2026-11-16', '58563423', '123', 1),
+        # El portal envuelve la fila entera en comillas cuando el costo trae decimales.
+        '"' + _venta_csv('2026-11-16', '58563423', '2000', 2, '""214.990,96875""') + '"',
+        _venta_csv('2026-11-15', '73722474', '2000', 41),
+        # Devoluciones y ceros no entran.
+        _venta_csv('2026-11-15', '73722474', '123', -1),
+        _venta_csv('2026-11-15', '73722474', '123', 0),
+        # Un SKU y un local que no existen en la app.
+        _venta_csv('2026-11-14', 'NO-EXISTE', '123', 3),
+        _venta_csv('2026-11-14', '58563423', '9999', 3),
+    )
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['creadas'] == 3
+    assert datos['unidades'] == 44
+    assert datos['sinUnidades'] == 2
+    assert datos['dias'] == ['2026-11-15', '2026-11-16']
+    assert datos['productosFaltantes'] == ['NO-EXISTE']
+    assert datos['puntosFaltantes'] == ['9999']
+
+    ventas = {
+        (v.id_producto_id, v.id_punto_venta_id, v.fecha_venta.isoformat()): v.cantidad_vendida
+        for v in VentaFalabella.objects.all()
+    }
+    assert ventas == {
+        ('58563423', '123', '2026-11-16'): 1,
+        ('58563423', '2000', '2026-11-16'): 2,
+        ('73722474', '2000', '2026-11-15'): 41,
+    }
+
+
+def test_el_reporte_de_ventas_falabella_pregunta_antes_de_pisar_un_dia(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    unicentro, _com, echo, _switch = catalogo_reporte_falabella
+    _venta_falabella(unicentro, echo, 9, fecha=date(2026, 11, 16))
+    editor = _editor(app_bi_trade)
+
+    def subir(**extra):
+        archivo = _reporte_ventas_fal(_venta_csv('2026-11-16', '58563423', '123', 2))
+        return editor.post(
+            RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo, **extra}, format='multipart'
+        )
+
+    conflicto = subir()
+    assert conflicto.status_code == 409
+    assert conflicto.json()['diasConVentas'] == [{'fecha': '2026-11-16', 'registros': 1}]
+    assert VentaFalabella.objects.get().cantidad_vendida == 9
+
+    sobrescrita = subir(modo='sobrescribir')
+    assert sobrescrita.status_code == 200, sobrescrita.json()
+    assert sobrescrita.json()['eliminadas'] == 1
+    assert VentaFalabella.objects.get().cantidad_vendida == 2
+
+
+def test_el_reporte_de_inventario_falabella_reemplaza_por_id_local(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    unicentro, punto_com, echo, switch = catalogo_reporte_falabella
+    InventarioFalabella.objects.create(
+        id_producto=switch, id_punto_venta=unicentro, cantidad_inventario=99
+    )
+    encabezado = (
+        ',ID Producto,Producto,Zona Local,ID Local,Local,ID Tienda,Tienda,'
+        'Stock Contable,Stock Disponible'
+    )
+    archivo = _csv(
+        'Análisis semanal (52).csv',
+        [
+            encabezado,
+            # Va por ID Local (123), no por ID Tienda (10016).
+            '1,58563423,Echo Dot,BOGOTA,123,UNICENTRO,10016,UNICENTRO,5,4',
+            # El mismo producto dos veces en el mismo local: se suma.
+            '2,73722474,Switch 2,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,3,1',
+            '3,73722474,Switch 2,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,3,2',
+            # Sin stock disponible: no entra.
+            '4,73722474,Switch 2,BOGOTA,123,UNICENTRO,10016,UNICENTRO,1,0',
+            '5,58563423,Echo Dot,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,0,-1',
+            # Un CD que no es tienda de la app.
+            '6,58563423,Echo Dot,CD,9903,CD FALABELLA,10001,FALABELLA DE COLOMBIA S.A.,20,20',
+        ],
+    )
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_INVENTARIO_FAL, {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['creados'] == 2
+    assert datos['eliminados'] == 1
+    assert datos['sinUnidades'] == 2
+    assert datos['puntosFaltantes'] == ['9903']
+
+    stock = {
+        (i.id_producto_id, i.id_punto_venta_id): i.cantidad_inventario
+        for i in InventarioFalabella.objects.all()
+    }
+    assert stock == {('58563423', '123'): 4, ('73722474', '2000'): 3}
+
+
+def test_un_reporte_falabella_que_no_cruza_no_borra_nada(app_bi_trade, catalogo_reporte_falabella):
+    unicentro, _com, echo, _switch = catalogo_reporte_falabella
+    InventarioFalabella.objects.create(
+        id_producto=echo, id_punto_venta=unicentro, cantidad_inventario=5
+    )
+    archivo = _csv(
+        'inventario.csv', ['ID Producto,ID Local,Stock Disponible', 'NO-EXISTE,123,7']
+    )
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_INVENTARIO_FAL, {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 400
+    assert respuesta.json()['productosFaltantes'] == ['NO-EXISTE']
+    assert InventarioFalabella.objects.get().cantidad_inventario == 5
+
+
+def test_un_reporte_falabella_sin_sus_columnas_o_que_no_es_csv_se_rechaza(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    editor = _editor(app_bi_trade)
+    sin_columnas = _csv('ventas.csv', ['Fecha,SKU,Unidades', '2026-11-16,58563423,1'])
+    respuesta = editor.post(RUTA_REPORTE_VENTAS_FAL, {'archivo': sin_columnas}, format='multipart')
+    assert respuesta.status_code == 400
+    assert 'ID Local' in respuesta.json()['message']
+
+    excel = _xlsx(['ID Producto', 'ID Local', 'Stock Disponible'], [['58563423', '123', 4]])
+    respuesta = editor.post(RUTA_REPORTE_INVENTARIO_FAL, {'archivo': excel}, format='multipart')
+    assert respuesta.status_code == 400
+    assert '.csv' in respuesta.json()['message']
+
+
+def test_cargar_un_reporte_falabella_exige_permiso_de_edicion(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    archivo = _reporte_ventas_fal(_venta_csv('2026-11-16', '58563423', '123', 1))
+    respuesta = lector.post(RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo}, format='multipart')
+    assert respuesta.status_code == 403
+    assert not VentaFalabella.objects.exists()
 
 
 # ── Tmk Ecommerce Claro ──────────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ from apps.performance.models import (
 from apps.performance.periodos import primer_dia
 from apps.performance.tests import (
     RUTA,
+    _mes_pasado,
     cliente_de,
     crear_usuario,
     objetivo_de,
@@ -124,7 +125,8 @@ def test_la_respuesta_de_una_decision_no_crece_con_el_historial(equipo):
     jefe, julian, _daniel = equipo
 
     def costo_de_validar(pasos_previos: int) -> Medicion:
-        objetivo = con_resultado(objetivo_de(julian, jefe, '10'), jefe)
+        # De un mes ya terminado: antes no se aprueba nada.
+        objetivo = con_resultado(objetivo_de(julian, jefe, '10', periodo=_mes_pasado()), jefe)
         for _ in range(pasos_previos):
             HistorialResultado.objects.create(
                 resultado=objetivo.resultado, accion=AccionHistorial.FEEDBACK, autor=jefe

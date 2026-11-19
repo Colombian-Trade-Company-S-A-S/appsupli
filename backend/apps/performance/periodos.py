@@ -13,6 +13,10 @@ Dos reglas cerradas por People en el documento de definiciones:
          fecha que puede ampliar, sin pedir autorización al CEO; queda
          registrado quién, cuándo y por qué, y al pasar la fecha se cierra sola.
 
+Y una tercera, de la medición: el cumplimiento de un mes se carga y se
+aprueba cuando el mes ya terminó. Los de noviembre, desde el 1 de diciembre:
+antes de eso el mes no ha ocurrido completo y no hay resultado que medir.
+
 Vive aparte de las vistas porque las dos reglas se preguntan desde varios
 lados —el serializer al guardar, la vista al borrar, la portada para avisar—
 y una regla de negocio repetida en tres lugares se desincroniza sola.
@@ -96,6 +100,22 @@ def excepcion_vigente(registro, hoy: date) -> bool:
 def ultimo_dia_para_editar(periodo: date) -> date:
     """El último día en que se pueden tocar los objetivos de ese mes: el día anterior."""
     return periodo - timedelta(days=1)
+
+
+# ── Medición: el resultado se carga cuando el mes termina ─────────────────
+
+
+def mes_terminado(periodo: date, hoy: date) -> bool:
+    """Si ya se puede cargar y aprobar el cumplimiento de ese mes: desde el 1 del siguiente."""
+    return primer_dia(hoy) > periodo
+
+
+def motivo_mes_sin_terminar(periodo: date) -> str:
+    """Lo que ve quien intenta cargar o aprobar el resultado de un mes que no ha terminado."""
+    return (
+        f'{etiqueta_mes(periodo)} todavía no termina: su cumplimiento se carga y se aprueba '
+        f'desde el {etiqueta_dia(mes_siguiente(periodo))}.'
+    )
 
 
 # ── Cortes de tiempo (A8) ──────────────────────────────────────────────────

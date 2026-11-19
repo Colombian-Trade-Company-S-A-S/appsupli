@@ -26,5 +26,7 @@ urlpatterns = [
     path('objetivos/<int:pk>/resultado', views.cargar_resultado, name='objetivo-resultado'),
     path('objetivos/<int:pk>/validar', views.validar_resultado, name='objetivo-validar'),
     path('objetivos/<int:pk>/feedback', views.dar_feedback, name='objetivo-feedback'),
+    # El colaborador acepta o rechaza (con motivo) el objetivo que le asignaron.
+    path('objetivos/<int:pk>/responder', views.responder_objetivo, name='objetivo-responder'),
     *router.urls,
 ]

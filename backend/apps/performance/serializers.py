@@ -13,6 +13,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import User
 
+from .aceptacion import puede_responder
 from .api_permissions import (
     aprobador_de,
     es_asesor_o_promotor,
@@ -26,6 +27,7 @@ from .models import (
     PONDERACION_COMPLETA,
     EstadoObjetivo,
     Evidencia,
+    HistorialObjetivo,
     HistorialResultado,
     Objetivo,
     Periodo,
@@ -95,6 +97,29 @@ class HistorialSerializer(serializers.ModelSerializer):
             'comentario',
             'porcentaje_cumplimiento',
             'evidencias',
+            'created_at',
+        )
+        read_only_fields = fields
+
+
+class HistorialObjetivoSerializer(serializers.ModelSerializer):
+    """Un paso de la aceptación: asignado, corregido, aceptado o rechazado (con su motivo)."""
+
+    accion_label = serializers.CharField(source='get_accion_display', read_only=True)
+    autor_nombre = serializers.CharField(source='autor.full_name', default='', read_only=True)
+
+    class Meta:
+        model = HistorialObjetivo
+        fields = (
+            'id',
+            'accion',
+            'accion_label',
+            'autor',
+            'autor_nombre',
+            'comentario',
+            'texto_objetivo',
+            'kpi',
+            'peso',
             'created_at',
         )
         read_only_fields = fields
@@ -205,9 +230,13 @@ class ObjetivoSerializer(serializers.ModelSerializer):
     """
     Un objetivo con su KPI y su peso. Se mide siempre en % de cumplimiento.
 
-    `puede_cargar` y `puede_validar` dicen qué puede hacer con él quien
-    pregunta (necesitan el `request` en el contexto): así el frontend no
-    repite las reglas de asesores y promotores.
+    `puede_cargar`, `puede_validar` y `puede_responder` dicen qué puede hacer
+    con él quien pregunta (necesitan el `request` en el contexto): así el
+    frontend no repite las reglas de asesores y promotores ni las de aceptación.
+
+    `historial` es el de la aceptación del objetivo (el del resultado va dentro
+    de `resultado`). `comentario` solo se escribe: es lo que el jefe le dice al
+    colaborador al asignar o corregir, y queda en ese historial.
     """
 
     colaborador_nombre = serializers.CharField(source='colaborador.full_name', read_only=True)
@@ -222,6 +251,11 @@ class ObjetivoSerializer(serializers.ModelSerializer):
     editable = serializers.SerializerMethodField()
     puede_cargar = serializers.SerializerMethodField()
     puede_validar = serializers.SerializerMethodField()
+    puede_responder = serializers.SerializerMethodField()
+    historial = HistorialObjetivoSerializer(many=True, read_only=True)
+    comentario = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, max_length=2000
+    )
     resultado = ResultadoSerializer(read_only=True)
     cumplimiento = serializers.SerializerMethodField()
     semaforo = serializers.SerializerMethodField()
@@ -244,15 +278,28 @@ class ObjetivoSerializer(serializers.ModelSerializer):
             'responsable_nombre',
             'aprobador_nombre',
             'estado',
+            'estado_aceptacion',
             'editable',
             'puede_cargar',
             'puede_validar',
+            'puede_responder',
+            'historial',
+            'comentario',
             'resultado',
             'cumplimiento',
             'semaforo',
             'created_at',
         )
-        read_only_fields = ('registrado_por', 'estado')
+        read_only_fields = ('registrado_por', 'estado', 'estado_aceptacion')
+
+    def create(self, validated_data):
+        # El comentario va al historial (lo guarda la vista), no al objetivo.
+        validated_data.pop('comentario', None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        validated_data.pop('comentario', None)
+        return super().update(instance, validated_data)
 
     def _usuario(self):
         request = self.context.get('request')
@@ -269,6 +316,11 @@ class ObjetivoSerializer(serializers.ModelSerializer):
     def get_puede_validar(self, obj) -> bool:
         usuario = self._usuario()
         return bool(usuario and puede_validar_resultado(usuario, obj))
+
+    def get_puede_responder(self, obj) -> bool:
+        """Si quien pregunta puede aceptar o rechazar este objetivo ahora."""
+        usuario = self._usuario()
+        return bool(usuario and puede_responder(usuario, obj, timezone.localdate()))
 
     def get_editable(self, obj) -> bool:
         """

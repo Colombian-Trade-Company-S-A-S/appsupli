@@ -7,6 +7,9 @@ export type EstadoObjetivo = 'borrador' | 'activo' | 'congelado';
 /** El color del cumplimiento: verde ≥ 100, naranja 85–99.9, rojo < 85. */
 export type Semaforo = 'verde' | 'naranja' | 'rojo';
 export type EstadoValidacion = 'pendiente' | 'validado' | 'rechazado';
+/** Lo que respondió el colaborador al objetivo que le asignaron. */
+export type EstadoAceptacion = 'pendiente' | 'aceptado' | 'rechazado';
+export type AccionObjetivo = 'asignado' | 'corregido' | 'aceptado' | 'rechazado';
 /** Los cortes de acumulación: el Q es trimestral. */
 export type TipoCorte = 'mes' | 'trimestre' | 'semestre' | 'anio';
 
@@ -51,9 +54,33 @@ export interface Objetivo {
   puedeCargar: boolean;
   /** Si quien consulta puede aprobarlo o devolverlo. */
   puedeValidar: boolean;
+  /**
+   * Si el colaborador lo aceptó o lo rechazó. `null` en los objetivos que se
+   * definieron antes de que existiera la aceptación: no aplica.
+   */
+  estadoAceptacion: EstadoAceptacion | null;
+  /** Si quien consulta puede aceptarlo o rechazarlo ahora (solo el colaborador). */
+  puedeResponder: boolean;
+  /** Cada paso de la aceptación, del más viejo al más nuevo. */
+  historial: PasoObjetivo[];
   resultado: Resultado | null;
   cumplimiento: number | null;
   semaforo: Semaforo | null;
+  createdAt: string;
+}
+
+/** Un paso de la aceptación, con el objetivo tal como estaba en ese momento. */
+export interface PasoObjetivo {
+  id: number;
+  accion: AccionObjetivo;
+  accionLabel: string;
+  autor: number | null;
+  autorNombre: string;
+  /** El motivo del rechazo, o lo que dijo el jefe al asignar o corregir. */
+  comentario: string;
+  textoObjetivo: string;
+  kpi: string;
+  peso: string;
   createdAt: string;
 }
 
@@ -121,6 +148,8 @@ export interface ObjetivoPayload {
   kpi: string;
   peso: string;
   fuenteDatos: string;
+  /** Lo que el jefe le dice al colaborador al asignar o corregir: queda en el historial. */
+  comentario?: string;
 }
 
 export interface PeriodoDisponible {
@@ -258,7 +287,16 @@ export interface ResumenModulo {
   equipo: number;
   equipoCompleto: number;
   equipoSinObjetivos: number;
+  /** Mis objetivos que esperan que los acepte o los rechace, por mes. */
+  porAceptar: ConteoMes[];
+  /** Los que mis directos rechazaron y esperan que yo los corrija, por mes. */
+  rechazadosEquipo: ConteoMes[];
   capacidades: Capacidades;
+}
+
+export interface ConteoMes {
+  periodo: string;
+  cantidad: number;
 }
 
 export interface ResultadoActivacion {
@@ -325,7 +363,7 @@ export interface Pendientes {
   periodoLabel: string;
   alcance: 'compania' | 'equipo';
   personas: number;
-  /** Antes de que empiece el mes no hay resultados que cargar ni aprobar. */
+  /** Hasta que el mes termina no hay resultados que cargar ni aprobar. */
   medicionIniciada: boolean;
   porAsignar: FilaPendiente[];
   porCargar: FilaPendiente[];
@@ -362,6 +400,12 @@ export const performanceApi = {
     api.put<Resultado>(`${RUTA}/objetivos/${objetivo}/resultado`, payload),
   validarResultado: (objetivo: number, estado: EstadoValidacion, observacion = '') =>
     api.post<Resultado>(`${RUTA}/objetivos/${objetivo}/validar`, { estado, observacion }),
+  /** El colaborador acepta o rechaza el objetivo que le asignaron; rechazar exige el motivo. */
+  responderObjetivo: (
+    objetivo: number,
+    estado: Exclude<EstadoAceptacion, 'pendiente'>,
+    motivo = '',
+  ) => api.post<Objetivo>(`${RUTA}/objetivos/${objetivo}/responder`, { estado, motivo }),
   pendientes: (periodo: string) => api.get<Pendientes>(`${RUTA}/pendientes`, { periodo }),
   acumulado: (corte: { tipo: TipoCorte; anio?: number; indice?: number }, top = false) =>
     api.get<Acumulado>(`${RUTA}/acumulado`, {
@@ -443,4 +487,18 @@ export const etiquetaMes = (periodo: string) => {
 export const diaLegible = (dia: string) => {
   const [, mes, numero] = dia.split('-');
   return `${Number(numero)} de ${(MESES[Number(mes) - 1] ?? mes).toLowerCase()}`;
+};
+
+/**
+ * Si ya se puede cargar y aprobar el cumplimiento de ese mes: cuando terminó.
+ * Los de noviembre, desde el 1 de diciembre. El backend aplica la misma regla.
+ */
+export const mesTerminado = (periodo: string) => mesDe(periodo) < mesEnCurso();
+
+/** `2026-11-01` → `1 de diciembre`: desde cuándo se carga el cumplimiento de ese mes. */
+export const inicioDeMedicion = (periodo: string) => {
+  const [anio, mes] = periodo.split('-').map(Number);
+  const siguiente =
+    mes === 12 ? `${anio + 1}-01-01` : `${anio}-${String(mes + 1).padStart(2, '0')}-01`;
+  return diaLegible(siguiente);
 };

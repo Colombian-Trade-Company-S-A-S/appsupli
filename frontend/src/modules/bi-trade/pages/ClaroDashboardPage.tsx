@@ -36,6 +36,7 @@ import {
   type Mes,
 } from '../components/SelectorMes';
 import { ImportarInforme } from '../components/ImportarInforme';
+import { ImportarFalabella } from '../components/ImportarFalabella';
 import { HojasBi } from '../components/HojasBi';
 import { CompartirTablero } from '../components/CompartirTablero';
 import { useFuente } from '../fuente';
@@ -101,6 +102,8 @@ export default function ClaroDashboardPage() {
             <CompartirTablero canal={fuente.canal} />
             {/* El informe del ERP: Claro y Tmk sí; Homecenter y Falabella no. */}
             {fuente.importarInforme && <ImportarInforme importar={fuente.importarInforme} />}
+            {/* Falabella: sus reportes .csv del portal, ventas e inventario. */}
+            {fuente.importarFalabella && <ImportarFalabella importar={fuente.importarFalabella} />}
             {MODULOS.map(({ ruta, etiqueta, icono: Icono }) => (
               <Button key={ruta} variant="outline" render={<Link to={`${fuente.base}/${ruta}`} />}>
                 <Icono data-icon="inline-start" />

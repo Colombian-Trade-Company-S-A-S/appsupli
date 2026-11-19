@@ -23,6 +23,7 @@ from rest_framework.response import Response
 from apps.accounts.models import User
 from apps.core.excel import ErrorDeFila, construir_plantilla, leer_archivo
 
+from .aceptacion import estado_inicial, foto, paso, por_que_no_responde, registrar
 from .api_permissions import (
     CanManagePeriodos,
     HasPerformanceApp,
@@ -47,10 +48,13 @@ from .models import (
     MAXIMO_OBJETIVOS,
     PONDERACION_COMPLETA,
     AccionHistorial,
+    AccionObjetivo,
+    EstadoAceptacion,
     EstadoObjetivo,
     EstadoPeriodo,
     EstadoValidacion,
     Evidencia,
+    HistorialObjetivo,
     HistorialResultado,
     Objetivo,
     Periodo,
@@ -67,7 +71,9 @@ from .periodos import (
     etiqueta_mes,
     excepcion_vigente,
     mes_siguiente,
+    mes_terminado,
     meses_del_rango,
+    motivo_mes_sin_terminar,
     primer_dia,
     puede_editarse,
     rango,
@@ -153,7 +159,9 @@ def objetivos_para_serializar():
         'resultado__cargado_por',
         'resultado__validado_por',
         'resultado__feedback_por',
-    ).prefetch_related('resultado__evidencias', 'resultado__historial__autor')
+    ).prefetch_related(
+        'resultado__evidencias', 'resultado__historial__autor', 'historial__autor'
+    )
 
 
 def _resultado_para_serializar(pk) -> Resultado:
@@ -238,6 +246,7 @@ class ObjetivoViewSet(viewsets.ModelViewSet):
                 'Nadie define los suyos propios.'
             )
 
+    @transaction.atomic
     def perform_create(self, serializer):
         colaborador = serializer.validated_data['colaborador']
         self._exigir_permiso(colaborador)
@@ -247,18 +256,40 @@ class ObjetivoViewSet(viewsets.ModelViewSet):
             periodo=periodo,
             defaults={'abierto_por': self.request.user, 'fecha_apertura': timezone.now()},
         )
-        serializer.save(
+        objetivo = serializer.save(
             registrado_por=self.request.user,
             estado=EstadoObjetivo.BORRADOR,
             responsable_resultado=responsable_de(colaborador),
+            # Nace por aceptar: el colaborador lo acepta o lo rechaza.
+            estado_aceptacion=estado_inicial(colaborador, self.request.user),
+        )
+        registrar(
+            objetivo,
+            AccionObjetivo.ASIGNADO,
+            self.request.user,
+            serializer.validated_data.get('comentario', ''),
         )
 
+    @transaction.atomic
     def perform_update(self, serializer):
         self._exigir_permiso(serializer.instance.colaborador)
         self._exigir_mes_abierto(serializer.instance.periodo)
         colaborador = serializer.validated_data.get('colaborador', serializer.instance.colaborador)
         self._exigir_permiso(colaborador)
-        serializer.save(responsable_resultado=responsable_de(colaborador))
+        antes = foto(serializer.instance)
+        objetivo = serializer.save(responsable_resultado=responsable_de(colaborador))
+        # Si cambió lo acordado, lo que el colaborador aceptó (o rechazó) ya no
+        # es lo que dice la fila: vuelve a quedar por aceptar. Los objetivos de
+        # antes de la aceptación no entran al flujo.
+        if foto(objetivo) != antes and objetivo.estado_aceptacion is not None:
+            objetivo.estado_aceptacion = estado_inicial(objetivo.colaborador, self.request.user)
+            objetivo.save(update_fields=['estado_aceptacion', 'updated_at'])
+            registrar(
+                objetivo,
+                AccionObjetivo.CORREGIDO,
+                self.request.user,
+                serializer.validated_data.get('comentario', ''),
+            )
 
     def perform_destroy(self, instancia):
         self._exigir_permiso(instancia.colaborador)
@@ -287,6 +318,56 @@ def mis_objetivos(request):
     if periodo:
         consulta = consulta.filter(periodo=_a_periodo(periodo))
     return Response(ObjetivoSerializer(consulta, many=True, context={'request': request}).data)
+
+
+@api_view(['POST'])
+@permission_classes(ACCESO)
+@transaction.atomic
+def responder_objetivo(request, pk):
+    """
+    El colaborador acepta o rechaza, uno por uno, el objetivo que le asignaron.
+
+    Rechazarlo exige el motivo: es lo que el jefe lee para corregirlo. Si lo
+    corrige, vuelve a quedar por aceptar. Las reglas viven en `aceptacion.py`.
+    """
+    objetivo = _objetivo_visible(request, pk)
+    impedimento = por_que_no_responde(request.user, objetivo, timezone.localdate())
+    if impedimento:
+        if objetivo.colaborador_id != request.user.pk:
+            raise PermissionDenied(impedimento)
+        raise ValidationError(impedimento)
+
+    estado = (request.data.get('estado') or '').strip()
+    if estado not in (EstadoAceptacion.ACEPTADO, EstadoAceptacion.RECHAZADO):
+        raise ValidationError({'estado': 'Usa «aceptado» o «rechazado».'})
+    motivo = (request.data.get('motivo') or '').strip()
+    if estado == EstadoAceptacion.RECHAZADO and not motivo:
+        raise ValidationError(
+            {'motivo': 'Escribe por qué lo rechazas, para que tu jefe sepa qué ajustar.'}
+        )
+    if len(motivo) > 2000:
+        raise ValidationError({'motivo': 'Máximo 2000 caracteres.'})
+
+    objetivo.estado_aceptacion = estado
+    objetivo.save(update_fields=['estado_aceptacion', 'updated_at'])
+    registrar(
+        objetivo,
+        AccionObjetivo.ACEPTADO
+        if estado == EstadoAceptacion.ACEPTADO
+        else AccionObjetivo.RECHAZADO,
+        request.user,
+        motivo,
+    )
+    return Response(
+        ObjetivoSerializer(
+            objetivos_para_serializar().get(pk=objetivo.pk), context={'request': request}
+        ).data
+    )
+
+
+def _por_mes(consulta) -> list[dict]:
+    """`[{periodo, cantidad}]` de un queryset de objetivos, del mes más viejo al más nuevo."""
+    return list(consulta.values('periodo').annotate(cantidad=Count('id')).order_by('periodo'))
 
 
 # ── Periodos ───────────────────────────────────────────────────────────────
@@ -477,6 +558,19 @@ def resumen(request):
     )
     ponderacion = _ponderacion(equipo, mes) if equipo else []
     mios = Objetivo.objects.filter(colaborador=request.user, periodo=mes)
+    # La aceptación se responde mientras el mes no termina: el en curso y los
+    # siguientes. Los de diciembre se asignan en noviembre, así que no basta
+    # con mirar el mes en curso.
+    abiertos = Q(periodo__gte=primer_dia(timezone.localdate()))
+    por_aceptar = Objetivo.objects.filter(
+        abiertos, colaborador=request.user, estado_aceptacion=EstadoAceptacion.PENDIENTE
+    )
+    rechazados_equipo = Objetivo.objects.filter(
+        abiertos,
+        colaborador__manager=request.user,
+        colaborador__is_active=True,
+        estado_aceptacion=EstadoAceptacion.RECHAZADO,
+    )
     return Response(
         {
             'periodo': mes,
@@ -491,6 +585,10 @@ def resumen(request):
             'equipo': len(equipo),
             'equipo_completo': sum(1 for fila in ponderacion if fila['completo']),
             'equipo_sin_objetivos': sum(1 for fila in ponderacion if fila['objetivos'] == 0),
+            # Mis objetivos que esperan que los acepte o los rechace.
+            'por_aceptar': _por_mes(por_aceptar),
+            # Los que mis directos rechazaron y esperan que yo los corrija.
+            'rechazados_equipo': _por_mes(rechazados_equipo),
             'capacidades': capacidades(request.user),
         }
     )
@@ -525,7 +623,7 @@ def cargar_resultado(request, pk):
 
     Lo hace el colaborador; su jefe o People también pueden hacerlo por él. Con
     asesores y promotores lo hace siempre su jefe inmediato. El mes tiene que
-    haber empezado: no se carga el resultado de un mes que todavía no ocurre.
+    haber terminado: el resultado de noviembre se carga desde el 1 de diciembre.
     """
     objetivo = _objetivo_visible(request, pk)
     if not puede_cargar_resultado(request.user, objetivo):
@@ -534,10 +632,8 @@ def cargar_resultado(request, pk):
                 'El resultado de asesores y promotores lo registra su jefe inmediato.'
             )
         raise PermissionDenied('El resultado lo carga el colaborador, su jefe o People.')
-    if primer_dia(timezone.localdate()) < objetivo.periodo:
-        raise ValidationError(
-            f'{etiqueta_mes(objetivo.periodo)} todavía no empieza: no hay resultado que cargar.'
-        )
+    if not mes_terminado(objetivo.periodo, timezone.localdate()):
+        raise ValidationError(motivo_mes_sin_terminar(objetivo.periodo))
     cerrado = (
         Periodo.objects.filter(periodo=objetivo.periodo)
         .values_list('estado', flat=True)
@@ -638,6 +734,8 @@ def validar_resultado(request, pk):
                 f'No puedes validar un resultado que cargaste tú: lo valida {quien}.'
             )
         raise PermissionDenied(f'Este resultado lo valida {quien}.')
+    if not mes_terminado(objetivo.periodo, timezone.localdate()):
+        raise ValidationError(motivo_mes_sin_terminar(objetivo.periodo))
 
     estado = (request.data.get('estado') or '').strip()
     if estado not in (EstadoValidacion.VALIDADO, EstadoValidacion.RECHAZADO):
@@ -1080,9 +1178,13 @@ def importar_objetivos(request):
             registrado_por=request.user,
             estado=EstadoObjetivo.BORRADOR,
             responsable_resultado=responsable_de(colaborador),
+            estado_aceptacion=estado_inicial(colaborador, request.user),
         )
         for serializer in serializers
     ]
+    HistorialObjetivo.objects.bulk_create(
+        paso(objetivo, AccionObjetivo.ASIGNADO, request.user) for objetivo in creados
+    )
 
     total = (
         Objetivo.objects.filter(colaborador=colaborador, periodo=periodo).aggregate(

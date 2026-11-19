@@ -22,6 +22,12 @@ import {
   type RespuestaQueryVentas,
 } from './api';
 
+/** Los reportes .csv del portal de Falabella: ventas diarias e inventario. */
+export interface ImportadorFalabella {
+  ventas: typeof biTradeApiFalabella.importarReporteVentas;
+  inventario: typeof biTradeApiFalabella.importarReporteInventario;
+}
+
 /** Una hoja del tablero. El orden de la lista es el de las pestañas. */
 export type HojaTablero = 'mes' | 'dia' | 'tickets';
 
@@ -123,6 +129,8 @@ export interface FuenteDatos {
   importarQuery?: (archivo: File) => Promise<ResultadoQuery>;
   /** El querie de ventas del portal de Homecenter. Solo HC. */
   importarQueryVentas?: (archivo: File, sobrescribir: boolean) => Promise<RespuestaQueryVentas>;
+  /** Los reportes .csv del portal de Falabella. Solo Falabella. */
+  importarFalabella?: ImportadorFalabella;
 }
 
 /** Claro, con sesión: todo habilitado. */
@@ -183,11 +191,13 @@ export const fuenteHc: FuenteDatos = {
   importarQueryVentas: biTradeApiHc.importarQueryVentas,
 };
 
-export const fuenteFalabella = fuenteDeCanal(
-  'falabella',
-  '/inicio/bi-trade/ventas-falabella',
-  biTradeApiFalabella,
-);
+export const fuenteFalabella: FuenteDatos = {
+  ...fuenteDeCanal('falabella', '/inicio/bi-trade/ventas-falabella', biTradeApiFalabella),
+  importarFalabella: {
+    ventas: biTradeApiFalabella.importarReporteVentas,
+    inventario: biTradeApiFalabella.importarReporteInventario,
+  },
+};
 
 export const fuenteTmk: FuenteDatos = {
   ...fuenteDeCanal('tmk', '/inicio/bi-trade/ventas-tmk', biTradeApiTmk),

@@ -103,6 +103,9 @@ FALABELLA = Canal(
     precio=PrecioProductoFalabella,
     opciones=OPCIONES_FALABELLA,
     con_puntos=False,
+    # Como Claro y Tmk: solo cuenta lo que tiene meta. Falabella.com y las
+    # tiendas sin meta no inflan el cumplimiento.
+    solo_con_meta=True,
 )
 
 TMK = Canal(

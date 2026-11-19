@@ -399,6 +399,44 @@ export interface ResultadoQuery {
   message: string;
 }
 
+/** Lo que no cruzó de un reporte de Falabella: los códigos a crear en la app. */
+interface FaltantesReporte {
+  filasLeidas: number;
+  /** Filas con 0 unidades o negativas: no entran. */
+  sinUnidades: number;
+  sinProducto: number;
+  sinPuntoVenta: number;
+  productosFaltantes: string[];
+  puntosFaltantes: string[];
+}
+
+/** Lo que devuelve el reporte «Ventas diarias» de Falabella cuando carga. */
+export interface ResultadoReporteVentas extends FaltantesReporte {
+  dias: string[];
+  /** Ventas de un producto sin meta ese mes en ese punto de venta: no entran. */
+  sinMeta: number;
+  creadas: number;
+  unidades: number;
+  eliminadas: number;
+  message: string;
+}
+
+/** Lo que devuelve el reporte «Análisis semanal» (inventario) de Falabella. */
+export interface ResultadoReporteInventario extends FaltantesReporte {
+  creados: number;
+  unidades: number;
+  eliminados: number;
+  message: string;
+}
+
+/**
+ * El reporte de ventas carga, o se detiene porque algún día ya tenía ventas.
+ * Lo segundo no es un error: es la pregunta de si sobrescribir esos días.
+ */
+export type RespuestaReporteVentas =
+  | { conflicto: false; resultado: ResultadoReporteVentas }
+  | { conflicto: true; diasConVentas: DiaConVentas[]; message: string };
+
 /** Lo que responde la importación del informe del ERP. */
 export interface ResultadoInforme {
   periodo: string;
@@ -1015,7 +1053,51 @@ export const biTradeApiHc = {
     }
   },
 };
-export const biTradeApiFalabella = apiDeCanal('falabella');
+export const biTradeApiFalabella = {
+  ...apiDeCanal('falabella'),
+  /**
+   * Carga las ventas del reporte «Ventas diarias» del portal de Falabella
+   * (.csv). Sin `sobrescribir`, si algún día del archivo ya tiene ventas no se
+   * guarda nada y vuelve la lista de esos días.
+   */
+  importarReporteVentas: async (
+    archivo: File,
+    sobrescribir: boolean,
+  ): Promise<RespuestaReporteVentas> => {
+    const cuerpo = new FormData();
+    cuerpo.append('archivo', archivo);
+    if (sobrescribir) cuerpo.append('modo', 'sobrescribir');
+    try {
+      const { data } = await httpClient.post<ResultadoReporteVentas>(
+        `${RUTA}/falabella/ventas/importar-reporte`,
+        cuerpo,
+        { headers: { 'Content-Type': undefined }, timeout: 120_000 },
+      );
+      return { conflicto: false, resultado: data };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && error.code === 'dias_con_ventas') {
+        const cuerpoError = error.body as { diasConVentas: DiaConVentas[] };
+        return {
+          conflicto: true,
+          diasConVentas: cuerpoError.diasConVentas,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  },
+  /** Reemplaza el inventario con el reporte «Análisis semanal» del portal (.csv). */
+  importarReporteInventario: (archivo: File) => {
+    const cuerpo = new FormData();
+    cuerpo.append('archivo', archivo);
+    return httpClient
+      .post<ResultadoReporteInventario>(`${RUTA}/falabella/inventario/importar-reporte`, cuerpo, {
+        headers: { 'Content-Type': undefined },
+        timeout: 120_000,
+      })
+      .then((r) => r.data);
+  },
+};
 export const biTradeApiTmk = {
   ...apiDeCanal('tmk'),
   /** Tmk es el único canal aparte con el importador del ERP, igual que Claro. */

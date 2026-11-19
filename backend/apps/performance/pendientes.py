@@ -4,8 +4,8 @@ Quién tiene algo pendiente en un mes de Objetivos y KPIs.
 Son tres listas, una por cada paso del ciclo, y cada fila dice quién tiene
 que actuar:
 
-    Por asignar  → la persona no tiene objetivos o no suman 100%: le toca a su
-                   jefe (al CEO, los suyos).
+    Por asignar  → la persona no tiene objetivos, no suman 100% o rechazó
+                   alguno: le toca a su jefe (al CEO, los suyos).
     Por cargar   → objetivos sin % de cumplimiento, sin evidencia o devueltos:
                    le toca al colaborador (a asesores y promotores, su jefe).
     Por aprobar  → resultados cargados que nadie ha aprobado: le toca a quien
@@ -34,8 +34,8 @@ from .api_permissions import (
     es_lider,
     puede_ver_todo,
 )
-from .models import PONDERACION_COMPLETA, EstadoValidacion, Objetivo
-from .periodos import etiqueta_mes, primer_dia
+from .models import PONDERACION_COMPLETA, EstadoAceptacion, EstadoValidacion, Objetivo
+from .periodos import etiqueta_mes, mes_terminado, primer_dia
 from .views import _a_periodo
 
 
@@ -88,26 +88,39 @@ def pendientes(request):
     ):
         objetivos_por_persona.setdefault(objetivo.colaborador_id, []).append(objetivo)
 
-    medicion_iniciada = primer_dia(timezone.localdate()) >= mes
+    # El cumplimiento se carga y se aprueba cuando el mes terminó: antes no hay
+    # nada por cargar ni por aprobar, solo objetivos por asignar.
+    medicion_iniciada = mes_terminado(mes, timezone.localdate())
     por_asignar, por_cargar, por_aprobar = [], [], []
 
     for persona in personas:
         objetivos = objetivos_por_persona.get(persona.pk, [])
         peso = sum((o.peso for o in objetivos), Decimal('0'))
 
-        if abs(peso - PONDERACION_COMPLETA) >= Decimal('0.005'):
+        incompleto = abs(peso - PONDERACION_COMPLETA) >= Decimal('0.005')
+        # Lo que el colaborador rechazó también le toca al jefe: corregirlo.
+        rechazados = sum(
+            1 for o in objetivos if o.estado_aceptacion == EstadoAceptacion.RECHAZADO
+        )
+        if incompleto or rechazados:
             responsable = persona.manager or persona
+            partes = []
+            if incompleto:
+                partes.append(
+                    'Sin objetivos asignados'
+                    if not objetivos
+                    else f'{len(objetivos)} objetivo(s) que suman {peso:g}%; deben sumar 100%'
+                )
+            if rechazados:
+                partes.append(f'{rechazados} rechazado(s) por el colaborador: corregirlos')
             por_asignar.append(
                 {
                     **_ficha(persona),
                     'responsable': responsable.full_name,
                     'objetivos': len(objetivos),
                     'peso_asignado': float(peso),
-                    'detalle': (
-                        'Sin objetivos asignados'
-                        if not objetivos
-                        else f'{len(objetivos)} objetivo(s) que suman {peso:g}%; deben sumar 100%'
-                    ),
+                    'rechazados': rechazados,
+                    'detalle': ' · '.join(partes),
                 }
             )
 

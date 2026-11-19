@@ -1,6 +1,16 @@
 import { Link } from 'react-router-dom';
-import { ArrowRightIcon, ClipboardCheckIcon, ListChecksIcon, UsersIcon } from 'lucide-react';
 import {
+  ArrowRightIcon,
+  CircleXIcon,
+  ClipboardCheckIcon,
+  ClockIcon,
+  ListChecksIcon,
+  UsersIcon,
+} from 'lucide-react';
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
   Button,
   Card,
   CardContent,
@@ -10,24 +20,31 @@ import {
 } from '@/shared/components/ui';
 import { Encabezado, Kpi } from '@/shared/components/layout';
 import { EsqueletoPagina } from '@/shared/components/feedback';
-import { etiquetaMes } from '../api';
+import { etiquetaMes, type ConteoMes } from '../api';
 import { useResumenPerformance } from '../hooks';
 import { EstadoDelMes } from '../components/Piezas';
 import { BASE } from './PerformanceLayout';
+
+const total = (filas: ConteoMes[]) => filas.reduce((suma, fila) => suma + fila.cantidad, 0);
+const meses = (filas: ConteoMes[]) => filas.map((fila) => etiquetaMes(fila.periodo)).join(' y ');
 
 /**
  * La portada del sub-módulo: en qué va el mes.
  *
  * Cada quien ve lo suyo: el colaborador su ponderación, el líder cuántas
- * personas de su equipo ya quedaron completas.
+ * personas de su equipo ya quedaron completas. Arriba, lo que espera una
+ * respuesta: objetivos por aceptar, o rechazados por corregir.
  */
 export default function PerformanceHomePage() {
   const { data: resumen, isLoading } = useResumenPerformance();
 
-  if (isLoading || !resumen) return <EsqueletoPagina forma="tablero" label="Abriendo Objetivos y KPIs…" />;
+  if (isLoading || !resumen)
+    return <EsqueletoPagina forma="tablero" label="Abriendo Objetivos y KPIs…" />;
 
-  const { capacidades } = resumen;
+  const { capacidades, porAceptar, rechazadosEquipo } = resumen;
   const esLider = capacidades.esLider || capacidades.puedeDefinirACualquiera;
+  const cuantosPorAceptar = total(porAceptar);
+  const cuantosRechazados = total(rechazadosEquipo);
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,6 +54,51 @@ export default function PerformanceHomePage() {
       >
         <EstadoDelMes estado={resumen.estado} label={resumen.estadoLabel} />
       </Encabezado>
+
+      {cuantosPorAceptar > 0 && (
+        <Alert>
+          <ClockIcon />
+          <AlertTitle>
+            Tienes {cuantosPorAceptar} objetivo{cuantosPorAceptar === 1 ? '' : 's'} por aceptar
+          </AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-pretty">
+              De {meses(porAceptar)}. Revísalos uno por uno: acéptalos o recházalos con el motivo.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              render={<Link to={`${BASE}/mis-objetivos?periodo=${porAceptar[0].periodo}`} />}
+            >
+              Revisar mis objetivos
+              <ArrowRightIcon data-icon="inline-end" />
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {cuantosRechazados > 0 && (
+        <Alert variant="destructive">
+          <CircleXIcon />
+          <AlertTitle>
+            Tu equipo rechazó {cuantosRechazados} objetivo{cuantosRechazados === 1 ? '' : 's'}
+          </AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-pretty">
+              De {meses(rechazadosEquipo)}. Lee el motivo y corrígelos: les vuelven a llegar para
+              que los acepten.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              render={<Link to={`${BASE}/pendientes?periodo=${rechazadosEquipo[0].periodo}`} />}
+            >
+              Ver pendientes
+              <ArrowRightIcon data-icon="inline-end" />
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi
@@ -116,10 +178,12 @@ export default function PerformanceHomePage() {
           </CardTitle>
           <CardDescription>
             Los objetivos se definen antes de que el mes empiece; cuando arranca, quedan congelados.
-            Ya en curso, cada quien registra su % de cumplimiento (0 a 100) con el enlace de la
-            evidencia, y su jefe la revisa y lo aprueba. Con asesores y promotores lo registra el
-            jefe inmediato y lo aprueba el Trade Marketing Manager. De ahí salen el semáforo —verde
-            ≥ 100%, naranja 85–99.9%, rojo &lt; 85%— y el Top Performance.
+            Cada persona acepta o rechaza, con el motivo, los objetivos que le asignan; si rechaza
+            uno, su jefe lo corrige y le vuelve a llegar. Cuando el mes termina, cada quien registra
+            su % de cumplimiento (0 a 100) con el enlace de la evidencia, y su jefe la revisa y lo
+            aprueba. Con asesores y promotores lo registra el jefe inmediato y lo aprueba el Trade
+            Marketing Manager. De ahí salen el semáforo —verde ≥ 100%, naranja 85–99.9%, rojo &lt;
+            85%— y el Top Performance.
           </CardDescription>
         </CardHeader>
       </Card>

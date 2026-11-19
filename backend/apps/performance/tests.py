@@ -530,7 +530,7 @@ def test_el_porcentaje_va_de_cero_a_cien_y_es_obligatorio(equipo):
     """Sin sobrecumplimiento: el % que se registra no pasa de 100 ni baja de 0."""
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     ruta = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
     cliente = cliente_de(julian)
 
@@ -555,6 +555,21 @@ def _empezar_el_mes(periodo):
     Objetivo.objects.filter(periodo=periodo).update(periodo=primer_dia(date.today()))
     Periodo.objects.filter(periodo=periodo).update(periodo=primer_dia(date.today()))
     return primer_dia(date.today())
+
+
+def _mes_pasado():
+    return primer_dia(primer_dia(date.today()) - timedelta(days=1))
+
+
+def _terminar_el_mes(periodo):
+    """
+    Corre el reloj hasta que el mes del objetivo terminó: el cumplimiento se
+    carga y se aprueba desde el 1 del mes siguiente, así que se lleva al mes pasado.
+    """
+    pasado = _mes_pasado()
+    Objetivo.objects.filter(periodo=periodo).update(periodo=pasado)
+    Periodo.objects.filter(periodo=periodo).update(periodo=pasado)
+    return pasado
 
 
 def test_los_objetivos_del_mes_en_curso_estan_congelados(equipo):
@@ -702,7 +717,7 @@ def test_el_ceo_define_sus_objetivos_y_su_resultado_queda_aprobado(app_performan
     assert ajeno.status_code == 403
 
     objetivo = Objetivo.objects.get(colaborador=ceo)
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     resultado = cliente.put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
         {'porcentajeCumplimiento': '90'},
@@ -727,7 +742,7 @@ def test_el_ceo_que_tambien_es_people_se_aprueba_a_si_mismo(app_performance, equ
     )
     _rol_ceo(ceo)
     objetivo = objetivo_de(ceo, ceo, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
 
     resultado = cliente_de(ceo).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
@@ -759,7 +774,7 @@ def test_con_el_rol_de_ceo_pero_con_jefe_lo_aprueba_su_jefe(app_performance, equ
     _rol_ceo(people)
     objetivo = objetivo_de(people, jefe, '50')
     otro = objetivo_de(people, jefe, '50', objetivo='Otro objetivo')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
 
     resultado = cliente_de(people).put(
@@ -794,7 +809,7 @@ def test_con_el_rol_de_ceo_pero_con_jefe_lo_aprueba_su_jefe(app_performance, equ
 
     # A los demás los sigue aprobando como People.
     de_julian = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(de_julian.periodo)
+    _terminar_el_mes(de_julian.periodo)
     cliente_de(julian).put(
         f'{RUTA}/objetivos/{de_julian.pk}/resultado',
         {'porcentajeCumplimiento': '70'},
@@ -812,7 +827,7 @@ def test_quien_no_tiene_jefe_ni_el_rol_no_se_aprueba_solo(app_performance):
     """Un dato faltante en Odoo no convierte a nadie en su propio aprobador."""
     sin_jefe = crear_usuario('sinjefe@supli.tech', app_performance)
     objetivo = objetivo_de(sin_jefe, sin_jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     cliente = cliente_de(sin_jefe)
 
     resultado = cliente.put(
@@ -834,7 +849,7 @@ def test_el_admin_no_se_autoaprueba(app_performance, equipo):
     User.objects.filter(pk=admin.pk).update(kind=User.Kind.ADMIN)
     admin.refresh_from_db()
     objetivo = objetivo_de(admin, admin, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
 
     resultado = cliente_de(admin).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
@@ -850,7 +865,7 @@ def test_el_admin_no_se_autoaprueba(app_performance, equipo):
 def test_el_colaborador_registra_su_porcentaje_con_la_evidencia(equipo):
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
 
     respuesta = cliente_de(julian).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
@@ -876,7 +891,7 @@ def test_el_colaborador_registra_su_porcentaje_con_la_evidencia(equipo):
 def test_el_resultado_lo_carga_el_responsable_no_cualquiera(app_performance, equipo):
     jefe, julian, daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100', responsable_resultado=jefe)
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
 
     ajeno = cliente_de(daniel).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
@@ -893,24 +908,52 @@ def test_el_resultado_lo_carga_el_responsable_no_cualquiera(app_performance, equ
     assert del_responsable.status_code == 200, del_responsable.data
 
 
-def test_no_se_carga_el_resultado_de_un_mes_que_no_ha_empezado(equipo):
+def test_el_resultado_se_carga_cuando_el_mes_termina(equipo):
+    """El de noviembre se carga desde el 1 de diciembre: ni el mes entrante ni el en curso."""
     jefe, julian, _daniel = equipo
-    objetivo = objetivo_de(julian, jefe, '100')
+    entrante = objetivo_de(julian, jefe, '100')
+    en_curso = objetivo_de(julian, jefe, '100', periodo=primer_dia(date.today()))
 
+    for objetivo in (entrante, en_curso):
+        respuesta = cliente_de(julian).put(
+            f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+            {'porcentajeCumplimiento': '100'},
+            format='json',
+        )
+        assert respuesta.status_code == 400
+        assert 'todavía no termina' in str(respuesta.data)
+    assert not Resultado.objects.exists()
+
+    _terminar_el_mes(en_curso.periodo)
     respuesta = cliente_de(julian).put(
-        f'{RUTA}/objetivos/{objetivo.pk}/resultado',
+        f'{RUTA}/objetivos/{en_curso.pk}/resultado',
         {'porcentajeCumplimiento': '100'},
         format='json',
     )
+    assert respuesta.status_code == 200, respuesta.data
+
+
+def test_no_se_aprueba_el_resultado_de_un_mes_que_no_ha_terminado(equipo):
+    jefe, julian, _daniel = equipo
+    objetivo = objetivo_de(julian, jefe, '100', periodo=primer_dia(date.today()))
+    resultado = Resultado.objects.create(
+        objetivo=objetivo, porcentaje_cumplimiento=Decimal('90'), cargado_por=julian
+    )
+
+    respuesta = cliente_de(jefe).post(
+        f'{RUTA}/objetivos/{objetivo.pk}/validar', {'estado': 'validado'}, format='json'
+    )
 
     assert respuesta.status_code == 400
-    assert 'todavía no empieza' in str(respuesta.data)
+    assert 'todavía no termina' in str(respuesta.data)
+    resultado.refresh_from_db()
+    assert resultado.estado_validacion == EstadoValidacion.PENDIENTE
 
 
 def test_el_jefe_valida_el_resultado_y_quien_lo_cargo_no(equipo):
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     cliente_de(julian).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
         {'porcentajeCumplimiento': '100'},
@@ -941,7 +984,7 @@ def test_el_colaborador_carga_su_resultado_y_el_jefe_tambien_puede(equipo, app_p
     """El colaborador sube su evidencia y el jefe la aprueba; el jefe también puede cargarla."""
     jefe, julian, daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     ruta = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
     cuerpo = {'porcentajeCumplimiento': '100'}
 
@@ -955,7 +998,7 @@ def test_el_jefe_que_cargo_el_resultado_tambien_lo_valida(equipo):
     """El responsable por defecto es el jefe: si carga él, no se queda sin poder validar."""
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100', responsable_resultado=jefe)
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     cliente_de(jefe).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
         {'porcentajeCumplimiento': '100'},
@@ -972,7 +1015,7 @@ def test_el_jefe_que_cargo_el_resultado_tambien_lo_valida(equipo):
 def test_el_jefe_deja_feedback_sin_pisar_la_observacion_del_colaborador(equipo):
     jefe, julian, daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     cliente_de(julian).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
         {'porcentajeCumplimiento': '100', 'observacion': 'Entregado el viernes.'},
@@ -1013,7 +1056,7 @@ def test_el_historial_guarda_cada_paso_con_su_motivo(equipo):
     """Cargar, devolver con motivo, corregir, comentar y validar: todo queda registrado."""
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     resultado = f'{RUTA}/objetivos/{objetivo.pk}/resultado'
     validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
 
@@ -1053,7 +1096,7 @@ def test_el_historial_guarda_cada_paso_con_su_motivo(equipo):
 def test_corregir_el_resultado_devuelve_la_validacion_a_pendiente(equipo):
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     cliente = cliente_de(julian)
     cliente.put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
@@ -1087,7 +1130,7 @@ def test_el_asesor_no_registra_su_resultado_lo_registra_su_jefe(punto_de_venta):
     tmm, lider, asesor, promotora = punto_de_venta
     del_asesor = objetivo_de(asesor, lider, '100')
     de_la_promotora = objetivo_de(promotora, lider, '100')
-    _empezar_el_mes(del_asesor.periodo)
+    _terminar_el_mes(del_asesor.periodo)
 
     propio = _con_resultado_de(del_asesor, asesor)
     assert propio.status_code == 403
@@ -1103,7 +1146,7 @@ def test_el_asesor_no_registra_su_resultado_lo_registra_su_jefe(punto_de_venta):
 def test_el_resultado_del_asesor_lo_aprueba_el_trade_marketing_manager(punto_de_venta):
     tmm, lider, asesor, _promotora = punto_de_venta
     objetivo = objetivo_de(asesor, lider, '100')
-    _empezar_el_mes(objetivo.periodo)
+    _terminar_el_mes(objetivo.periodo)
     _con_resultado_de(objetivo, lider)
     validar = f'{RUTA}/objetivos/{objetivo.pk}/validar'
 
@@ -1176,7 +1219,7 @@ def test_el_q_es_trimestral_no_de_cuatro_meses():
 
 def test_el_acumulado_pondera_lo_medido_y_pinta_el_semaforo(equipo):
     jefe, julian, _daniel = equipo
-    mes = primer_dia(date.today())
+    mes = _mes_pasado()
     dos = objetivo_de(julian, jefe, '50', periodo=mes)
     objetivo_de(julian, jefe, '50', periodo=mes, objetivo='Otro objetivo')
     cliente_de(julian).put(
@@ -1220,10 +1263,9 @@ def test_el_tablero_muestra_a_cada_quien_lo_que_le_toca(equipo, app_performance)
 
 def test_el_top_lo_ve_todo_el_mundo_y_solo_lleva_a_los_medidos(equipo):
     jefe, julian, daniel = equipo
-    mes = primer_dia(date.today())
+    mes = _mes_pasado()
     objetivo = objetivo_de(julian, jefe, '100', periodo=mes)
     objetivo_de(daniel, jefe, '100', periodo=mes)
-    _empezar_el_mes(mes)
     cliente_de(julian).put(
         f'{RUTA}/objetivos/{objetivo.pk}/resultado',
         {'porcentajeCumplimiento': '100'},
@@ -1234,7 +1276,9 @@ def test_el_top_lo_ve_todo_el_mundo_y_solo_lleva_a_los_medidos(equipo):
     assert cliente_de(daniel).get(f'{RUTA}/acumulado?tipo=mes').status_code == 403
 
     # …pero el Top sí: le muestra a Julian, que es quien tiene resultado.
-    top = cliente_de(daniel).get(f'{RUTA}/acumulado?tipo=mes&alcance=top').json()
+    top = cliente_de(daniel).get(
+        f'{RUTA}/acumulado?tipo=mes&anio={mes.year}&indice={mes.month}&alcance=top'
+    ).json()
     assert [f['colaborador'] for f in top['colaboradores']] == [julian.pk]
 
 
@@ -1545,7 +1589,7 @@ def test_pendientes_por_cargar_y_por_aprobar_en_un_mes_empezado(equipo):
     jefe, julian, daniel = equipo
     objetivo_de(julian, jefe, '100')
     cargado = objetivo_de(daniel, jefe, '100')
-    mes = _empezar_el_mes(OCTUBRE)
+    mes = _terminar_el_mes(OCTUBRE)
     resultado = Resultado.objects.create(
         objetivo=cargado, porcentaje_cumplimiento=Decimal('90'), cargado_por=daniel
     )
@@ -1563,7 +1607,7 @@ def test_pendientes_por_cargar_y_por_aprobar_en_un_mes_empezado(equipo):
 def test_pendientes_cuenta_lo_cargado_sin_evidencia(equipo):
     jefe, julian, _daniel = equipo
     objetivo = objetivo_de(julian, jefe, '100')
-    mes = _empezar_el_mes(OCTUBRE)
+    mes = _terminar_el_mes(OCTUBRE)
     Resultado.objects.create(objetivo=objetivo, porcentaje_cumplimiento=Decimal('80'))
 
     datos = _pendientes(jefe, mes)
@@ -1571,14 +1615,21 @@ def test_pendientes_cuenta_lo_cargado_sin_evidencia(equipo):
     assert datos['porCargar'][0]['detalle'] == '1 sin evidencia'
 
 
-def test_pendientes_de_un_mes_que_no_empieza_solo_trae_por_asignar(equipo):
-    jefe, julian, _daniel = equipo
+def test_pendientes_de_un_mes_sin_terminar_solo_trae_por_asignar(equipo):
+    """Ni el mes entrante ni el en curso tienen nada por cargar ni por aprobar."""
+    jefe, julian, daniel = equipo
     objetivo_de(julian, jefe, '100')
+    en_curso = primer_dia(date.today())
+    objetivo_de(julian, jefe, '100', periodo=en_curso)
+    cargado = objetivo_de(daniel, jefe, '100', periodo=en_curso)
+    Resultado.objects.create(
+        objetivo=cargado, porcentaje_cumplimiento=Decimal('90'), cargado_por=daniel
+    )
 
-    datos = _pendientes(jefe, OCTUBRE)
-
-    assert datos['medicionIniciada'] is False
-    assert datos['porCargar'] == [] and datos['porAprobar'] == []
+    for mes in (OCTUBRE, en_curso):
+        datos = _pendientes(jefe, mes)
+        assert datos['medicionIniciada'] is False
+        assert datos['porCargar'] == [] and datos['porAprobar'] == []
 
 
 def test_el_lider_solo_ve_a_su_equipo_y_el_colaborador_no_ve_pendientes(app_performance, equipo):
