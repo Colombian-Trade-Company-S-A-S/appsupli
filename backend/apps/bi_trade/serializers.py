@@ -9,6 +9,7 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
 
 from .models import (
+    META_MAXIMA_PUNTO,
     PRECIO_MAXIMO,
     Acelerador,
     AsesorApple,
@@ -542,21 +543,35 @@ class InventarioHcSerializer(InventarioSerializer):
         ]
 
 
-class MetaHcSerializer(MetaSerializer):
-    # Sin puntos: `None` quita los campos que declara el serializer de Claro.
-    meta_puntos = None
-    puntaje = None
+class MetaHcSerializer(ModeloBiTrade):
+    """
+    La meta de una tienda HC en un mes, en pesos: punto, periodo y total.
 
-    class Meta(MetaSerializer.Meta):
+    No va por producto como en los demás canales (ver `MetaComercialHc`). La
+    fecha se guarda como el día 1 de su mes, venga el día que venga: así dos
+    filas del mismo mes son la misma meta y no se duplican.
+    """
+
+    nombre_pdv = serializers.CharField(source='id_punto_venta.nombre_pdv', read_only=True)
+    regional = serializers.CharField(source='id_punto_venta.regional', read_only=True, default='')
+    total_meta = serializers.IntegerField(min_value=1, max_value=META_MAXIMA_PUNTO)
+
+    class Meta:
         model = MetaComercialHc
-        fields = _sin_puntos(MetaSerializer.Meta.fields)
         validators = [
             UniqueTogetherValidator(
                 queryset=MetaComercialHc.objects.all(),
-                fields=('id_producto', 'id_punto_venta', 'fecha_meta'),
-                message=MetaSerializer.Meta.validators[0].message,
+                fields=('id_punto_venta', 'fecha_meta'),
+                message=(
+                    'Ya hay una meta de ese punto de venta para ese mes. Edita la que existe, '
+                    'o cambia el mes si es la meta de otro periodo.'
+                ),
             )
         ]
+        fields = ('id_meta', 'id_punto_venta', 'nombre_pdv', 'regional', 'fecha_meta', 'total_meta')
+
+    def validate_fecha_meta(self, value):
+        return value.replace(day=1)
 
 
 OPCIONES_FALABELLA = {

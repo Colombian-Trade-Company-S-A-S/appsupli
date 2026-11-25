@@ -52,7 +52,6 @@ from .models import (
 from .precios import (
     anotaciones_meta,
     precio_de_hoy,
-    precio_de_meta,
     precio_de_venta,
     precio_vigente,
 )
@@ -871,8 +870,11 @@ class VentaViewSet(BiTradeViewSet):
 
     @property
     def solo_con_meta(self) -> bool:
-        """Claro y Tmk solo cargan ventas de productos con meta (ver `VentasConMeta`)."""
-        return self.canal.solo_con_meta
+        """
+        Claro y Tmk solo cargan ventas de productos con meta (ver `VentasConMeta`).
+        Falabella carga todo, aunque su tablero solo cuente lo que tiene meta.
+        """
+        return self.canal.importa_solo_con_meta
 
     @property
     def nota_plantilla(self) -> str:
@@ -1430,8 +1432,10 @@ def _calcular_avance(
         inventarios = inventarios.filter(id_punto_venta__regional=regional)
     if marca:
         ventas = ventas.filter(id_producto__marca=marca)
-        metas = metas.filter(id_producto__marca=marca)
         inventarios = inventarios.filter(id_producto__marca=marca)
+        # La meta de una tienda (HC) no es de ninguna marca: se queda entera.
+        if not canal.meta_por_punto:
+            metas = metas.filter(id_producto__marca=marca)
 
     # El punto de venta recorta los tres lados, igual que la regional: lo
     # vendido, la meta y el stock de ese punto.
@@ -1450,7 +1454,7 @@ def _calcular_avance(
 
     objetivo = metas.aggregate(
         dinero=Coalesce(Sum('dinero_meta', output_field=IntegerField()), Value(0)),
-        cantidad=Coalesce(Sum('meta_cantidad'), Value(0)),
+        cantidad=Coalesce(Sum('unidades_meta'), Value(0)),
     )
     # Se reparte en partes iguales: la fuente no trae meta por día, así que
     # cualquier otro reparto sería inventado.
@@ -1517,13 +1521,18 @@ def _calcular_avance(
                 cantidad=Coalesce(Sum('cantidad_vendida'), Value(0)),
             )
         }
-        metas_por = {
-            f[campo]: f
-            for f in metas.values(campo).annotate(
-                dinero=Coalesce(Sum('dinero_meta', output_field=IntegerField()), Value(0)),
-                unidades=Coalesce(Sum('meta_cantidad'), Value(0)),
-            )
-        }
+        metas_por = (
+            {}
+            # La meta de una tienda no se reparte por producto ni por marca.
+            if canal.meta_por_punto and campo.startswith('id_producto')
+            else {
+                f[campo]: f
+                for f in metas.values(campo).annotate(
+                    dinero=Coalesce(Sum('dinero_meta', output_field=IntegerField()), Value(0)),
+                    unidades=Coalesce(Sum('unidades_meta'), Value(0)),
+                )
+            }
+        )
         stock_por = {
             f[campo]: f
             for f in inventarios.values(campo).annotate(
@@ -2443,12 +2452,16 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
     if regional:
         ventas = ventas.filter(id_punto_venta__regional=regional)
         metas = metas.filter(id_punto_venta__regional=regional)
+    # La meta de una tienda (HC) no es de ninguna marca ni producto: se queda entera.
+    por_producto = not canal.meta_por_punto
     if marca:
         ventas = ventas.filter(id_producto__marca=marca)
-        metas = metas.filter(id_producto__marca=marca)
+        if por_producto:
+            metas = metas.filter(id_producto__marca=marca)
     if producto:
         ventas = ventas.filter(id_producto=producto)
-        metas = metas.filter(id_producto=producto)
+        if por_producto:
+            metas = metas.filter(id_producto=producto)
     if punto:
         ventas = ventas.filter(id_punto_venta=punto)
         metas = metas.filter(id_punto_venta=punto)
@@ -2460,9 +2473,11 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
         dinero_linea=F('cantidad_vendida') * precio_de_venta(canal),
         puntos_linea=F('cantidad_vendida') * puntaje,
     )
+    medidas = anotaciones_meta(canal, canal.con_puntos)
     metas = metas.annotate(
-        dinero_meta_linea=F('meta_cantidad') * precio_de_meta(canal),
-        puntos_meta_linea=F('meta_cantidad') * puntaje,
+        dinero_meta_linea=medidas['dinero_meta'],
+        unidades_meta_linea=medidas['unidades_meta'],
+        puntos_meta_linea=medidas.get('puntos_meta', Value(0, output_field=IntegerField())),
     )
 
     def diaria(mensual: int) -> int:
@@ -2479,14 +2494,23 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
                 puntos=Coalesce(Sum('puntos_linea', output_field=IntegerField()), Value(0)),
             )
         }
-        objetivos = {
-            fila[campo]: fila
-            for fila in metas.values(campo).annotate(
-                cantidad=Coalesce(Sum('meta_cantidad'), Value(0)),
-                dinero=Coalesce(Sum('dinero_meta_linea', output_field=IntegerField()), Value(0)),
-                puntos=Coalesce(Sum('puntos_meta_linea', output_field=IntegerField()), Value(0)),
-            )
-        }
+        objetivos = (
+            {}
+            # La meta de una tienda no se reparte por producto ni por marca.
+            if not por_producto and campo.startswith('id_producto')
+            else {
+                fila[campo]: fila
+                for fila in metas.values(campo).annotate(
+                    cantidad=Coalesce(Sum('unidades_meta_linea'), Value(0)),
+                    dinero=Coalesce(
+                        Sum('dinero_meta_linea', output_field=IntegerField()), Value(0)
+                    ),
+                    puntos=Coalesce(
+                        Sum('puntos_meta_linea', output_field=IntegerField()), Value(0)
+                    ),
+                )
+            }
+        )
 
         filas = []
         for clave in set(reales) | set(objetivos):
@@ -2523,7 +2547,7 @@ def _calcular_dia(request, canal: Canal = CLARO) -> dict:
         operaciones=Count('id_venta'),
     )
     objetivo = metas.aggregate(
-        cantidad=Coalesce(Sum('meta_cantidad'), Value(0)),
+        cantidad=Coalesce(Sum('unidades_meta_linea'), Value(0)),
         dinero=Coalesce(Sum('dinero_meta_linea', output_field=IntegerField()), Value(0)),
         puntos=Coalesce(Sum('puntos_meta_linea', output_field=IntegerField()), Value(0)),
     )

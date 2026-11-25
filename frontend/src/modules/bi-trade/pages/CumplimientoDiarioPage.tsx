@@ -42,7 +42,7 @@ interface Cortes {
 export default function CumplimientoDiarioPage() {
   const fuente = useFuente();
   const { soloLectura } = fuente;
-  const medidas = medidasDe(fuente.conPuntos);
+  const medidas = medidasDe(fuente.conPuntos, fuente.metaPorPunto);
   const [fecha, setFecha] = useState(hoyISO);
   const [cortes, setCortes] = useState<Cortes>({});
   const [medida, setMedida] = useState<Medida>('dinero');
@@ -234,7 +234,8 @@ export default function CumplimientoDiarioPage() {
           hint={
             dia
               ? [
-                  `${formatoNumero(totales?.metaCantidad ?? 0)} unidades`,
+                  // HC: la meta es en pesos por tienda, no tiene unidades.
+                  !fuente.metaPorPunto && `${formatoNumero(totales?.metaCantidad ?? 0)} unidades`,
                   fuente.conPuntos && `${formatoNumero(totales?.metaPuntos ?? 0)} puntos`,
                 ]
                   .filter(Boolean)

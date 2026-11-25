@@ -93,7 +93,12 @@ export function CifrasDelMes({ data }: { data: DetalleAvance }) {
       <Kpi
         label="Vendido en el mes"
         value={formatoMonedaCorta(totales.ventasDinero)}
-        hint={`${formatoNumero(totales.ventasCantidad)} de ${formatoNumero(totales.metaCantidad)} unidades de meta`}
+        hint={
+          totales.metaCantidad > 0
+            ? `${formatoNumero(totales.ventasCantidad)} de ${formatoNumero(totales.metaCantidad)} unidades de meta`
+            : // HC: la meta es en pesos por tienda, sin unidades que comparar.
+              `${formatoNumero(totales.ventasCantidad)} unidades vendidas`
+        }
       />
       <Kpi
         label="Promedio diario"

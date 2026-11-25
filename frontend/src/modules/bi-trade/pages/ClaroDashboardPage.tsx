@@ -37,6 +37,7 @@ import {
 } from '../components/SelectorMes';
 import { ImportarInforme } from '../components/ImportarInforme';
 import { ImportarFalabella } from '../components/ImportarFalabella';
+import { ImportarHc } from '../components/ImportarHc';
 import { HojasBi } from '../components/HojasBi';
 import { CompartirTablero } from '../components/CompartirTablero';
 import { useFuente } from '../fuente';
@@ -104,6 +105,8 @@ export default function ClaroDashboardPage() {
             {fuente.importarInforme && <ImportarInforme importar={fuente.importarInforme} />}
             {/* Falabella: sus reportes .csv del portal, ventas e inventario. */}
             {fuente.importarFalabella && <ImportarFalabella importar={fuente.importarFalabella} />}
+            {/* Homecenter: sus reportes .xlsx del portal, ventas por canal e inventario. */}
+            {fuente.importarHc && <ImportarHc importar={fuente.importarHc} />}
             {MODULOS.map(({ ruta, etiqueta, icono: Icono }) => (
               <Button key={ruta} variant="outline" render={<Link to={`${fuente.base}/${ruta}`} />}>
                 <Icono data-icon="inline-start" />
@@ -244,9 +247,14 @@ export default function ClaroDashboardPage() {
           cargando={isLoading}
           value={formatoMonedaCorta(totales?.ventasDinero ?? 0)}
           tendencia={tendencia.acumulado}
-          hint={`${formatoNumero(totales?.ventasCantidad ?? 0)} unidades de ${formatoNumero(
-            totales?.metaCantidad ?? 0,
-          )} de meta`}
+          hint={
+            // HC: la meta es en pesos por tienda, sin unidades que comparar.
+            fuente.metaPorPunto
+              ? `${formatoNumero(totales?.ventasCantidad ?? 0)} unidades vendidas`
+              : `${formatoNumero(totales?.ventasCantidad ?? 0)} unidades de ${formatoNumero(
+                  totales?.metaCantidad ?? 0,
+                )} de meta`
+          }
         />
         <Kpi
           label="Meta diaria"

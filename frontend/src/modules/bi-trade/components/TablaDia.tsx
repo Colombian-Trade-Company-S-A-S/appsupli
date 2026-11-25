@@ -37,8 +37,14 @@ export const MEDIDAS: Array<{ value: Medida; label: string }> = [
 ];
 
 /** Las medidas de un canal: los puntos solo existen en Claro. */
-export const medidasDe = (conPuntos: boolean) =>
-  conPuntos ? MEDIDAS : MEDIDAS.filter((m) => m.value !== 'puntos');
+/**
+ * Las medidas del canal. Sin puntos no hay medida de puntos; con la meta por
+ * punto en pesos (HC) tampoco la de unidades: no hay meta de unidades que medir.
+ */
+export const medidasDe = (conPuntos: boolean, metaPorPunto = false) =>
+  MEDIDAS.filter(
+    (m) => (conPuntos || m.value !== 'puntos') && (!metaPorPunto || m.value !== 'cantidad'),
+  );
 
 const real = (fila: FilaDia, medida: Medida) =>
   medida === 'dinero'

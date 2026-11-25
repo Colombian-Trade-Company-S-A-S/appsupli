@@ -1,4 +1,5 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
+import { ContextoFuente } from './contexto-fuente';
 import {
   biTradeApi,
   biTradeApiFalabella,
@@ -21,6 +22,15 @@ import {
   type ResultadoQuery,
   type RespuestaQueryVentas,
 } from './api';
+
+/** Los reportes .xlsx del portal de Homecenter: ventas (con canales) e inventario. */
+export interface ImportadorHc {
+  leerVentas: typeof biTradeApiHc.leerReporteVentas;
+  ventas: typeof biTradeApiHc.importarReporteVentas;
+  inventario: typeof biTradeApiHc.importarReporteInventario;
+  /** Los productos que quedaron en precio 0, en la plantilla de productos. */
+  plantillaSinPrecio: typeof biTradeApiHc.plantillaSinPrecio;
+}
 
 /** Los reportes .csv del portal de Falabella: ventas diarias e inventario. */
 export interface ImportadorFalabella {
@@ -49,6 +59,7 @@ export const PERFILES: Record<
     hojas: HojaTablero[];
     conPuntos: boolean;
     catalogoHc?: boolean;
+    metaPorPunto?: boolean;
   }
 > = {
   claro: {
@@ -65,6 +76,7 @@ export const PERFILES: Record<
     hojas: ['mes', 'dia'],
     conPuntos: false,
     catalogoHc: true,
+    metaPorPunto: true,
   },
   falabella: {
     titulo: 'Informe de Ventas Falabella',
@@ -108,6 +120,11 @@ export interface FuenteDatos {
    * exigen código y nombre; sus puntos de venta tienen categoría (A, B o C).
    */
   catalogoHc?: boolean;
+  /**
+   * La meta es de la tienda en el mes, en pesos, no de cada producto en
+   * unidades. Solo HC: no hay meta de unidades ni por producto que mostrar.
+   */
+  metaPorPunto?: boolean;
   avanceMensual: (filtros: FiltrosAvance) => Promise<AvanceMensual>;
   cumplimientoDiario: (filtros: FiltrosDia) => Promise<CumplimientoDiario>;
   tickets: (filtros: FiltrosConcurso) => Promise<Concurso>;
@@ -131,6 +148,8 @@ export interface FuenteDatos {
   importarQueryVentas?: (archivo: File, sobrescribir: boolean) => Promise<RespuestaQueryVentas>;
   /** Los reportes .csv del portal de Falabella. Solo Falabella. */
   importarFalabella?: ImportadorFalabella;
+  /** Los reportes .xlsx del portal de Homecenter, desde el tablero. Solo HC. */
+  importarHc?: ImportadorHc;
 }
 
 /** Claro, con sesión: todo habilitado. */
@@ -189,6 +208,12 @@ export const fuenteHc: FuenteDatos = {
   ...fuenteDeCanal('hc', '/inicio/bi-trade/ventas-hc', biTradeApiHc),
   importarQuery: biTradeApiHc.importarQuery,
   importarQueryVentas: biTradeApiHc.importarQueryVentas,
+  importarHc: {
+    leerVentas: biTradeApiHc.leerReporteVentas,
+    ventas: biTradeApiHc.importarReporteVentas,
+    inventario: biTradeApiHc.importarReporteInventario,
+    plantillaSinPrecio: biTradeApiHc.plantillaSinPrecio,
+  },
 };
 
 export const fuenteFalabella: FuenteDatos = {
@@ -206,10 +231,6 @@ export const fuenteTmk: FuenteDatos = {
   detalleRegional: undefined,
 };
 
-// El valor por defecto es Claro en la app: las páginas que no están dentro de
-// un proveedor siguen funcionando igual que antes.
-const Contexto = createContext<FuenteDatos>(fuenteApp);
-
 export function FuenteDatosProvider({
   fuente,
   children,
@@ -217,7 +238,12 @@ export function FuenteDatosProvider({
   fuente: FuenteDatos;
   children: ReactNode;
 }) {
-  return <Contexto.Provider value={fuente}>{children}</Contexto.Provider>;
+  return <ContextoFuente.Provider value={fuente}>{children}</ContextoFuente.Provider>;
 }
 
-export const useFuente = () => useContext(Contexto);
+/**
+ * La fuente del canal en que se está. Fuera de un proveedor es Claro en la
+ * app: sus páginas (/bi-trade/claro/…) no van dentro de uno. El contexto vive
+ * aparte, en `contexto-fuente`, para no duplicarse (ver allí por qué).
+ */
+export const useFuente = (): FuenteDatos => useContext(ContextoFuente) ?? fuenteApp;

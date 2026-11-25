@@ -8,7 +8,9 @@ las plantillas—; el tablero llama al mismo cálculo con el canal FALABELLA.
 No existe el «Importar» general del informe del ERP: ese informe es de Claro.
 Cada módulo sí tiene su plantilla y su importación. Además, las ventas y el
 inventario se cargan con los reportes .csv del portal de Falabella
-(`importar-reporte`, ver `reporte_falabella`), igual que los queries de HC.
+(`importar-reporte`, ver `reporte_falabella`), igual que los queries de HC:
+entra todo, tenga meta o no, y los productos que falten se ofrecen para crear
+con los datos del mismo archivo.
 """
 from django.db import connection, transaction
 from django.db.models import Count
@@ -20,8 +22,10 @@ from apps.core.excel import Columna
 
 from .api_permissions import CanManageData, HasBiTradeApp
 from .canales import FALABELLA
+from .catalogo_reporte import CREAR, OMITIR, MarcasDelReporte, decision_de
 from .filters import InventarioFalabellaFilter, MetaFalabellaFilter, VentaFalabellaFilter
 from .models import (
+    PRECIO_MAXIMO,
     InventarioFalabella,
     Materiales,
     MetaComercialFalabella,
@@ -30,7 +34,7 @@ from .models import (
     RegionalFalabella,
     VentaFalabella,
 )
-from .reporte_falabella import ErrorDeReporte, leer_inventario, leer_ventas
+from .reporte_falabella import ErrorDeReporte, ProductoDelReporte, leer_inventario, leer_ventas
 from .serializers import (
     InventarioFalabellaSerializer,
     MetaFalabellaSerializer,
@@ -52,7 +56,7 @@ from .views import (
     exportar_dia,
     opciones_de,
 )
-from .views_hc import SOBRESCRIBIR, _Cruce, _error
+from .views_hc import SOBRESCRIBIR, _Cruce, _error, cargar_ventas_por_dia
 
 
 class _PlantillaFalabella:
@@ -100,8 +104,104 @@ _PUNTO_FALABELLA = Columna(
 
 _SIN_CRUCE = (
     'Ninguna fila del archivo cruza con los productos y tiendas de Falabella, así que no se '
-    'cambió nada. Crea primero los SKU y los ID Local que faltan.'
+    'cambió nada. Revisa los SKU y los ID Local que faltan.'
 )
+
+
+class _ProductosPorCrear:
+    """
+    Los productos del reporte que no existen en Falabella, listos para crear.
+
+    Salen de las filas que entran (1 unidad o más), con el costo de una unidad
+    como precio Falabella y precio Coltrade (ver `reporte_falabella`). La marca
+    se busca en el catálogo sin importar mayúsculas ni tildes —«SONY» es
+    «Sony»—; si no está, se crea en nombre propio. Un producto que el archivo
+    trae sin costo queda en 0: no suma dinero hasta que se le ponga precio.
+    Dos consultas, sin importar cuántos productos traiga el archivo.
+    """
+
+    def __init__(self, productos: dict[str, ProductoDelReporte]):
+        existentes = set(
+            ProductoFalabella.objects.filter(pk__in=list(productos)).values_list('pk', flat=True)
+        )
+        self.marcas = MarcasDelReporte()
+        self.productos: list[ProductoFalabella] = []
+        for sku, producto in sorted(productos.items()):
+            precio = producto.precio or 0
+            if sku in existentes or len(sku) > 60 or precio > PRECIO_MAXIMO:
+                continue
+            self.productos.append(
+                ProductoFalabella(
+                    id_producto=sku,
+                    nombre_producto=producto.nombre or sku,
+                    marca_id=self.marcas.resolver(producto.marca),
+                    precio_venta_falabella=precio,
+                    precio_venta_coltrade=precio,
+                )
+            )
+
+    @property
+    def marcas_nuevas(self) -> dict[str, str]:
+        return self.marcas.nuevas
+
+    @property
+    def skus(self) -> set[str]:
+        return {producto.id_producto for producto in self.productos}
+
+    def vista_previa(self) -> dict:
+        return {
+            'productos_por_crear': [
+                {
+                    'id_producto': p.id_producto,
+                    'nombre_producto': p.nombre_producto,
+                    'marca': p.marca_id,
+                    'marca_nueva': self.marcas.es_nueva(p.marca_id),
+                    'precio': p.precio_venta_coltrade,
+                }
+                for p in self.productos
+            ],
+            'marcas_nuevas': sorted(self.marcas.nuevas.values()),
+        }
+
+    def crear(self) -> int:
+        self.marcas.crear()
+        # Si otra carga creó lo mismo un instante antes, no es un error: ya existe.
+        ProductoFalabella.objects.bulk_create(self.productos, ignore_conflicts=True)
+        return len(self.productos)
+
+
+def _preguntar_productos(por_crear: _ProductosPorCrear, cruce: _Cruce, locales) -> Response:
+    """
+    El archivo trae productos que no existen: se pregunta antes de tocar nada.
+
+    No es un error: es la pregunta de si crearlos (`productos=crear`) o
+    importar sin ellos (`productos=omitir`). Va con la vista previa de lo que
+    se crearía y con los ID Local que no existen, que no se crean solos.
+    """
+    total = len(por_crear.productos)
+    return Response(
+        {
+            'code': 'productos_por_crear',
+            'message': f'{total} producto(s) del archivo no existen en Falabella. '
+            '¿Deseas crearlos antes de importar?',
+            **por_crear.vista_previa(),
+            'puntos_faltantes': sorted(set(locales) - cruce.puntos),
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
+def _con_creados(mensaje: str, creados: int, por_crear: _ProductosPorCrear) -> str:
+    if not creados:
+        return mensaje
+    marcas = len(por_crear.marcas_nuevas)
+    return (
+        f'Se crearon {creados} producto(s)'
+        + (f' y {marcas} marca(s)' if marcas else '')
+        + f'. {mensaje}'
+    )
+
+
 _SIN_META = (
     'Ninguna venta del archivo es de un producto con meta ese mes en su punto de venta, así '
     'que no se cambió nada. Sube primero las metas del mes.'
@@ -217,12 +317,19 @@ class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
         """
         Carga las ventas del reporte «Ventas diarias» del portal de Falabella.
 
-        Entran todas las fechas del archivo, solo las filas con 1 unidad o más
-        y, como en Claro, solo las de un producto con meta ese mes en ese punto
-        de venta (ver `VentasConMeta`). Igual que el querie de HC, el corte es
-        por día: si alguno de los días del archivo ya tiene ventas no se guarda
-        nada y se responde 409 con esos días; con `modo=sobrescribir` se borran
-        las ventas de esos días y quedan las del archivo.
+        Entran todas las fechas del archivo, solo las filas con 1 unidad o más,
+        tengan meta o no: a diferencia de Claro, Falabella carga todo y es el
+        tablero el que cuenta solo lo que tiene meta.
+
+        Las preguntas, en orden, sin guardar nada hasta que estén resueltas:
+
+        1. Si hay productos que no existen, 409 `productos_por_crear` con la
+           vista previa. `productos=crear` los crea antes de cargar las
+           ventas; `productos=omitir` carga sin ellos.
+        2. Igual que el querie de HC, el corte es por día: si alguno de los
+           días ya tiene ventas, 409 `dias_con_ventas` con esos días; con
+           `modo=sobrescribir` se borran las de esos días y quedan las del
+           archivo.
         """
         archivo, error = _archivo_reporte(request)
         if error:
@@ -232,10 +339,19 @@ class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
         except ErrorDeReporte as exc:
             return _error(str(exc))
 
-        cruce = _cruce_falabella((fila.sku, fila.local) for fila in lectura.ventas)
+        pares = [(fila.sku, fila.local) for fila in lectura.ventas]
+        cruce = _cruce_falabella(pares)
+        por_crear = _ProductosPorCrear(lectura.productos)
+        decision = decision_de(request)
+        if por_crear.productos and decision not in (CREAR, OMITIR):
+            return _preguntar_productos(por_crear, cruce, (local for _, local in pares))
+        if decision == CREAR:
+            # Los que se van a crear cuentan como existentes al cruzar.
+            cruce.productos |= por_crear.skus
+
         filtro = (
             VentasConMeta({(f.fecha.year, f.fecha.month) for f in lectura.ventas}, self.canal)
-            if self.canal.solo_con_meta
+            if self.solo_con_meta
             else None
         )
         sin_meta = 0
@@ -266,37 +382,19 @@ class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
         if not nuevas:
             return _error(_SIN_META if sin_meta and not cruce.omitidas else _SIN_CRUCE, **resumen)
 
-        sobrescribir = (request.data.get('modo') or '').strip() == SOBRESCRIBIR
-        with transaction.atomic():
-            _bloquear_ventas_falabella()
-            # Se mira ya con el bloqueo: lo que se ve aquí es lo que hay al guardar.
-            ocupados = list(
-                VentaFalabella.objects.filter(fecha_venta__in=dias)
-                .values('fecha_venta')
-                .annotate(registros=Count('id_venta'))
-                .order_by('fecha_venta')
-            )
-            if ocupados and not sobrescribir:
-                return Response(
-                    {
-                        'code': 'dias_con_ventas',
-                        'message': (
-                            f'{len(ocupados)} día(s) del archivo ya tienen ventas cargadas. '
-                            'Sobrescribe para reemplazarlas, o cancela.'
-                        ),
-                        'dias_con_ventas': [
-                            {
-                                'fecha': fila['fecha_venta'].isoformat(),
-                                'registros': fila['registros'],
-                            }
-                            for fila in ocupados
-                        ],
-                        **resumen,
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
-            eliminadas, _ = VentaFalabella.objects.filter(fecha_venta__in=dias).delete()
-            VentaFalabella.objects.bulk_create(nuevas, batch_size=500)
+        # Hasta guardar no se escribe nada: los productos se crean ya sin
+        # preguntas pendientes, en la misma transacción que las ventas.
+        respuesta, eliminadas, creados = cargar_ventas_por_dia(
+            VentaFalabella,
+            nuevas,
+            sobrescribir=(request.data.get('modo') or '').strip() == SOBRESCRIBIR,
+            bloquear=_bloquear_ventas_falabella,
+            resumen=resumen,
+            antes=por_crear.crear if decision == CREAR else None,
+        )
+        if respuesta:
+            return respuesta
+        creados = creados or 0
 
         mensaje = f'Ventas cargadas: {len(nuevas)} registro(s) de {len(dias)} día(s)' + (
             f', reemplazando {eliminadas} que ya estaban.' if eliminadas else '.'
@@ -309,7 +407,9 @@ class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
                 'creadas': len(nuevas),
                 'unidades': sum(venta.cantidad_vendida for venta in nuevas),
                 'eliminadas': eliminadas,
-                'message': mensaje + _fuera(cruce),
+                'productos_creados': creados,
+                'marcas_creadas': sorted(por_crear.marcas_nuevas.values()) if creados else [],
+                'message': _con_creados(mensaje + _fuera(cruce), creados, por_crear),
             }
         )
 
@@ -342,8 +442,12 @@ class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
         Reemplaza el inventario Falabella con el reporte «Análisis semanal».
 
         Es la foto del stock disponible: se borra lo que había y queda lo del
-        archivo, solo con 1 unidad o más. Si ninguna fila cruza no se borra
-        nada: vaciar el inventario sin con qué reemplazarlo sería perder el dato.
+        archivo, solo con 1 unidad o más, tenga meta o no (el tablero cuenta
+        solo el stock con meta). Si ninguna fila cruza no se borra nada:
+        vaciar el inventario sin con qué reemplazarlo sería perder el dato.
+
+        Si hay productos que no existen se pregunta primero, igual que en las
+        ventas: 409 `productos_por_crear`, y luego `productos=crear` u `omitir`.
         """
         archivo, error = _archivo_reporte(request)
         if error:
@@ -354,6 +458,14 @@ class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
             return _error(str(exc))
 
         cruce = _cruce_falabella(lectura.inventario)
+        por_crear = _ProductosPorCrear(lectura.productos)
+        decision = decision_de(request)
+        if por_crear.productos and decision not in (CREAR, OMITIR):
+            locales = (local for _, local in lectura.inventario)
+            return _preguntar_productos(por_crear, cruce, locales)
+        if decision == CREAR:
+            cruce.productos |= por_crear.skus
+
         nuevos = [
             InventarioFalabella(
                 id_producto_id=sku, id_punto_venta_id=local, cantidad_inventario=unidades
@@ -370,16 +482,20 @@ class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
             return _error(_SIN_CRUCE, **resumen)
 
         with transaction.atomic():
+            creados = por_crear.crear() if decision == CREAR else 0
             eliminados, _ = InventarioFalabella.objects.all().delete()
             InventarioFalabella.objects.bulk_create(nuevos, batch_size=500)
 
+        mensaje = f'Inventario cargado: {len(nuevos)} registro(s).' + _fuera(cruce)
         return Response(
             {
                 **resumen,
                 'creados': len(nuevos),
                 'unidades': sum(fila.cantidad_inventario for fila in nuevos),
                 'eliminados': eliminados,
-                'message': f'Inventario cargado: {len(nuevos)} registro(s).' + _fuera(cruce),
+                'productos_creados': creados,
+                'marcas_creadas': sorted(por_crear.marcas_nuevas.values()) if creados else [],
+                'message': _con_creados(mensaje, creados, por_crear),
             }
         )
 

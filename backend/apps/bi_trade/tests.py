@@ -19,6 +19,7 @@ from apps.bi_trade.calendario import dias_habiles, es_habil, festivos, pascua
 from apps.bi_trade.models import (
     Acelerador,
     Campana,
+    CategoriaHc,
     EnlacePublico,
     EscalaTicket,
     Inventario,
@@ -2961,10 +2962,9 @@ def catalogo_hc():
     return tienda, centro, torre, bombillo
 
 
-def _meta_hc(punto, producto, unidades, fecha=date(2026, 3, 10)):
-    return MetaComercialHc.objects.create(
-        id_producto=producto, id_punto_venta=punto, fecha_meta=fecha, meta_cantidad=unidades
-    )
+def _meta_hc(punto, total, fecha=date(2026, 3, 1)):
+    """La meta de HC es de la tienda en el mes, en pesos: no va por producto."""
+    return MetaComercialHc.objects.create(id_punto_venta=punto, fecha_meta=fecha, total_meta=total)
 
 
 def _venta_hc(punto, producto, unidades, fecha=date(2026, 3, 4)):
@@ -2998,8 +2998,9 @@ def test_las_tablas_y_llaves_de_hc_terminan_en_hc():
     for modelo in (PuntoVentaHc, ProductoHc, VentaHc, InventarioHc, MetaComercialHc):
         assert modelo._meta.db_table.endswith('_hc'), modelo
         assert modelo._meta.pk.column.endswith('_hc'), modelo
-    for modelo in (VentaHc, InventarioHc, MetaComercialHc):
+    for modelo in (VentaHc, InventarioHc):
         assert modelo._meta.get_field('id_producto').column == 'id_producto_hc'
+    for modelo in (VentaHc, InventarioHc, MetaComercialHc):
         assert modelo._meta.get_field('id_punto_venta').column == 'id_punto_venta_hc'
     assert ProductoHc._meta.get_field('precio_venta_hc').column == 'precio_venta_hc'
 
@@ -3026,9 +3027,9 @@ def test_claro_y_hc_no_se_mezclan(app_bi_trade, catalogo, catalogo_hc):
 
 
 def test_la_cuota_diaria_de_hc_se_reparte_igual_que_en_claro(app_bi_trade, catalogo_hc):
-    tienda, _centro, torre, _bombillo = catalogo_hc
-    # 25 × 1.000.000, cargada con un día cualquiera de marzo.
-    _meta_hc(tienda, torre, 25)
+    tienda, _centro, _torre, _bombillo = catalogo_hc
+    # La meta de la tienda en marzo, en pesos.
+    _meta_hc(tienda, 25_000_000)
 
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
     datos = cliente.get('/api/bi-trade/hc/avance-mensual?anio=2026&mes=3').json()
@@ -3040,7 +3041,7 @@ def test_la_cuota_diaria_de_hc_se_reparte_igual_que_en_claro(app_bi_trade, catal
 
 def test_el_cumplimiento_diario_de_hc(app_bi_trade, catalogo_hc):
     tienda, _centro, torre, _bombillo = catalogo_hc
-    _meta_hc(tienda, torre, 25)
+    _meta_hc(tienda, 25_000_000)
     _venta_hc(tienda, torre, 2)
 
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
@@ -3146,7 +3147,8 @@ def test_las_plantillas_de_hc_usan_encabezados_hc(app_bi_trade):
         ],
         'ventas': ['id_producto_hc', 'id_punto_venta_hc', 'fecha_venta', 'cantidad_vendida'],
         'inventario': ['id_producto_hc', 'id_punto_venta_hc', 'cantidad_inventario'],
-        'metas': ['id_producto_hc', 'id_punto_venta_hc', 'fecha_meta', 'meta_cantidad'],
+        # La meta de HC es de la tienda en el mes, en pesos.
+        'metas': ['id_punto_venta_hc', 'fecha_meta', 'total_meta'],
     }
     for recurso, encabezados in esperados.items():
         respuesta = editor.get(f'/api/bi-trade/hc/{recurso}/plantilla')
@@ -3463,7 +3465,7 @@ def test_cada_modulo_de_hc_se_exporta_con_todos_sus_campos(app_bi_trade, catalog
     torre.ean = '7701234567890'
     torre.save()
     _venta_hc(tienda, torre, 2)
-    _meta_hc(tienda, torre, 5)
+    _meta_hc(tienda, 5_000_000)
     InventarioHc.objects.create(id_producto=torre, id_punto_venta=tienda, cantidad_inventario=4)
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
 
@@ -3498,7 +3500,10 @@ def test_cada_modulo_de_hc_se_exporta_con_todos_sus_campos(app_bi_trade, catalog
 
     [meta] = exportar('metas')
     assert meta['Meta dinero'] == 5_000_000
+    assert meta['Código punto de venta'] == 'HC-101'
     assert 'Meta puntos' not in meta
+    # La meta de HC es de la tienda: el archivo no trae producto ni unidades.
+    assert 'Código producto (SKU)' not in meta and 'Meta unidades' not in meta
 
 
 def test_las_opciones_de_hc_traen_sus_regionales_y_marcas(app_bi_trade, catalogo_hc):
@@ -3555,7 +3560,8 @@ def test_la_semilla_de_hc_carga_datos_y_no_duplica():
     assert PuntoVentaHc.objects.count() == 5
     assert ProductoHc.objects.count() == 8
     assert InventarioHc.objects.count() == 5 * 8
-    assert metas == 5 * 8 * 2  # el mes anterior y el actual
+    # Una por tienda, el mes anterior y el actual: la meta de HC es de la tienda.
+    assert metas == 5 * 2
     assert ventas > 0
 
     call_command('seed_bi_trade_hc_demo', stdout=StringIO())
@@ -3564,6 +3570,223 @@ def test_la_semilla_de_hc_carga_datos_y_no_duplica():
     # Lo de Claro no se toca.
     assert not Venta.objects.exists()
     assert not PuntoVenta.objects.exists()
+
+
+# ── HC: el botón Importar del tablero (reportes del portal) ────────────────
+
+RUTA_REPORTE_VENTAS_HC = '/api/bi-trade/hc/ventas/importar-reporte'
+RUTA_REPORTE_INVENTARIO_HC = '/api/bi-trade/hc/inventario/importar-reporte'
+
+
+def _reporte_ventas_hc():
+    """Un reporte de ventas del portal: encabezado, fila de tipos y datos."""
+    encabezados = [
+        'Fecha', 'Tipo Registro', 'Referencia Proveedor', 'Código SKU', 'Desc. SKU',
+        'Código EAN', 'Marca', 'Canal', 'Nombre Tienda', 'EAN Tienda', 'Unidades Vendidas',
+        'Ventas Precio Proveedor',
+    ]
+    tipos = ['Fecha', *['Texto'] * 9, 'Número', 'Número - Moneda']
+    filas = [
+        # Dos unidades: el valor es el de las dos.
+        ['2026-11-01', 'Venta', 'CO0501000401   ', '3016661', 'UPS HIKVISION 600 W VA',
+         '693184719899', 'HIKVISION', 'Tienda', 'Neiva San Pedro', '7703670900177', 2,
+         211646.24],
+        ['2026-11-02', 'Venta', 'CO0501000401', '3016661', 'UPS HIKVISION 600 W VA',
+         '693184719899', 'HIKVISION', 'App', 'Venta Distancia Bogota', None, 1, 100000],
+        ['2026-11-01', 'Venta', 'OT0108000401', '3016665',
+         '**HIKVISION EASY LINK WIFI DVR+ 2 CAMARAS', '694216047469', 'DIGITAL POS', 'Web',
+         'CALI SUR', '7703670900306', 1, 232228],
+        ['2026-11-02', 'Devoluciones', 'CO0501000401', '3016661', 'UPS HIKVISION 600 W VA',
+         '693184719899', 'HIKVISION', 'Tienda', 'Neiva San Pedro', '7703670900177', -1,
+         -105823],
+    ]
+    return _xlsx(encabezados, [tipos, *filas])
+
+
+def test_el_reporte_de_ventas_hc_muestra_los_canales_sin_cargar(app_bi_trade):
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_VENTAS_HC,
+        {'archivo': _reporte_ventas_hc(), 'previsualizar': '1'},
+        format='multipart',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['canales'] == [
+        {'canal': 'Tienda', 'ventas': 1, 'unidades': 2},
+        {'canal': 'App', 'ventas': 1, 'unidades': 1},
+        {'canal': 'Web', 'ventas': 1, 'unidades': 1},
+    ]
+    assert respuesta.json()['dias'] == ['2026-11-01', '2026-11-02']
+    assert not VentaHc.objects.exists()
+    assert not ProductoHc.objects.exists()
+
+
+def test_el_reporte_de_ventas_hc_pregunta_y_crea_productos_y_tiendas(app_bi_trade):
+    editor = _editor(app_bi_trade)
+
+    def subir(**extra):
+        return editor.post(
+            RUTA_REPORTE_VENTAS_HC, {'archivo': _reporte_ventas_hc(), **extra}, format='multipart'
+        )
+
+    pregunta = subir()
+    assert pregunta.status_code == 409
+    datos = pregunta.json()
+    assert datos['code'] == 'productos_por_crear'
+    assert datos['productosPorCrear'] == [
+        {'idProducto': '3016661', 'nombreProducto': 'UPS Hikvision 600 W VA',
+         'ean': '693184719899', 'skuColtrade': 'CO0501000401', 'marca': 'Hikvision',
+         'marcaNueva': True, 'precio': 100_000},
+        {'idProducto': '3016665', 'nombreProducto': 'Hikvision Easy Link WiFi DVR+ 2 Camaras',
+         'ean': '694216047469', 'skuColtrade': 'OT0108000401', 'marca': 'Digital Pos',
+         'marcaNueva': True, 'precio': 232_228},
+    ]
+    nuevos = {p['idPuntoVenta']: p for p in datos['puntosPorCrear']}
+    assert {e: p['nombrePdv'] for e, p in nuevos.items()} == {
+        '7703670900177': 'Neiva San Pedro',
+        '7703670900306': 'Cali Sur',
+        # Sin EAN Tienda va a la tienda de venta a distancia.
+        '7703670900993': 'Venta Distancia Bogota',
+    }
+    assert {(p['regional'], p['materiales'], p['categoria']) for p in nuevos.values()} == {
+        (RegionalHc.NACIONAL, Materiales.TODOS, CategoriaHc.A)
+    }
+    assert not ProductoHc.objects.exists() and not PuntoVentaHc.objects.exists()
+
+    creada = subir(productos='crear')
+    assert creada.status_code == 200, creada.json()
+    datos = creada.json()
+    assert (datos['productosCreados'], datos['puntosCreados']) == (2, 3)
+    assert datos['creadas'] == 3
+    ups = ProductoHc.objects.get(pk='3016661')
+    assert ups.precio_venta_coltrade == ups.precio_venta_hc == 100_000
+    assert ups.marca_id == 'Hikvision'
+
+
+def test_el_reporte_de_ventas_hc_carga_solo_los_canales_elegidos(app_bi_trade):
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_VENTAS_HC,
+        {'archivo': _reporte_ventas_hc(), 'canales': ['Tienda'], 'productos': 'crear'},
+        format='multipart',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['creadas'] == 1
+    assert datos['fueraDeCanal'] == 2
+    assert datos['sinUnidades'] == 1
+    assert list(PuntoVentaHc.objects.values_list('pk', flat=True)) == ['7703670900177']
+    # Solo el producto de la tienda, al valor de una unidad de su venta.
+    assert ProductoHc.objects.get().precio_venta_coltrade == 105_823
+    assert VentaHc.objects.get().cantidad_vendida == 2
+
+
+def _reporte_inventario_hc():
+    """Un reporte de inventario del portal: encabezado, fila de tipos y datos."""
+    encabezados = [
+        'Fecha', 'Código SKU', 'Referencia Proveedor', 'Código Barras', 'EAN 13 Calculado',
+        'Descripción SKU', 'Marca', 'Ubicación', 'EAN Ubicación',
+        'Inventario Unidades Efectivo', 'Inventario Unidades Tienda',
+    ]
+    tipos = ['Fecha', *['Texto'] * 8, 'Número', 'Número']
+    fila = [
+        '3000492', 'OT1101000101', '19302200205', '1930220020504', 'BLUETTI ESTACION 300W',
+        'BLUETTI',
+    ]
+    return _xlsx(
+        encabezados,
+        [
+            tipos,
+            # Un día anterior: no entra.
+            ['2026-11-21', *fila, 'ARMENIA', '7703670900665', 50, 50],
+            # Cuenta lo que hay en tienda (6), no el efectivo con bodega (8).
+            ['2026-11-23', *fila, 'ARMENIA', '7703670900665', 8, 6],
+            # Las bodegas sin EAN van todas a la 7703670900993, y se suman.
+            ['2026-11-23', *fila, 'BODEGA DE TRANSITO', None, 2, 2],
+            ['2026-11-23', *fila, 'BODEGA NOVEDADES VAD', None, 3, 3],
+            # Sin unidades en tienda: ni entra ni se ofrece crear su producto o su tienda.
+            ['2026-11-23', '3000493', 'OT1101000201', '1', '2', 'OTRO', 'BLUETTI', 'CUCUTA',
+             '7703670900900', 4, 0],
+        ],
+    )
+
+
+def test_el_reporte_de_inventario_hc_toma_el_ultimo_dia_y_lo_de_tienda(app_bi_trade):
+    editor = _editor(app_bi_trade)
+    pregunta = editor.post(
+        RUTA_REPORTE_INVENTARIO_HC, {'archivo': _reporte_inventario_hc()}, format='multipart'
+    )
+    assert pregunta.status_code == 409
+    datos = pregunta.json()
+    assert datos['productosPorCrear'] == [
+        {'idProducto': '3000492', 'nombreProducto': 'Bluetti Estacion 300W',
+         'ean': '1930220020504', 'skuColtrade': 'OT1101000101', 'marca': 'Bluetti',
+         'marcaNueva': True,
+         # El reporte de inventario no trae valor: queda en 0 hasta ponérselo.
+         'precio': 0},
+    ]
+    assert {p['idPuntoVenta']: p['nombrePdv'] for p in datos['puntosPorCrear']} == {
+        '7703670900665': 'Armenia',
+        '7703670900993': 'Venta Distancia Bogota',
+    }
+
+    respuesta = editor.post(
+        RUTA_REPORTE_INVENTARIO_HC,
+        {'archivo': _reporte_inventario_hc(), 'productos': 'crear'},
+        format='multipart',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['fecha'] == '2026-11-23'
+    assert datos['sinUnidades'] == 1
+    assert datos['productosSinPrecio'] == 1
+    stock = {
+        (i.id_producto_id, i.id_punto_venta_id): i.cantidad_inventario
+        for i in InventarioHc.objects.all()
+    }
+    assert stock == {('3000492', '7703670900665'): 6, ('3000492', '7703670900993'): 5}
+    bluetti = ProductoHc.objects.get()
+    assert bluetti.precio_venta_coltrade == bluetti.precio_venta_hc == 0
+
+
+def test_la_plantilla_sin_precio_trae_los_productos_en_0_y_al_subirla_les_pone_precio(
+    app_bi_trade,
+):
+    editor = _editor(app_bi_trade)
+    editor.post(
+        RUTA_REPORTE_INVENTARIO_HC,
+        {'archivo': _reporte_inventario_hc(), 'productos': 'crear'},
+        format='multipart',
+    )
+    # Uno con precio no va en la plantilla.
+    ProductoHc.objects.create(
+        id_producto='CON-PRECIO', nombre_producto='Ya tiene precio',
+        precio_venta_coltrade=10, precio_venta_hc=12,
+    )
+
+    descarga = editor.get('/api/bi-trade/hc/productos/plantilla-sin-precio')
+    assert descarga.status_code == 200
+    assert 'productos-hc-sin-precio-' in descarga['Content-Disposition']
+    hoja = openpyxl.load_workbook(BytesIO(descarga.content))['Datos']
+    filas = [list(f) for f in hoja.iter_rows(values_only=True)]
+    assert filas[0] == [
+        'id_producto_hc', 'ean', 'sku_coltrade', 'nombre_producto', 'marca',
+        'precio_venta_coltrade', 'precio_venta_hc',
+    ]
+    assert filas[1:] == [
+        ['3000492', '1930220020504', 'OT1101000101', 'Bluetti Estacion 300W', 'Bluetti',
+         None, None],
+    ]
+
+    # Se llenan los precios y se sube tal cual por el importar de productos.
+    filas[1][5], filas[1][6] = 855000, 899900
+    subida = editor.post(
+        '/api/bi-trade/hc/productos/importar',
+        {'archivo': _xlsx(filas[0], filas[1:])},
+        format='multipart',
+    )
+    assert subida.status_code == 200, subida.json()
+    bluetti = ProductoHc.objects.get(pk='3000492')
+    assert (bluetti.precio_venta_coltrade, bluetti.precio_venta_hc) == (855_000, 899_900)
+    assert bluetti.nombre_producto == 'Bluetti Estacion 300W'
 
 
 # ── Falabella ──────────────────────────────────────────────────────────────
@@ -3870,10 +4093,10 @@ def _csv(nombre: str, lineas: list[str]) -> SimpleUploadedFile:
     return SimpleUploadedFile(nombre, contenido.encode('utf-8'), content_type='text/csv')
 
 
-def _venta_csv(fecha, sku, local, unidades, costo='870.000'):
+def _venta_csv(fecha, sku, local, unidades, costo='870.000', producto='Producto', marca_='JBL'):
     return (
-        f'{fecha},J11 ELECTRO HOGAR,J1102 AUDIO,J110213,J11021301,{sku},Producto,Modelo,JBL,'
-        f'BOGOTA,{local},Tienda,840080527079,339.900,283.331,{unidades},{costo}'
+        f'{fecha},J11 ELECTRO HOGAR,J1102 AUDIO,J110213,J11021301,{sku},{producto},Modelo,'
+        f'{marca_},BOGOTA,{local},Tienda,840080527079,339.900,283.331,{unidades},{costo}'
     )
 
 
@@ -3896,43 +4119,129 @@ def catalogo_reporte_falabella():
         id_producto='73722474', nombre_producto='Nintendo Switch 2', marca=marca('JBL'),
         precio_venta_falabella=1_899_900, precio_venta_coltrade=1_819_355,
     )
-    # Falabella solo carga ventas con meta: todo el catálogo la tiene en noviembre.
-    for punto in (unicentro, punto_com):
-        for producto in (echo, switch):
-            MetaComercialFalabella.objects.create(
-                id_producto=producto, id_punto_venta=punto,
-                fecha_meta=date(2026, 11, 1), meta_cantidad=10,
-            )
     return unicentro, punto_com, echo, switch
 
 
-def test_el_reporte_de_ventas_falabella_solo_carga_lo_que_tiene_meta(
+def test_el_reporte_de_ventas_falabella_carga_aunque_no_haya_meta(
     app_bi_trade, catalogo_reporte_falabella
 ):
-    unicentro, _com, _echo, switch = catalogo_reporte_falabella
-    MetaComercialFalabella.objects.filter(id_producto=switch, id_punto_venta=unicentro).delete()
+    """A diferencia de Claro: entra todo, y es el tablero el que cuenta solo lo que tiene meta."""
+    assert not MetaComercialFalabella.objects.exists()
     archivo = _reporte_ventas_fal(
         _venta_csv('2026-11-16', '58563423', '123', 1),
-        # Sin meta en Unicentro: no entra.
-        _venta_csv('2026-11-16', '73722474', '123', 2),
-        # Con meta en noviembre, pero la venta es de octubre: no entra.
-        _venta_csv('2026-10-31', '58563423', '123', 4),
+        _venta_csv('2026-10-31', '73722474', '2000', 2),
+    )
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo}, format='multipart'
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['creadas'] == 2
+    assert respuesta.json()['sinMeta'] == 0
+    assert VentaFalabella.objects.count() == 2
+
+
+def test_el_reporte_de_ventas_falabella_pregunta_y_crea_los_productos_que_faltan(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    editor = _editor(app_bi_trade)
+
+    def subir(**extra):
+        archivo = _reporte_ventas_fal(
+            _venta_csv('2026-11-16', '58563423', '123', 1),
+            # Dos unidades: el costo de la fila es de las dos.
+            _venta_csv('2026-11-15', '73713895', '123', 2, '4.492.000',
+                       'Consola PS5 Disc Edition', 'SONY'),
+            # Del día más reciente sale el precio.
+            _venta_csv('2026-11-16', '73713895', '2000', 1, '2.246.000',
+                       'Consola PS5 Disc Edition', 'SONY'),
+            # La marca ya existe aunque venga en mayúsculas.
+            _venta_csv('2026-11-16', '58563424', '2000', 3, '644.742',
+                       'ECHO DOT 5TA GEN AMAZON BCO', 'jbl'),
+            # Solo devoluciones: no se ofrece crearlo.
+            _venta_csv('2026-11-16', '99999999', '123', -1, '-100.000', 'Devuelto', 'SONY'),
+        )
+        return editor.post(
+            RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo, **extra}, format='multipart'
+        )
+
+    pregunta = subir()
+    assert pregunta.status_code == 409
+    datos = pregunta.json()
+    assert datos['code'] == 'productos_por_crear'
+    assert datos['productosPorCrear'] == [
+        {'idProducto': '58563424', 'nombreProducto': 'Echo Dot 5ta Gen Amazon Bco',
+         'marca': 'JBL', 'marcaNueva': False, 'precio': 214_914},
+        {'idProducto': '73713895', 'nombreProducto': 'Consola PS5 Disc Edition',
+         'marca': 'Sony', 'marcaNueva': True, 'precio': 2_246_000},
+    ]
+    assert datos['marcasNuevas'] == ['Sony']
+    # Mientras se pregunta no se toca nada.
+    assert not VentaFalabella.objects.exists()
+    assert not ProductoFalabella.objects.filter(pk='73713895').exists()
+
+    creada = subir(productos='crear')
+    assert creada.status_code == 200, creada.json()
+    datos = creada.json()
+    assert datos['productosCreados'] == 2
+    assert datos['marcasCreadas'] == ['Sony']
+    assert datos['creadas'] == 4
+    assert datos['message'].startswith('Se crearon 2 producto(s) y 1 marca(s).')
+    consola = ProductoFalabella.objects.get(pk='73713895')
+    assert (consola.nombre_producto, consola.marca_id) == ('Consola PS5 Disc Edition', 'Sony')
+    assert consola.precio_venta_falabella == consola.precio_venta_coltrade == 2_246_000
+    assert not ProductoFalabella.objects.filter(pk='99999999').exists()
+
+
+def test_el_reporte_de_ventas_falabella_puede_importar_sin_crear_productos(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    archivo = _reporte_ventas_fal(
+        _venta_csv('2026-11-16', '58563423', '123', 1),
+        _venta_csv('2026-11-16', 'NUEVO-1', '123', 1),
+    )
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo, 'productos': 'omitir'}, format='multipart'
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['productosFaltantes'] == ['NUEVO-1']
+    assert respuesta.json()['productosCreados'] == 0
+    assert not ProductoFalabella.objects.filter(pk='NUEVO-1').exists()
+
+
+def test_el_reporte_de_inventario_falabella_crea_productos_al_costo_de_una_unidad(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    encabezado = 'ID Producto,Producto,Marca,ID Local,Stock Disponible,Stock a costo Disponible'
+    archivo = _csv(
+        'Análisis semanal (52).csv',
+        [
+            encabezado,
+            '58563423,Echo Dot,AMAZON,123,2,429.982',
+            # En dos locales: el costo de cada fila es el de todo su stock.
+            '73706999,Cámara Canon R50 (WH) 18-45 STM Kit,CANON,123,1,2.685.035',
+            '73706999,Cámara Canon R50 (WH) 18-45 STM Kit,CANON,2000,3,8.055.105',
+            # Sin stock: no se ofrece.
+            '73707000,Cámara Canon EOS RP,CANON,123,0,0',
+        ],
     )
     editor = _editor(app_bi_trade)
-    respuesta = editor.post(RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo}, format='multipart')
-    assert respuesta.status_code == 200, respuesta.json()
-    datos = respuesta.json()
-    assert datos['creadas'] == 1
-    assert datos['sinMeta'] == 2
-    assert 'no tiene meta' in datos['message']
-    assert VentaFalabella.objects.get().id_producto_id == '58563423'
+    pregunta = editor.post(RUTA_REPORTE_INVENTARIO_FAL, {'archivo': archivo}, format='multipart')
+    assert pregunta.status_code == 409
+    assert [p['idProducto'] for p in pregunta.json()['productosPorCrear']] == ['73706999']
 
-    solo_sin_meta = _reporte_ventas_fal(_venta_csv('2026-11-16', '73722474', '123', 2))
+    archivo.seek(0)
     respuesta = editor.post(
-        RUTA_REPORTE_VENTAS_FAL, {'archivo': solo_sin_meta}, format='multipart'
+        RUTA_REPORTE_INVENTARIO_FAL, {'archivo': archivo, 'productos': 'crear'}, format='multipart'
     )
-    assert respuesta.status_code == 400
-    assert 'metas' in respuesta.json()['message']
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['creados'] == 3
+    camara = ProductoFalabella.objects.get(pk='73706999')
+    assert camara.nombre_producto == 'Cámara Canon R50 (WH) 18-45 STM Kit'
+    assert camara.marca_id == 'Canon'
+    assert camara.precio_venta_coltrade == 2_685_035
+    assert InventarioFalabella.objects.get(
+        id_producto=camara, id_punto_venta='2000'
+    ).cantidad_inventario == 3
 
 
 def test_el_reporte_de_ventas_falabella_carga_solo_lo_que_tiene_unidades(
@@ -3951,7 +4260,7 @@ def test_el_reporte_de_ventas_falabella_carga_solo_lo_que_tiene_unidades(
         _venta_csv('2026-11-14', '58563423', '9999', 3),
     )
     respuesta = _editor(app_bi_trade).post(
-        RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo}, format='multipart'
+        RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo, 'productos': 'omitir'}, format='multipart'
     )
     assert respuesta.status_code == 200, respuesta.json()
     datos = respuesta.json()
@@ -4514,7 +4823,7 @@ def test_los_canales_aparte_no_tienen_puntos_en_nada(
 
     tienda, _centro, torre, _bombillo = catalogo_hc
     _venta_hc(tienda, torre, 2)
-    _meta_hc(tienda, torre, 5)
+    _meta_hc(tienda, 5_000_000)
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
 
     for canal in ('hc', 'falabella', 'tmk'):
@@ -5169,27 +5478,71 @@ def test_importar_con_un_codigo_que_no_existe_no_guarda_nada(app_bi_trade, catal
 
 
 def test_importar_en_un_canal_usa_sus_encabezados_y_actualiza(app_bi_trade, catalogo_hc):
-    """Los canales heredan la importación: `_hc` en el archivo, la tabla de HC en la base."""
+    """
+    Los canales heredan la importación: `_hc` en el archivo, la tabla de HC en la
+    base. En HC la meta es de la tienda en el mes, en pesos: punto, fecha y total.
+    """
     editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
     cliente = cliente_de(editor)
-    encabezados = ('id_producto_hc', 'id_punto_venta_hc', 'fecha_meta', 'meta_cantidad')
+    encabezados = ('id_punto_venta_hc', 'fecha_meta', 'total_meta')
     ruta = '/api/bi-trade/hc/metas/importar'
 
     primera = cliente.post(
         ruta,
-        {'archivo': _archivo_xlsx(encabezados, [('HCP-001', 'HC-101', '2026-10-01', 4)])},
+        {'archivo': _archivo_xlsx(encabezados, [('HC-101', '2026-10-15', 4_000_000)])},
         format='multipart',
     )
+    # Otro día del mismo mes es la misma meta: la actualiza, no la duplica.
     segunda = cliente.post(
         ruta,
-        {'archivo': _archivo_xlsx(encabezados, [('HCP-001', 'HC-101', '2026-10-01', 7)])},
+        {'archivo': _archivo_xlsx(encabezados, [('HC-101', '2026-10-01', 7_000_000)])},
         format='multipart',
     )
 
-    assert primera.data['created'] == 1
-    assert segunda.data['updated'] == 1
-    assert MetaComercialHc.objects.get().meta_cantidad == 7
+    assert primera.data['created'] == 1, primera.data
+    assert segunda.data['updated'] == 1, segunda.data
+    meta = MetaComercialHc.objects.get()
+    assert (meta.fecha_meta, meta.total_meta) == (date(2026, 10, 1), 7_000_000)
     assert MetaComercial.objects.count() == 0
+
+
+def test_la_plantilla_de_metas_hc_pide_solo_punto_fecha_y_total(app_bi_trade):
+    respuesta = _editor(app_bi_trade).get('/api/bi-trade/hc/metas/plantilla')
+    hoja = openpyxl.load_workbook(BytesIO(respuesta.content))['Datos']
+    assert [c.value for c in hoja[1]] == ['id_punto_venta_hc', 'fecha_meta', 'total_meta']
+
+
+def test_la_meta_de_hc_es_de_la_tienda_y_no_se_parte_por_marca(app_bi_trade, catalogo_hc):
+    tienda, centro, torre, bombillo = catalogo_hc
+    _meta_hc(tienda, 10_000_000)
+    _meta_hc(centro, 6_000_000)
+    _venta_hc(tienda, torre, 2)  # 2 × 1.000.000
+    _venta_hc(tienda, bombillo, 10)  # 10 × 30.000
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    ruta = '/api/bi-trade/hc/avance-mensual?anio=2026&mes=3'
+
+    datos = cliente.get(ruta).json()
+    assert datos['totales']['metaDinero'] == 16_000_000
+    assert datos['totales']['metaCantidad'] == 0
+    assert datos['totales']['ventasDinero'] == 2_300_000
+    por_punto = {f['key']: f for f in datos['porPuntoVenta']}
+    assert por_punto['HC-101']['metaMensual'] == 10_000_000
+    assert por_punto['HC-101']['cumplimiento'] == 23.0
+
+    # Con un filtro de marca, la meta de la tienda se queda entera.
+    aiwa = cliente.get(f'{ruta}&marca=Aiwa').json()
+    assert aiwa['totales']['metaDinero'] == 16_000_000
+    assert aiwa['totales']['ventasDinero'] == 2_000_000
+
+    # El detalle del punto agrupa por producto y marca sin meta repartida.
+    detalle = cliente.get(
+        '/api/bi-trade/hc/punto-venta-detalle?id_punto_venta=HC-101&anio=2026&mes=3'
+    )
+    assert detalle.status_code == 200, detalle.json()
+    # El día: la meta del mes de todas las tiendas entre los 25 días hábiles de marzo.
+    dia = cliente.get('/api/bi-trade/hc/cumplimiento-diario?fecha=2026-03-04&marca=Aiwa')
+    assert dia.status_code == 200, dia.json()
+    assert dia.json()['totales']['metaDinero'] == 640_000
 
 
 def test_el_listado_de_puntos_cuenta_las_ventas_sin_traerlas(app_bi_trade, catalogo):

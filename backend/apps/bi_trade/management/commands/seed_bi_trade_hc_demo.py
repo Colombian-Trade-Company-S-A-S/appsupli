@@ -75,7 +75,8 @@ class Command(BaseCommand):
             de_demo = Q(id_producto__in=codigos_producto) | Q(id_punto_venta__in=codigos_pdv)
             borradas = VentaHc.objects.filter(de_demo).delete()[0]
             InventarioHc.objects.filter(de_demo).delete()
-            MetaComercialHc.objects.filter(de_demo).delete()
+            # La meta de HC es de la tienda: no cuelga de ningún producto.
+            MetaComercialHc.objects.filter(id_punto_venta__in=codigos_pdv).delete()
             ProductoHc.objects.filter(id_producto__in=codigos_producto).delete()
             PuntoVentaHc.objects.filter(id_punto_venta__in=codigos_pdv).delete()
             self.stdout.write(
@@ -126,8 +127,9 @@ class Command(BaseCommand):
             VentaHc.objects.bulk_create(nuevas)
             creadas = len(nuevas)
 
-        # Una meta por tienda × producto en cada mes, cerca de lo que se vende:
-        # así el tablero muestra cumplimientos por encima y por debajo de 100%.
+        # Una meta por tienda en cada mes, en pesos —así llega la de HC—, cerca
+        # de lo que se vende: el tablero muestra cumplimientos por encima y por
+        # debajo de 100%.
         azar = random.Random(78)
         inventarios = metas = 0
         for punto in puntos:
@@ -138,14 +140,15 @@ class Command(BaseCommand):
                     defaults={'cantidad_inventario': azar.randint(0, 30)},
                 )
                 inventarios += nuevo
-                for inicio in meses:
-                    _, nueva = MetaComercialHc.objects.get_or_create(
-                        id_producto=producto,
-                        id_punto_venta=punto,
-                        fecha_meta=inicio,
-                        defaults={'meta_cantidad': azar.randint(4, 12)},
-                    )
-                    metas += nueva
+            for inicio in meses:
+                total = sum(
+                    azar.randint(4, 12) * (producto.precio_venta_coltrade or 0)
+                    for producto in productos
+                )
+                _, nueva = MetaComercialHc.objects.get_or_create(
+                    id_punto_venta=punto, fecha_meta=inicio, defaults={'total_meta': total}
+                )
+                metas += nueva
 
         self.stdout.write(
             self.style.SUCCESS(

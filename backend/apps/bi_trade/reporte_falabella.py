@@ -23,6 +23,15 @@ las tiendas de las ventas.
 En los dos solo entran las filas con 1 unidad o más: cero y negativos
 (devoluciones, ajustes, stock en rojo) no son venta ni stock.
 
+De las mismas filas sale el producto, para crear los que falten en la app:
+`Producto` es el nombre (en nombre propio, como el resto del catálogo),
+`Marca` la marca y el precio es el costo de UNA unidad, que se usa como precio
+Falabella y como precio Coltrade. El archivo trae el costo de toda la fila:
+
+  · en ventas, `Costo` ÷ `Unidades`, de la venta más reciente del producto;
+  · en inventario, `Stock a costo Disponible` ÷ `Stock Disponible`, sumando
+    todos los locales donde hay stock.
+
 El portal escribe mal algunas filas de ventas: cuando el costo trae decimales
 envuelve la fila entera entre comillas, y queda como una sola celda. Esa
 celda se vuelve a leer como CSV.
@@ -35,12 +44,20 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from .catalogo_reporte import nombre_propio
+
 COLUMNA_FECHA = 'Fecha'
 COLUMNA_SKU = 'SKU'
 COLUMNA_LOCAL = 'ID Local'
 COLUMNA_UNIDADES = 'Unidades'
 COLUMNA_PRODUCTO = 'ID Producto'
 COLUMNA_STOCK = 'Stock Disponible'
+# Para crear los productos que falten. Si el archivo no las trae, se importa
+# igual, solo que sin ofrecer crear nada.
+COLUMNA_NOMBRE = 'Producto'
+COLUMNA_MARCA = 'Marca'
+COLUMNA_COSTO = 'Costo'
+COLUMNA_COSTO_STOCK = 'Stock a costo Disponible'
 
 #: Lo mínimo para que una fila entre, en ventas y en inventario.
 UNIDADES_MINIMAS = 1
@@ -50,6 +67,9 @@ TAMANO_MAXIMO = 20 * 1024 * 1024
 
 #: Miles con punto, decimales con coma: «1.234» o «1.234,5».
 _MILES = re.compile(r'^-?\d{1,3}(\.\d{3})+(,\d+)?$')
+
+#: Largo del nombre en el modelo de producto.
+LARGO_NOMBRE = 60
 
 
 class ErrorDeReporte(Exception):
@@ -65,6 +85,17 @@ class FilaVenta:
 
 
 @dataclass
+class ProductoDelReporte:
+    """Un producto como lo trae el reporte, para crearlo si no existe."""
+
+    sku: str
+    nombre: str
+    marca: str
+    #: El costo de una unidad, en pesos; `None` si el archivo no lo trae.
+    precio: int | None
+
+
+@dataclass
 class LecturaVentas:
     """Lo que trae el reporte de ventas diarias."""
 
@@ -74,6 +105,8 @@ class LecturaVentas:
     filas_leidas: int = 0
     #: Devoluciones y ajustes: cero unidades o negativas.
     sin_unidades: int = 0
+    #: sku → producto, de las filas con 1 unidad o más.
+    productos: dict[str, ProductoDelReporte] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,6 +118,8 @@ class LecturaInventario:
     filas_leidas: int = 0
     #: Filas con stock cero o negativo: no entran.
     sin_unidades: int = 0
+    #: sku → producto, de las filas con stock de 1 o más.
+    productos: dict[str, ProductoDelReporte] = field(default_factory=dict)
 
 
 def _normalizar(texto) -> str:
@@ -127,8 +162,12 @@ def _filas_csv(archivo) -> tuple[list[str], list[list[str]]]:
     return encabezados, leidas
 
 
+def _posiciones(encabezados: list[str]) -> dict[str, int]:
+    return {_normalizar(celda): i for i, celda in enumerate(encabezados) if celda}
+
+
 def _indices(encabezados: list[str], columnas: tuple[str, ...], reporte: str) -> list[int]:
-    posiciones = {_normalizar(celda): i for i, celda in enumerate(encabezados) if celda}
+    posiciones = _posiciones(encabezados)
     faltantes = [c for c in columnas if _normalizar(c) not in posiciones]
     if faltantes:
         raise ErrorDeReporte(
@@ -137,6 +176,18 @@ def _indices(encabezados: list[str], columnas: tuple[str, ...], reporte: str) ->
             + f'. Súbelo tal como sale del portal de Falabella ({reporte}).'
         )
     return [posiciones[_normalizar(c)] for c in columnas]
+
+
+def _indices_opcionales(encabezados: list[str], columnas: tuple[str, ...]) -> list[int] | None:
+    """Las columnas del producto, o `None` si falta alguna: entonces no se crea nada."""
+    posiciones = _posiciones(encabezados)
+    if any(_normalizar(c) not in posiciones for c in columnas):
+        return None
+    return [posiciones[_normalizar(c)] for c in columnas]
+
+
+def _celda(fila: list[str], i: int) -> str:
+    return fila[i] if i < len(fila) else ''
 
 
 def _fecha(texto: str) -> date | None:
@@ -149,17 +200,23 @@ def _fecha(texto: str) -> date | None:
     return None
 
 
-def _unidades(texto: str) -> int | None:
-    """Las unidades de la celda, o `None` si no es un número. «1.234» son mil."""
-    texto = texto.strip().replace(' ', '')
+def _numero(texto: str) -> float | None:
+    """El número de la celda, o `None` si no lo es. «1.234» son mil; «$» se ignora."""
+    texto = texto.strip().replace(' ', '').replace('$', '')
     if _MILES.match(texto):
         texto = texto.replace('.', '').replace(',', '.')
     elif ',' in texto:
         texto = texto.replace(',', '.')
     try:
-        return int(float(texto))
+        return float(texto)
     except ValueError:
         return None
+
+
+def _unidades(texto: str) -> int | None:
+    """Las unidades de la celda, o `None` si no es un número."""
+    numero = _numero(texto)
+    return int(numero) if numero is not None else None
 
 
 def _codigo(texto: str) -> str:
@@ -168,14 +225,20 @@ def _codigo(texto: str) -> str:
     return texto[:-2] if texto.endswith('.0') and texto[:-2].isdigit() else texto
 
 
+# ── Lectores ───────────────────────────────────────────────────────────────
+
+
 def leer_ventas(archivo) -> LecturaVentas:
     """Las ventas diarias: todas sus fechas, solo las filas con 1 unidad o más."""
     encabezados, filas = _filas_csv(archivo)
     columnas = (COLUMNA_FECHA, COLUMNA_SKU, COLUMNA_LOCAL, COLUMNA_UNIDADES)
     i_fecha, i_sku, i_local, i_unidades = _indices(encabezados, columnas, 'Ventas diarias')
+    del_producto = _indices_opcionales(encabezados, (COLUMNA_NOMBRE, COLUMNA_MARCA, COLUMNA_COSTO))
     ultima = max(i_fecha, i_sku, i_local, i_unidades)
 
     lectura = LecturaVentas()
+    # sku → (fecha más reciente, costos unitarios de ese día)
+    costos: dict[str, tuple[date, list[float]]] = {}
     for fila in filas:
         if len(fila) <= ultima:
             continue
@@ -189,6 +252,28 @@ def leer_ventas(archivo) -> LecturaVentas:
             lectura.sin_unidades += 1
             continue
         lectura.ventas.append(FilaVenta(fecha, sku, local, unidades))
+
+        if del_producto is None:
+            continue
+        i_nombre, i_marca, i_costo = del_producto
+        lectura.productos.setdefault(
+            sku,
+            ProductoDelReporte(
+                sku, nombre_propio(_celda(fila, i_nombre)), _celda(fila, i_marca).strip(), None
+            ),
+        )
+        costo = _numero(_celda(fila, i_costo))
+        if costo is None or costo < 0:
+            continue
+        # El costo de la fila es el de todas sus unidades: se lleva a una.
+        anterior = costos.get(sku)
+        if anterior is None or fecha > anterior[0]:
+            costos[sku] = (fecha, [costo / unidades])
+        elif fecha == anterior[0]:
+            anterior[1].append(costo / unidades)
+
+    for sku, (_fecha_costo, unitarios) in costos.items():
+        lectura.productos[sku].precio = round(sum(unitarios) / len(unitarios))
 
     if not lectura.filas_leidas:
         raise ErrorDeReporte('El archivo no trae filas de ventas con fecha, SKU, local y unidades.')
@@ -205,9 +290,14 @@ def leer_inventario(archivo) -> LecturaInventario:
     encabezados, filas = _filas_csv(archivo)
     columnas = (COLUMNA_PRODUCTO, COLUMNA_LOCAL, COLUMNA_STOCK)
     i_producto, i_local, i_stock = _indices(encabezados, columnas, 'Análisis semanal')
+    del_producto = _indices_opcionales(
+        encabezados, (COLUMNA_NOMBRE, COLUMNA_MARCA, COLUMNA_COSTO_STOCK)
+    )
     ultima = max(i_producto, i_local, i_stock)
 
     lectura = LecturaInventario()
+    # sku → [costo total, unidades], de las filas con stock y costo.
+    costos: dict[str, list[float]] = {}
     for fila in filas:
         if len(fila) <= ultima:
             continue
@@ -220,6 +310,26 @@ def leer_inventario(archivo) -> LecturaInventario:
             lectura.sin_unidades += 1
             continue
         lectura.inventario[(sku, local)] += unidades
+
+        if del_producto is None:
+            continue
+        i_nombre, i_marca, i_costo = del_producto
+        lectura.productos.setdefault(
+            sku,
+            ProductoDelReporte(
+                sku, nombre_propio(_celda(fila, i_nombre)), _celda(fila, i_marca).strip(), None
+            ),
+        )
+        costo = _numero(_celda(fila, i_costo))
+        if costo is None or costo < 0:
+            continue
+        # El costo es el de todo el stock del local: se suma y al final se divide.
+        acumulado = costos.setdefault(sku, [0.0, 0.0])
+        acumulado[0] += costo
+        acumulado[1] += unidades
+
+    for sku, (costo, unidades) in costos.items():
+        lectura.productos[sku].precio = round(costo / unidades)
 
     if not lectura.filas_leidas:
         raise ErrorDeReporte('El archivo no trae filas de inventario con producto, local y stock.')

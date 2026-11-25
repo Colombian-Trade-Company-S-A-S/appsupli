@@ -59,8 +59,24 @@ class Canal:
     #: unidades: sus productos no tienen puntaje y nada suyo habla de puntos.
     con_puntos: bool = True
     #: Si solo cuenta lo que tiene meta: al importar ventas y en el tablero, solo
-    #: entra un producto con meta ese mes en ese punto de venta. Claro y Tmk.
+    #: entra un producto con meta ese mes en ese punto de venta. Claro, Tmk y
+    #: Falabella (en Falabella, solo en el tablero: ver `carga_sin_meta`).
     solo_con_meta: bool = False
+    #: Si al importar entran también las ventas sin meta, aunque el tablero solo
+    #: cuente lo que la tiene. Así, poner la meta después no obliga a volver a
+    #: subir las ventas. Solo Falabella.
+    carga_sin_meta: bool = False
+
+    #: Si la meta es de la tienda en dinero (`total_meta`), no de cada producto
+    #: en unidades. Solo HC. Entonces no se filtra ni se agrupa por producto o
+    #: marca: la meta de la tienda es una sola, y con un filtro de marca se
+    #: mide lo vendido de esa marca contra la meta completa de la tienda.
+    meta_por_punto: bool = False
+
+    @property
+    def importa_solo_con_meta(self) -> bool:
+        """Si al importar ventas se dejan fuera las de productos sin meta."""
+        return self.solo_con_meta and not self.carga_sin_meta
 
 
 CLARO = Canal(
@@ -89,6 +105,8 @@ HC = Canal(
     precio=PrecioProductoHc,
     opciones=OPCIONES_HC,
     con_puntos=False,
+    # La meta llega por tienda y mes, en pesos.
+    meta_por_punto=True,
 )
 
 FALABELLA = Canal(
@@ -103,9 +121,11 @@ FALABELLA = Canal(
     precio=PrecioProductoFalabella,
     opciones=OPCIONES_FALABELLA,
     con_puntos=False,
-    # Como Claro y Tmk: solo cuenta lo que tiene meta. Falabella.com y las
-    # tiendas sin meta no inflan el cumplimiento.
+    # Como Claro y Tmk, el tablero solo cuenta lo que tiene meta: Falabella.com
+    # y las tiendas sin meta no inflan el cumplimiento. Pero, a diferencia de
+    # ellos, al importar entra todo, tenga meta o no.
     solo_con_meta=True,
+    carga_sin_meta=True,
 )
 
 TMK = Canal(

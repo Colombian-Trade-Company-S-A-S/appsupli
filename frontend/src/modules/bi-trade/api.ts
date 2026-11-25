@@ -410,10 +410,16 @@ interface FaltantesReporte {
   puntosFaltantes: string[];
 }
 
+/** Los productos que se crearon con los datos del mismo reporte. */
+interface CreadosReporte {
+  productosCreados: number;
+  marcasCreadas: string[];
+}
+
 /** Lo que devuelve el reporte «Ventas diarias» de Falabella cuando carga. */
-export interface ResultadoReporteVentas extends FaltantesReporte {
+export interface ResultadoReporteVentas extends FaltantesReporte, CreadosReporte {
   dias: string[];
-  /** Ventas de un producto sin meta ese mes en ese punto de venta: no entran. */
+  /** Ventas de un producto sin meta: en Falabella siempre 0, porque entra todo. */
   sinMeta: number;
   creadas: number;
   unidades: number;
@@ -422,20 +428,124 @@ export interface ResultadoReporteVentas extends FaltantesReporte {
 }
 
 /** Lo que devuelve el reporte «Análisis semanal» (inventario) de Falabella. */
-export interface ResultadoReporteInventario extends FaltantesReporte {
+export interface ResultadoReporteInventario extends FaltantesReporte, CreadosReporte {
   creados: number;
   unidades: number;
   eliminados: number;
   message: string;
 }
 
+/** Un producto del reporte que no existe en el canal, como quedaría al crearlo. */
+export interface ProductoPorCrear {
+  idProducto: string;
+  nombreProducto: string;
+  marca: string | null;
+  /** La marca no está en el catálogo: se crea con el producto. */
+  marcaNueva: boolean;
+  /** Valor de una unidad: precio del canal y precio Coltrade. `null` si el reporte no lo trae. */
+  precio: number | null;
+  /** Solo HC. */
+  ean?: string | null;
+  /** Solo HC. */
+  skuColtrade?: string | null;
+}
+
+/** Una tienda del reporte que no existe en el canal, como quedaría al crearla. Solo HC. */
+export interface PuntoPorCrear {
+  idPuntoVenta: string;
+  nombrePdv: string;
+  regional: string | null;
+  materiales: string | null;
+  categoria: string | null;
+}
+
+/** El reporte trae productos (o tiendas) que no existen: la pregunta de si crearlos. */
+export interface PreguntaProductos {
+  productos: ProductoPorCrear[];
+  /** En HC las tiendas también se crean; en Falabella siempre va vacía. */
+  puntos: PuntoPorCrear[];
+  marcasNuevas: string[];
+  /** Tiendas que no existen y no se crean (Falabella): sus filas se omiten. */
+  puntosFaltantes: string[];
+  message: string;
+}
+
+/** Un canal de venta del reporte de HC, con lo que trae para cargar. */
+export interface CanalReporte {
+  canal: string;
+  /** Filas de 1 unidad o más. */
+  ventas: number;
+  unidades: number;
+}
+
+/** Lo que trae el reporte de ventas de HC, antes de cargar: para elegir canales. */
+export interface LecturaReporteHc {
+  canales: CanalReporte[];
+  dias: string[];
+  filasLeidas: number;
+}
+
+interface CatalogoCreado {
+  productosCreados: number;
+  /** De los creados, los que quedaron en precio 0 (el inventario no trae valor). */
+  productosSinPrecio: number;
+  puntosCreados: number;
+  marcasCreadas: string[];
+}
+
+interface CruceReporteHc {
+  sinUnidades: number;
+  sinTienda: number;
+  sinProducto: number;
+  sinPuntoVenta: number;
+  productosFaltantes: string[];
+  puntosFaltantes: string[];
+}
+
+/** Lo que devuelve el reporte de ventas de HC cuando carga. */
+export interface ResultadoReporteVentasHc extends CruceReporteHc, CatalogoCreado {
+  dias: string[];
+  canales: string[];
+  filasLeidas: number;
+  fueraDeCanal: number;
+  creadas: number;
+  unidades: number;
+  eliminadas: number;
+  message: string;
+}
+
+/** Lo que devuelve el reporte de inventario de HC cuando carga. */
+export interface ResultadoReporteInventarioHc extends CruceReporteHc, CatalogoCreado {
+  /** El día que se cargó: el más reciente del archivo. */
+  fecha: string;
+  fechasEnArchivo: string[];
+  filasDelDia: number;
+  deOtrosDias: number;
+  creados: number;
+  unidades: number;
+  eliminados: number;
+  message: string;
+}
+
+/** Qué hacer con los productos que no existen, una vez preguntado. */
+export type DecisionProductos = 'crear' | 'omitir';
+
+export interface OpcionesReporte {
+  sobrescribir?: boolean;
+  productos?: DecisionProductos;
+  /** Solo ventas HC: los canales que entran. Vacío, todos. */
+  canales?: string[];
+}
+
 /**
- * El reporte de ventas carga, o se detiene porque algún día ya tenía ventas.
- * Lo segundo no es un error: es la pregunta de si sobrescribir esos días.
+ * Un reporte carga, o se detiene a preguntar antes de escribir nada: si crear
+ * los productos que faltan, o (solo ventas) si sobrescribir días con ventas.
+ * Las preguntas no son errores: se responden volviendo a subir con la decisión.
  */
-export type RespuestaReporteVentas =
-  | { conflicto: false; resultado: ResultadoReporteVentas }
-  | { conflicto: true; diasConVentas: DiaConVentas[]; message: string };
+export type RespuestaReporte<T> =
+  | { tipo: 'listo'; resultado: T }
+  | { tipo: 'productos'; pregunta: PreguntaProductos }
+  | { tipo: 'dias'; diasConVentas: DiaConVentas[]; message: string };
 
 /** Lo que responde la importación del informe del ERP. */
 export interface ResultadoInforme {
@@ -499,6 +609,29 @@ export interface ResumenInventario {
   valorizadoTotal: number;
   agotados: number;
   productos: number;
+  puntosVenta: number;
+}
+
+/** La meta de una tienda HC en un mes, en pesos: no va por producto. */
+export interface MetaPunto {
+  idMeta: number;
+  idPuntoVenta: string;
+  nombrePdv: string;
+  regional: string | null;
+  /** El día 1 del mes de la meta. */
+  fechaMeta: string;
+  totalMeta: number;
+}
+
+export interface MetaPuntoPayload {
+  idPuntoVenta: string;
+  fechaMeta: string;
+  totalMeta: number;
+}
+
+export interface ResumenMetasPunto {
+  registros: number;
+  metaDinero: number;
   puntosVenta: number;
 }
 
@@ -1010,6 +1143,40 @@ export type ApiDeCanal = ReturnType<typeof apiDeCanal>;
 
 export const biTradeApiHc = {
   ...apiDeCanal('hc'),
+  /** Las metas de HC: una por tienda y mes, en pesos (la misma ruta, otra forma). */
+  metasPunto: recurso<MetaPunto, Partial<MetaPuntoPayload>>('/hc/metas'),
+  /** Lee el reporte de ventas sin cargar nada: qué canales trae, para elegir. */
+  leerReporteVentas: (archivo: File) => {
+    const cuerpo = new FormData();
+    cuerpo.append('archivo', archivo);
+    cuerpo.append('previsualizar', '1');
+    return httpClient
+      .post<LecturaReporteHc>(`${RUTA}/hc/ventas/importar-reporte`, cuerpo, {
+        headers: { 'Content-Type': undefined },
+        timeout: 120_000,
+      })
+      .then((r) => r.data);
+  },
+  /**
+   * Carga las ventas del reporte del portal de los canales elegidos. Antes de
+   * guardar pregunta si crear los productos y tiendas que falten, y si
+   * sobrescribir los días que ya tenían ventas.
+   */
+  importarReporteVentas: (archivo: File, opciones?: OpcionesReporte) =>
+    subirReporte<ResultadoReporteVentasHc>('/hc/ventas/importar-reporte', archivo, opciones),
+  /** Reemplaza el inventario con el reporte del portal. Antes pregunta si crear lo que falte. */
+  importarReporteInventario: (archivo: File, opciones?: OpcionesReporte) =>
+    subirReporte<ResultadoReporteInventarioHc>(
+      '/hc/inventario/importar-reporte',
+      archivo,
+      opciones,
+    ),
+  /**
+   * La plantilla de productos ya llena con los que no tienen precio, para
+   * ponérselo y subirla por el «Importar Excel» de productos.
+   */
+  plantillaSinPrecio: () =>
+    descargarArchivo(`${RUTA}/hc/productos/plantilla-sin-precio`, 'productos-hc-sin-precio.xlsx'),
   /** Reemplaza el inventario con el querie del portal de Homecenter. */
   importarQuery: (archivo: File) => {
     const cuerpo = new FormData();
@@ -1053,50 +1220,75 @@ export const biTradeApiHc = {
     }
   },
 };
+/**
+ * Sube un reporte de un portal (Falabella, HC) con las decisiones ya tomadas.
+ * Si falta alguna, el backend no guarda nada y responde la pregunta (409), que
+ * aquí se devuelve como un resultado más, no como error.
+ */
+async function subirReporte<T>(
+  ruta: string,
+  archivo: File,
+  { sobrescribir, productos, canales }: OpcionesReporte = {},
+): Promise<RespuestaReporte<T>> {
+  const cuerpo = new FormData();
+  cuerpo.append('archivo', archivo);
+  if (sobrescribir) cuerpo.append('modo', 'sobrescribir');
+  if (productos) cuerpo.append('productos', productos);
+  for (const canal of canales ?? []) cuerpo.append('canales', canal);
+  try {
+    const { data } = await httpClient.post<T>(`${RUTA}${ruta}`, cuerpo, {
+      headers: { 'Content-Type': undefined },
+      timeout: 120_000,
+    });
+    return { tipo: 'listo', resultado: data };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      if (error.code === 'productos_por_crear') {
+        const cuerpoError = error.body as {
+          productosPorCrear: ProductoPorCrear[];
+          puntosPorCrear?: PuntoPorCrear[];
+          marcasNuevas: string[];
+          puntosFaltantes: string[];
+        };
+        return {
+          tipo: 'productos',
+          pregunta: {
+            productos: cuerpoError.productosPorCrear,
+            puntos: cuerpoError.puntosPorCrear ?? [],
+            marcasNuevas: cuerpoError.marcasNuevas,
+            puntosFaltantes: cuerpoError.puntosFaltantes,
+            message: error.message,
+          },
+        };
+      }
+      if (error.code === 'dias_con_ventas') {
+        const cuerpoError = error.body as { diasConVentas: DiaConVentas[] };
+        return { tipo: 'dias', diasConVentas: cuerpoError.diasConVentas, message: error.message };
+      }
+    }
+    throw error;
+  }
+}
+
 export const biTradeApiFalabella = {
   ...apiDeCanal('falabella'),
   /**
    * Carga las ventas del reporte «Ventas diarias» del portal de Falabella
-   * (.csv). Sin `sobrescribir`, si algún día del archivo ya tiene ventas no se
-   * guarda nada y vuelve la lista de esos días.
+   * (.csv), tengan meta o no. Antes de guardar pregunta si crear los productos
+   * que falten y si sobrescribir los días que ya tenían ventas.
    */
-  importarReporteVentas: async (
-    archivo: File,
-    sobrescribir: boolean,
-  ): Promise<RespuestaReporteVentas> => {
-    const cuerpo = new FormData();
-    cuerpo.append('archivo', archivo);
-    if (sobrescribir) cuerpo.append('modo', 'sobrescribir');
-    try {
-      const { data } = await httpClient.post<ResultadoReporteVentas>(
-        `${RUTA}/falabella/ventas/importar-reporte`,
-        cuerpo,
-        { headers: { 'Content-Type': undefined }, timeout: 120_000 },
-      );
-      return { conflicto: false, resultado: data };
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409 && error.code === 'dias_con_ventas') {
-        const cuerpoError = error.body as { diasConVentas: DiaConVentas[] };
-        return {
-          conflicto: true,
-          diasConVentas: cuerpoError.diasConVentas,
-          message: error.message,
-        };
-      }
-      throw error;
-    }
-  },
-  /** Reemplaza el inventario con el reporte «Análisis semanal» del portal (.csv). */
-  importarReporteInventario: (archivo: File) => {
-    const cuerpo = new FormData();
-    cuerpo.append('archivo', archivo);
-    return httpClient
-      .post<ResultadoReporteInventario>(`${RUTA}/falabella/inventario/importar-reporte`, cuerpo, {
-        headers: { 'Content-Type': undefined },
-        timeout: 120_000,
-      })
-      .then((r) => r.data);
-  },
+  importarReporteVentas: (archivo: File, opciones?: OpcionesReporte) =>
+    subirReporte<ResultadoReporteVentas>('/falabella/ventas/importar-reporte', archivo, opciones),
+  /**
+   * Reemplaza el inventario con el reporte «Análisis semanal» del portal
+   * (.csv). Antes pregunta si crear los productos que falten.
+   */
+  importarReporteInventario: (archivo: File, opciones?: OpcionesReporte) =>
+    subirReporte<ResultadoReporteInventario>(
+      '/falabella/inventario/importar-reporte',
+      archivo,
+      opciones,
+    ),
 };
 export const biTradeApiTmk = {
   ...apiDeCanal('tmk'),

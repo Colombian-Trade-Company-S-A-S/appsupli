@@ -125,8 +125,16 @@ def _leer_celda(valor, columna: Columna):
     return texto
 
 
-def construir_plantilla(titulo: str, columnas: list[Columna], nota: str = '') -> bytes:
-    """Arma el .xlsx de la plantilla: una hoja de datos y una de instrucciones."""
+def construir_plantilla(
+    titulo: str, columnas: list[Columna], nota: str = '', filas: list[dict] | None = None
+) -> bytes:
+    """
+    Arma el .xlsx de la plantilla: una hoja de datos y una de instrucciones.
+
+    Con `filas` (columna → valor) la hoja de datos ya viene llena con esos
+    registros, en lugar de la fila de ejemplo: es para completar un dato que
+    falta —el precio, por ejemplo— y volver a subirla tal cual.
+    """
     libro = Workbook()
 
     hoja = libro.active
@@ -139,8 +147,11 @@ def construir_plantilla(titulo: str, columnas: list[Columna], nota: str = '') ->
         celda.alignment = Alignment(horizontal='center', vertical='center')
         hoja.column_dimensions[get_column_letter(indice)].width = max(len(columna.nombre) + 6, 18)
 
+        if filas is not None:
+            for numero, fila in enumerate(filas, start=2):
+                hoja.cell(row=numero, column=indice, value=fila.get(columna.nombre))
         # Fila de ejemplo, para que se vea el formato esperado.
-        if columna.ejemplo:
+        elif columna.ejemplo:
             hoja.cell(row=2, column=indice, value=columna.ejemplo)
 
         # Desplegable con los valores válidos de las columnas con opciones.
@@ -153,7 +164,7 @@ def construir_plantilla(titulo: str, columnas: list[Columna], nota: str = '') ->
             )
             hoja.add_data_validation(validacion)
             letra = get_column_letter(indice)
-            validacion.add(f'{letra}2:{letra}1000')
+            validacion.add(f'{letra}2:{letra}{max(1000, len(filas or ()) + 1)}')
 
     hoja.freeze_panes = 'A2'
 
@@ -166,9 +177,17 @@ def construir_plantilla(titulo: str, columnas: list[Columna], nota: str = '') ->
     guia['A1'] = titulo
     guia['A1'].font = Font(bold=True, size=13)
     guia['A3'] = (
-        'Llena la hoja «Datos» y súbela con el botón «Importar Excel». '
-        'La fila 1 son los encabezados: no la borres ni la renombres. '
-        'La fila 2 es un ejemplo: bórrala antes de importar.'
+        (
+            'La hoja «Datos» ya trae los registros: completa lo que falta y súbela con el '
+            'botón «Importar Excel». La fila 1 son los encabezados: no la borres ni la '
+            'renombres.'
+        )
+        if filas is not None
+        else (
+            'Llena la hoja «Datos» y súbela con el botón «Importar Excel». '
+            'La fila 1 son los encabezados: no la borres ni la renombres. '
+            'La fila 2 es un ejemplo: bórrala antes de importar.'
+        )
     )
     guia['A3'].alignment = Alignment(wrap_text=True, vertical='top')
     guia.merge_cells('A3:D3')

@@ -770,21 +770,27 @@ class InventarioHc(TimeStampedModel):
         return f'{self.id_punto_venta_id} · {self.id_producto_id} = {self.cantidad_inventario}'
 
 
-class MetaComercialHc(ValorizadaAlPrecioDelMes, TimeStampedModel):
-    """Meta de un producto en una tienda Homecenter, en unidades.
+#: Tope de la meta de una tienda en un mes: frena un número mal escrito.
+META_MAXIMA_PUNTO = 100_000_000_000
 
-    Igual que en Claro, solo se guardan las unidades: el dinero sale del precio
-    Coltrade del producto. Este canal no mide en puntos.
+
+class MetaComercialHc(TimeStampedModel):
+    """Meta de una tienda Homecenter en un mes, en pesos.
+
+    A diferencia de Claro y los demás canales, en HC la meta no va por
+    producto: es lo que debe vender la tienda en el mes, en dinero, de todo lo
+    de Coltrade. Así llega de Homecenter (un valor por EAN de tienda y mes), y
+    el tablero la mide contra lo vendido en pesos. No tiene unidades ni
+    puntos (ver `Canal.meta_por_punto`).
+
+    La fecha solo dice de qué mes es: se guarda el día 1.
+
+    En la base quedan, vacías, las columnas de cuando la meta era por
+    producto (`id_producto_hc`, `meta_cantidad`): se dejaron para que el
+    backend publicado siguiera andando mientras se desplegaba el cambio.
     """
 
     id_meta = models.AutoField('id de la meta', primary_key=True, db_column='id_meta_hc')
-    id_producto = models.ForeignKey(
-        ProductoHc,
-        on_delete=models.PROTECT,
-        db_column='id_producto_hc',
-        related_name='metas',
-        verbose_name='producto',
-    )
     id_punto_venta = models.ForeignKey(
         PuntoVentaHc,
         on_delete=models.PROTECT,
@@ -793,20 +799,20 @@ class MetaComercialHc(ValorizadaAlPrecioDelMes, TimeStampedModel):
         verbose_name='punto de venta',
     )
     fecha_meta = models.DateField('fecha de la meta')
-    meta_cantidad = models.PositiveIntegerField('meta de unidades')
+    # `db_default`: el backend de antes no conoce la columna y crea metas sin ella.
+    total_meta = models.PositiveBigIntegerField(
+        'meta en dinero', db_default=0, validators=[MaxValueValidator(META_MAXIMA_PUNTO)]
+    )
 
     class Meta:
         db_table = 'bi_trade_metas_hc'
         verbose_name = 'meta Homecenter'
         verbose_name_plural = 'metas Homecenter'
-        unique_together = ('id_producto', 'id_punto_venta', 'fecha_meta')
-        ordering = ('-fecha_meta', 'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto')
+        unique_together = ('id_punto_venta', 'fecha_meta')
+        ordering = ('-fecha_meta', 'id_punto_venta__nombre_pdv')
 
     def __str__(self) -> str:
-        return (
-            f'{self.id_punto_venta_id} · {self.id_producto_id} · {self.fecha_meta} '
-            f'→ {self.meta_cantidad} u.'
-        )
+        return f'{self.id_punto_venta_id} · {self.fecha_meta:%Y-%m} → $ {self.total_meta}'
 
 
 # ── Falabella ──────────────────────────────────────────────────────────────

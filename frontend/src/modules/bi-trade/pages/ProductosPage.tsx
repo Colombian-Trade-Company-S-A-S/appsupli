@@ -40,6 +40,7 @@ import { useFuente } from '../fuente';
 import { BotonesExcel } from '../components/BotonesExcel';
 import { CampoSelect } from '../components/CampoSelect';
 import { MarcasDialog } from '../components/MarcasDialog';
+import { BotonPlantillaSinPrecio } from '../components/PlantillaSinPrecio';
 import { useBiTradeMutation, useMarcas, useProductos } from '../hooks';
 
 const PRECIO_MAXIMO = 100_000_000;
@@ -87,6 +88,10 @@ export default function ProductosPage() {
           // Solo HC exporta su catálogo; con la misma búsqueda que la tabla.
           filtrosExport={fuente.catalogoHc ? { search: buscar || undefined } : undefined}
         />
+        {/* HC: los productos creados desde el inventario quedan en 0; aquí se les pone precio. */}
+        {fuente.importarHc && (
+          <BotonPlantillaSinPrecio descargar={fuente.importarHc.plantillaSinPrecio} />
+        )}
         <Button variant="outline" render={<Link to={`${fuente.base}/precios`} />}>
           <CalendarRangeIcon data-icon="inline-start" />
           Precios por periodo

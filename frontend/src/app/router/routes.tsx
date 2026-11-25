@@ -29,6 +29,7 @@ const PreciosPage = lazy(() => import('@/modules/bi-trade/pages/PreciosPage'));
 const PuntosVentaPage = lazy(() => import('@/modules/bi-trade/pages/PuntosVentaPage'));
 const InventarioPage = lazy(() => import('@/modules/bi-trade/pages/InventarioPage'));
 const MetasPage = lazy(() => import('@/modules/bi-trade/pages/MetasPage'));
+const MetasHcPage = lazy(() => import('@/modules/bi-trade/pages/MetasHcPage'));
 const TicketsPage = lazy(() => import('@/modules/bi-trade/pages/TicketsPage'));
 const CanalLayout = lazy(() => import('@/modules/bi-trade/pages/CanalLayout'));
 const PlanPartnersPage = lazy(() => import('@/modules/bi-trade/pages/PlanPartnersPage'));
@@ -182,7 +183,8 @@ const routes: RouteObject[] = [
                   { path: 'inventario', element: withSuspense(<InventarioPage />) },
                   { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
                   { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
-                  { path: 'metas', element: withSuspense(<MetasPage />) },
+                  // La meta de HC es por tienda y mes, en pesos: su propia página.
+                  { path: 'metas', element: withSuspense(<MetasHcPage />) },
                 ],
               },
               {

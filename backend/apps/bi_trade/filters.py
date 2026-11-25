@@ -102,9 +102,23 @@ class InventarioHcFilter(InventarioFilter):
         model = InventarioHc
 
 
-class MetaHcFilter(MetaFilter):
-    class Meta(MetaFilter.Meta):
+class MetaHcFilter(filtros.FilterSet):
+    """Las metas de HC son por tienda y mes: sin producto ni marca, y en pesos."""
+
+    regional = filtros.CharFilter(field_name='id_punto_venta__regional')
+    sin_regional = filtros.BooleanFilter(
+        field_name='id_punto_venta__regional', lookup_expr='isnull'
+    )
+    desde = filtros.DateFilter(field_name='fecha_meta', lookup_expr='gte')
+    hasta = filtros.DateFilter(field_name='fecha_meta', lookup_expr='lte')
+    anio = filtros.NumberFilter(field_name='fecha_meta', lookup_expr='year')
+    mes = filtros.NumberFilter(field_name='fecha_meta', lookup_expr='month')
+    dinero_min = filtros.NumberFilter(field_name='total_meta', lookup_expr='gte')
+    dinero_max = filtros.NumberFilter(field_name='total_meta', lookup_expr='lte')
+
+    class Meta:
         model = MetaComercialHc
+        fields = ('id_punto_venta', 'fecha_meta')
 
 
 # ── Falabella: los mismos filtros sobre las tablas `_falabella` ────────────

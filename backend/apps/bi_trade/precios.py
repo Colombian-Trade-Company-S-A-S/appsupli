@@ -176,10 +176,20 @@ def anotaciones_meta(canal, con_puntos: bool = True) -> dict:
     llame igual que uno de `aggregate` hace que Django lo resuelva contra sí
     mismo y devuelva cero sin avisar.
     """
+    if canal.meta_por_punto:
+        # HC: la meta ya viene en pesos, por tienda. No tiene producto, ni
+        # precio, ni unidades.
+        return {
+            'dinero_meta': F('total_meta'),
+            'unidades_meta': Value(0, output_field=IntegerField()),
+        }
     precio = precio_de_meta(canal)
     anotaciones = {
         'precio_mes': precio,
         'dinero_meta': F('meta_cantidad') * precio,
+        # Con su propio alias para que los cálculos sumen igual en todos los
+        # canales, tengan la meta en unidades o no.
+        'unidades_meta': F('meta_cantidad'),
     }
     if con_puntos:
         anotaciones['puntos_meta'] = F('meta_cantidad') * Coalesce('id_producto__puntaje', Value(0))

@@ -20,32 +20,31 @@ import {
   Input,
   Separator,
   Spinner,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   ToggleGroup,
   ToggleGroupItem,
 } from '@/shared/components/ui';
 import { ApiError } from '@/shared/api/http-client';
 import { formatoNumero } from '@/shared/lib/formato';
-import type { DiaConVentas, ResultadoReporteInventario, ResultadoReporteVentas } from '../api';
+import type {
+  DecisionProductos,
+  DiaConVentas,
+  OpcionesReporte,
+  PreguntaProductos,
+  RespuestaReporte,
+  ResultadoReporteInventario,
+  ResultadoReporteVentas,
+} from '../api';
 import type { ImportadorFalabella } from '../fuente';
 import { biTradeKeys, mensajeDeError } from '../hooks';
 import { Bloque, Renglon } from './ImportarInforme';
 import { Faltantes, fechaCorta } from './ImportarQuery';
+import { PreguntaDias, VistaPreviaCatalogo } from './PreguntasImportacion';
 
 type Reporte = 'ventas' | 'inventario';
 
 type Resultado =
   | { reporte: 'ventas'; datos: ResultadoReporteVentas }
   | { reporte: 'inventario'; datos: ResultadoReporteInventario };
-
-/** Lo que deja una carga: terminó, o se detuvo porque algún día ya tenía ventas. */
-type Salida =
-  { conflicto: true; dias: DiaConVentas[] } | { conflicto: false; resultado: Resultado };
 
 /** Los códigos que no cruzaron, cuando el backend rechaza el archivo por eso. */
 interface FaltantesDelError {
@@ -55,28 +54,34 @@ interface FaltantesDelError {
 
 const DESCRIPCION: Record<Reporte, string> = {
   ventas:
-    'El reporte «Ventas diarias» del portal de Falabella. Se usan «SKU», «ID Local», «Fecha» y «Unidades».',
+    'El reporte «Ventas diarias» del portal de Falabella. Se usan «SKU», «ID Local», «Fecha» y «Unidades»; para crear productos, «Producto», «Marca» y «Costo».',
   inventario:
-    'El reporte «Análisis semanal» del portal de Falabella. Se usan «ID Producto», «ID Local» y «Stock Disponible».',
+    'El reporte «Análisis semanal» del portal de Falabella. Se usan «ID Producto», «ID Local» y «Stock Disponible»; para crear productos, «Producto», «Marca» y «Stock a costo Disponible».',
 };
 
 /**
  * Importa los reportes .csv del portal de Falabella: las ventas diarias y el
- * inventario, desde un mismo botón.
+ * inventario, desde un mismo botón. Entra todo, tenga meta o no: el tablero es
+ * el que cuenta solo lo que tiene meta.
  *
- * Las ventas nunca pisan un día sin preguntar: si alguno de los días del
- * archivo ya tiene ventas, el backend no guarda nada y devuelve esos días, y
- * aquí se pregunta si sobrescribirlos. El inventario es la foto del stock: se
- * reemplaza completo.
+ * Antes de guardar, el backend se detiene a preguntar, y aquí se muestra cada
+ * pregunta en su propia pantalla:
  *
- * En los dos solo entra lo que tenga 1 unidad o más, y lo que no existe en la
- * app (un SKU o un ID Local sin crear) se omite y se lista para crearlo.
+ * 1. Si el archivo trae productos que no existen: la vista previa de cómo
+ *    quedarían (nombre, marca y costo de una unidad) y crearlos, importar sin
+ *    ellos o cancelar.
+ * 2. Solo ventas: si algún día ya tiene ventas, sobrescribirlo o cancelar.
+ *
+ * La respuesta a la primera se recuerda para la segunda: si se crean los
+ * productos y luego hay días ocupados, al sobrescribir también se crean.
  */
 export function ImportarFalabella({ importar }: { importar: ImportadorFalabella }) {
   const queryClient = useQueryClient();
   const [abierto, setAbierto] = useState(false);
   const [reporte, setReporte] = useState<Reporte>('ventas');
   const [archivo, setArchivo] = useState<File | null>(null);
+  const [pregunta, setPregunta] = useState<PreguntaProductos | null>(null);
+  const [decision, setDecision] = useState<DecisionProductos | undefined>(undefined);
   const [ocupados, setOcupados] = useState<DiaConVentas[] | null>(null);
   const [faltantes, setFaltantes] = useState<FaltantesDelError | null>(null);
   const [resultado, setResultado] = useState<Resultado | null>(null);
@@ -84,41 +89,47 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
   const cerrar = () => {
     setAbierto(false);
     setArchivo(null);
+    setPregunta(null);
+    setDecision(undefined);
     setOcupados(null);
     setFaltantes(null);
   };
 
   const cargar = useMutation({
-    mutationFn: async (sobrescribir: boolean): Promise<Salida> => {
-      if (reporte === 'inventario') {
-        return {
-          conflicto: false,
-          resultado: { reporte, datos: await importar.inventario(archivo!) },
-        };
-      }
-      const respuesta = await importar.ventas(archivo!, sobrescribir);
-      return respuesta.conflicto
-        ? { conflicto: true, dias: respuesta.diasConVentas }
-        : { conflicto: false, resultado: { reporte, datos: respuesta.resultado } };
+    mutationFn: async (opciones: OpcionesReporte): Promise<RespuestaReporte<Resultado['datos']>> =>
+      reporte === 'ventas'
+        ? importar.ventas(archivo!, opciones)
+        : importar.inventario(archivo!, opciones),
+    onMutate: (opciones) => {
+      setFaltantes(null);
+      setDecision(opciones.productos);
     },
-    onMutate: () => setFaltantes(null),
-    onSuccess: (salida) => {
-      if (salida.conflicto) {
-        setOcupados(salida.dias);
+    onSuccess: (respuesta) => {
+      if (respuesta.tipo === 'productos') {
+        setPregunta(respuesta.pregunta);
+        return;
+      }
+      if (respuesta.tipo === 'dias') {
+        setPregunta(null);
+        setOcupados(respuesta.diasConVentas);
         return;
       }
       void queryClient.invalidateQueries({ queryKey: biTradeKeys.todo });
-      toast.success(salida.resultado.datos.message);
-      setResultado(salida.resultado);
+      toast.success(respuesta.resultado.message);
+      setResultado(
+        reporte === 'ventas'
+          ? { reporte, datos: respuesta.resultado as ResultadoReporteVentas }
+          : { reporte, datos: respuesta.resultado as ResultadoReporteInventario },
+      );
       cerrar();
     },
     onError: (error) => {
       toast.error(mensajeDeError(error));
-      // Si nada cruzó, el backend dice qué códigos faltan: se muestran aquí
-      // para crearlos antes de volver a subir.
+      // Si nada cruzó, el backend dice qué códigos faltan: se muestran aquí.
       if (error instanceof ApiError && error.body && typeof error.body === 'object') {
         const { productosFaltantes = [], puntosFaltantes = [] } = error.body as FaltantesDelError;
         if (productosFaltantes.length || puntosFaltantes.length) {
+          setPregunta(null);
           setFaltantes({ productosFaltantes, puntosFaltantes });
         }
       }
@@ -131,8 +142,6 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
     setFaltantes(null);
   };
 
-  const registrosOcupados = (ocupados ?? []).reduce((total, dia) => total + dia.registros, 0);
-
   return (
     <>
       <Button variant="outline" onClick={() => setAbierto(true)}>
@@ -141,50 +150,25 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
       </Button>
 
       <Dialog open={abierto} onOpenChange={(v) => (v ? setAbierto(true) : cerrar())}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
-          {ocupados ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Ya hay ventas de esos días</DialogTitle>
-                <DialogDescription>
-                  No se guardó nada. Si sobrescribes, se borran las{' '}
-                  {formatoNumero(registrosOcupados)} ventas de estos días y quedan las del archivo.
-                </DialogDescription>
-              </DialogHeader>
-
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Día</TableHead>
-                    <TableHead className="text-right">Ventas cargadas</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {ocupados.map((dia) => (
-                    <TableRow key={dia.fecha}>
-                      <TableCell>{fechaCorta(dia.fecha)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatoNumero(dia.registros)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-
-              <DialogFooter>
-                <Button variant="outline" onClick={cerrar} disabled={cargar.isPending}>
-                  Cancelar
-                </Button>
-                <Button
-                  variant="destructive"
-                  disabled={cargar.isPending}
-                  onClick={() => cargar.mutate(true)}
-                >
-                  {cargar.isPending && <Spinner data-icon="inline-start" />}
-                  Sobrescribir
-                </Button>
-              </DialogFooter>
-            </>
+        <DialogContent
+          className={`max-h-[85dvh] overflow-y-auto ${pregunta ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
+        >
+          {pregunta ? (
+            <VistaPreviaCatalogo
+              pregunta={pregunta}
+              cargando={cargar.isPending}
+              decisionEnCurso={cargar.isPending ? cargar.variables?.productos : undefined}
+              onCancelar={cerrar}
+              onDecidir={(productos) => cargar.mutate({ productos })}
+            />
+          ) : ocupados ? (
+            <PreguntaDias
+              dias={ocupados}
+              aviso={decision === 'crear' ? 'Los productos nuevos se crean al sobrescribir.' : ''}
+              cargando={cargar.isPending}
+              onCancelar={cerrar}
+              onSobrescribir={() => cargar.mutate({ sobrescribir: true, productos: decision })}
+            />
           ) : (
             <>
               <DialogHeader>
@@ -231,9 +215,8 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                   <Alert>
                     <AlertTitle>Se cargan todos los días del archivo</AlertTitle>
                     <AlertDescription>
-                      Solo las filas con 1 unidad o más, y solo de productos con meta ese mes en ese
-                      punto de venta: sube primero las metas del mes. Si algún día ya tiene ventas,
-                      se te pregunta antes de tocarlo.
+                      Solo las filas con 1 unidad o más, tengan meta o no: el tablero solo cuenta lo
+                      que tiene meta. Si algún día ya tiene ventas, se te pregunta antes de tocarlo.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -241,8 +224,8 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                     <AlertTitle>Se reemplaza todo el inventario</AlertTitle>
                     <AlertDescription>
                       Se borran los registros actuales y quedan los del archivo, solo con 1 unidad o
-                      más de stock disponible. En el tablero solo cuenta el stock de productos con
-                      meta en su punto de venta.
+                      más de stock disponible, tengan meta o no. El tablero solo cuenta el stock con
+                      meta.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -251,8 +234,7 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                   <Alert variant="destructive">
                     <AlertTitle>No se cargó nada: faltan en la app</AlertTitle>
                     <AlertDescription className="flex flex-col gap-3">
-                      Crea estos códigos en Productos y en Puntos de venta, y vuelve a subir el
-                      archivo.
+                      Crea estos códigos y vuelve a subir el archivo.
                       <Faltantes
                         titulo="SKU por crear en Productos"
                         codigos={faltantes.productosFaltantes ?? []}
@@ -265,8 +247,9 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                   </Alert>
                 ) : (
                   <FieldDescription>
-                    Los SKU y los ID Local que no existan en la app se omiten: el reporte no crea
-                    catálogo. Al terminar se dice cuáles quedaron fuera.
+                    Si el archivo trae productos que no existen, te mostramos cómo quedarían y te
+                    preguntamos si crearlos. Los ID Local (puntos de venta) que no existan se
+                    omiten.
                   </FieldDescription>
                 )}
               </FieldGroup>
@@ -275,10 +258,7 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                 <Button variant="outline" onClick={cerrar}>
                   Cancelar
                 </Button>
-                <Button
-                  disabled={!archivo || cargar.isPending}
-                  onClick={() => cargar.mutate(false)}
-                >
+                <Button disabled={!archivo || cargar.isPending} onClick={() => cargar.mutate({})}>
                   {cargar.isPending ? (
                     <Spinner data-icon="inline-start" />
                   ) : (
@@ -319,6 +299,18 @@ function ResumenFalabella({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          {datos.productosCreados > 0 && (
+            <>
+              <Bloque titulo="Catálogo">
+                <Renglon etiqueta="Productos creados" valor={datos.productosCreados} destacado />
+                {datos.marcasCreadas.length > 0 && (
+                  <Renglon etiqueta="Marcas creadas" valor={datos.marcasCreadas.length} />
+                )}
+              </Bloque>
+              <Separator />
+            </>
+          )}
+
           {resultado.reporte === 'ventas' ? (
             <Bloque titulo={`Ventas ${periodo(resultado.datos.dias)}`}>
               <Renglon etiqueta="Registros creados" valor={resultado.datos.creadas} destacado />
@@ -347,12 +339,6 @@ function ResumenFalabella({
               }
               valor={datos.sinUnidades}
             />
-            {resultado.reporte === 'ventas' && (
-              <Renglon
-                etiqueta="Sin meta ese mes en ese punto de venta"
-                valor={resultado.datos.sinMeta}
-              />
-            )}
             <Renglon etiqueta="SKU que no existe en Falabella" valor={datos.sinProducto} />
             <Renglon etiqueta="ID Local que no existe en Falabella" valor={datos.sinPuntoVenta} />
           </Bloque>
