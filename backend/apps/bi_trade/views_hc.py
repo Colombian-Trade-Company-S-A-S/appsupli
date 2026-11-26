@@ -47,6 +47,7 @@ from .query_hc import (
     leer_reporte_inventario,
     leer_reporte_ventas,
     seleccionar_ventas,
+    venta_distancia_del_reporte,
 )
 from .serializers import (
     InventarioHcSerializer,
@@ -676,11 +677,13 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
         Carga las ventas del reporte del portal de Homecenter, con filtro por canal.
 
         Es el botón «Importar» del tablero. Entran las filas con 1 unidad o más
-        de los canales elegidos (`canales`, repetido; sin él, todos). Los pasos,
-        sin guardar nada hasta el último:
+        de los canales elegidos (`canales`, repetido; sin él, todos), sin las de
+        Venta Distancia salvo que se pida (`incluir_venta_distancia=1`). Los
+        pasos, sin guardar nada hasta el último:
 
         1. `previsualizar=1`: no carga; devuelve los canales que trae el
-           archivo, con cuántas ventas y unidades, para elegir.
+           archivo, con cuántas ventas y unidades, y cuánto es de Venta
+           Distancia, para elegir.
         2. Si faltan productos o tiendas, 409 `productos_por_crear` con la vista
            previa. `productos=crear` los crea antes de cargar; `productos=omitir`
            carga sin ellos.
@@ -700,13 +703,16 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
             return Response(
                 {
                     'canales': canales_del_reporte(filas),
+                    'venta_distancia': venta_distancia_del_reporte(filas),
                     'dias': sorted({f.fecha.isoformat() for f in filas if f.unidades >= 1}),
                     'filas_leidas': len(filas),
                 }
             )
 
         canales = _canales_elegidos(request)
-        seleccion = seleccionar_ventas(filas, canales)
+        # Venta Distancia no entra salvo que se pida (`incluir_venta_distancia=1`).
+        incluir_vd = (request.data.get('incluir_venta_distancia') or '').strip() in ('1', 'true')
+        seleccion = seleccionar_ventas(filas, canales, incluir_vd)
         if not seleccion.ventas:
             return _error(
                 'Los canales elegidos no traen ventas de 1 unidad o más, así que no se cambió '
@@ -739,6 +745,8 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
             'canales': sorted(canales),
             'filas_leidas': seleccion.filas_leidas,
             'fuera_de_canal': seleccion.fuera_de_canal,
+            'incluye_venta_distancia': incluir_vd,
+            'de_venta_distancia': seleccion.de_venta_distancia,
             'sin_unidades': seleccion.sin_unidades,
             'sin_tienda': seleccion.sin_tienda,
             **cruce.resumen(),
@@ -761,6 +769,8 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
         mensaje = f'Ventas cargadas: {len(nuevas)} registro(s) de {len(dias)} día(s)' + (
             f', reemplazando {eliminadas} que ya estaban.' if eliminadas else '.'
         )
+        if seleccion.de_venta_distancia:
+            mensaje += f' {seleccion.de_venta_distancia} fila(s) de Venta Distancia no entran.'
         if cruce.omitidas:
             mensaje += f' {cruce.omitidas} quedaron fuera porque su SKU o tienda no existe en HC.'
         return Response(

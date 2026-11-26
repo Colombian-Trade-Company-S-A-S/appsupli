@@ -3616,8 +3616,25 @@ def test_el_reporte_de_ventas_hc_muestra_los_canales_sin_cargar(app_bi_trade):
         {'canal': 'Web', 'ventas': 1, 'unidades': 1},
     ]
     assert respuesta.json()['dias'] == ['2026-11-01', '2026-11-02']
+    # La fila sin EAN Tienda es de Venta Distancia: se dice cuánto es, para el interruptor.
+    assert respuesta.json()['ventaDistancia'] == {'ventas': 1, 'unidades': 1}
     assert not VentaHc.objects.exists()
     assert not ProductoHc.objects.exists()
+
+
+def test_el_reporte_de_ventas_hc_puede_incluir_venta_distancia(app_bi_trade):
+    respuesta = _editor(app_bi_trade).post(
+        RUTA_REPORTE_VENTAS_HC,
+        {'archivo': _reporte_ventas_hc(), 'productos': 'crear', 'incluir_venta_distancia': '1'},
+        format='multipart',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert datos['creadas'] == 3
+    assert datos['deVentaDistancia'] == 0
+    assert PuntoVentaHc.objects.get(pk='7703670900993').nombre_pdv == 'Venta Distancia Bogota'
+    # El precio es el promedio de todas sus ventas: (211.646,24 + 100.000) ÷ 3 unidades.
+    assert ProductoHc.objects.get(pk='3016661').precio_venta_coltrade == 103_882
 
 
 def test_el_reporte_de_ventas_hc_pregunta_y_crea_productos_y_tiendas(app_bi_trade):
@@ -3633,19 +3650,19 @@ def test_el_reporte_de_ventas_hc_pregunta_y_crea_productos_y_tiendas(app_bi_trad
     datos = pregunta.json()
     assert datos['code'] == 'productos_por_crear'
     assert datos['productosPorCrear'] == [
+        # Sin la venta de Venta Distancia: 211.646,24 ÷ 2 unidades.
         {'idProducto': '3016661', 'nombreProducto': 'UPS Hikvision 600 W VA',
          'ean': '693184719899', 'skuColtrade': 'CO0501000401', 'marca': 'Hikvision',
-         'marcaNueva': True, 'precio': 100_000},
+         'marcaNueva': True, 'precio': 105_823},
         {'idProducto': '3016665', 'nombreProducto': 'Hikvision Easy Link WiFi DVR+ 2 Camaras',
          'ean': '694216047469', 'skuColtrade': 'OT0108000401', 'marca': 'Digital Pos',
          'marcaNueva': True, 'precio': 232_228},
     ]
     nuevos = {p['idPuntoVenta']: p for p in datos['puntosPorCrear']}
+    # Venta Distancia (la fila sin EAN Tienda) no entra por defecto: no se ofrece crearla.
     assert {e: p['nombrePdv'] for e, p in nuevos.items()} == {
         '7703670900177': 'Neiva San Pedro',
         '7703670900306': 'Cali Sur',
-        # Sin EAN Tienda va a la tienda de venta a distancia.
-        '7703670900993': 'Venta Distancia Bogota',
     }
     assert {(p['regional'], p['materiales'], p['categoria']) for p in nuevos.values()} == {
         (RegionalHc.NACIONAL, Materiales.TODOS, CategoriaHc.A)
@@ -3655,10 +3672,11 @@ def test_el_reporte_de_ventas_hc_pregunta_y_crea_productos_y_tiendas(app_bi_trad
     creada = subir(productos='crear')
     assert creada.status_code == 200, creada.json()
     datos = creada.json()
-    assert (datos['productosCreados'], datos['puntosCreados']) == (2, 3)
-    assert datos['creadas'] == 3
+    assert (datos['productosCreados'], datos['puntosCreados']) == (2, 2)
+    assert datos['creadas'] == 2
+    assert datos['deVentaDistancia'] == 1
     ups = ProductoHc.objects.get(pk='3016661')
-    assert ups.precio_venta_coltrade == ups.precio_venta_hc == 100_000
+    assert ups.precio_venta_coltrade == ups.precio_venta_hc == 105_823
     assert ups.marca_id == 'Hikvision'
 
 
@@ -3822,28 +3840,29 @@ def _meta_falabella(punto, producto, unidades=5, fecha=date(2026, 3, 1)):
     )
 
 
-def test_el_tablero_de_falabella_solo_cuenta_lo_que_tiene_meta(app_bi_trade, catalogo_falabella):
+def test_el_tablero_de_falabella_cuenta_todo_aunque_no_tenga_meta(
+    app_bi_trade, catalogo_falabella
+):
+    """Lo que no se mide —Falabella.com— ni se importa: el tablero cuenta todo lo cargado."""
     tienda, audifonos = catalogo_falabella
-    sin_meta = PuntoVentaFalabella.objects.create(
-        id_punto_venta='2000', nombre_pdv='Tienda Falabella.com'
-    )
+    sin_meta = PuntoVentaFalabella.objects.create(id_punto_venta='45', nombre_pdv='Arkadia')
     _meta_falabella(tienda, audifonos)
     _venta_falabella(tienda, audifonos, 2)
-    _venta_falabella(sin_meta, audifonos, 40)
+    _venta_falabella(sin_meta, audifonos, 4)
     InventarioFalabella.objects.create(
         id_producto=audifonos, id_punto_venta=tienda, cantidad_inventario=3
     )
     InventarioFalabella.objects.create(
-        id_producto=audifonos, id_punto_venta=sin_meta, cantidad_inventario=90
+        id_producto=audifonos, id_punto_venta=sin_meta, cantidad_inventario=9
     )
 
     cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
     totales = cliente.get('/api/bi-trade/falabella/avance-mensual?anio=2026&mes=3').json()[
         'totales'
     ]
-    assert totales['ventasCantidad'] == 2
-    assert totales['ventasDinero'] == 500_000
-    assert totales['inventarioUnidades'] == 3
+    assert totales['ventasCantidad'] == 6
+    assert totales['ventasDinero'] == 1_500_000
+    assert totales['inventarioUnidades'] == 12
 
 
 def test_las_tablas_y_llaves_de_falabella_terminan_en_falabella():
@@ -4093,10 +4112,13 @@ def _csv(nombre: str, lineas: list[str]) -> SimpleUploadedFile:
     return SimpleUploadedFile(nombre, contenido.encode('utf-8'), content_type='text/csv')
 
 
-def _venta_csv(fecha, sku, local, unidades, costo='870.000', producto='Producto', marca_='JBL'):
+def _venta_csv(
+    fecha, sku, local, unidades, costo='870.000', producto='Producto', marca_='JBL',
+    neta='283.331', nombre_local='Tienda',
+):
     return (
         f'{fecha},J11 ELECTRO HOGAR,J1102 AUDIO,J110213,J11021301,{sku},{producto},Modelo,'
-        f'{marca_},BOGOTA,{local},Tienda,840080527079,339.900,283.331,{unidades},{costo}'
+        f'{marca_},BOGOTA,{local},{nombre_local},840080527079,339.900,{neta},{unidades},{costo}'
     )
 
 
@@ -4148,15 +4170,15 @@ def test_el_reporte_de_ventas_falabella_pregunta_y_crea_los_productos_que_faltan
     def subir(**extra):
         archivo = _reporte_ventas_fal(
             _venta_csv('2026-11-16', '58563423', '123', 1),
-            # Dos unidades: el costo de la fila es de las dos.
+            # El precio es la venta neta de una unidad, promediando el archivo:
+            # (4.000.000 + 2.000.000) ÷ 3 unidades. El costo no cuenta.
             _venta_csv('2026-11-15', '73713895', '123', 2, '4.492.000',
-                       'Consola PS5 Disc Edition', 'SONY'),
-            # Del día más reciente sale el precio.
+                       'Consola PS5 Disc Edition', 'SONY', neta='4.000.000'),
             _venta_csv('2026-11-16', '73713895', '2000', 1, '2.246.000',
-                       'Consola PS5 Disc Edition', 'SONY'),
+                       'Consola PS5 Disc Edition', 'SONY', neta='2.000.000'),
             # La marca ya existe aunque venga en mayúsculas.
             _venta_csv('2026-11-16', '58563424', '2000', 3, '644.742',
-                       'ECHO DOT 5TA GEN AMAZON BCO', 'jbl'),
+                       'ECHO DOT 5TA GEN AMAZON BCO', 'jbl', neta='600.000'),
             # Solo devoluciones: no se ofrece crearlo.
             _venta_csv('2026-11-16', '99999999', '123', -1, '-100.000', 'Devuelto', 'SONY'),
         )
@@ -4170,9 +4192,9 @@ def test_el_reporte_de_ventas_falabella_pregunta_y_crea_los_productos_que_faltan
     assert datos['code'] == 'productos_por_crear'
     assert datos['productosPorCrear'] == [
         {'idProducto': '58563424', 'nombreProducto': 'Echo Dot 5ta Gen Amazon Bco',
-         'marca': 'JBL', 'marcaNueva': False, 'precio': 214_914},
+         'marca': 'JBL', 'marcaNueva': False, 'precio': 200_000},
         {'idProducto': '73713895', 'nombreProducto': 'Consola PS5 Disc Edition',
-         'marca': 'Sony', 'marcaNueva': True, 'precio': 2_246_000},
+         'marca': 'Sony', 'marcaNueva': True, 'precio': 2_000_000},
     ]
     assert datos['marcasNuevas'] == ['Sony']
     # Mientras se pregunta no se toca nada.
@@ -4188,8 +4210,44 @@ def test_el_reporte_de_ventas_falabella_pregunta_y_crea_los_productos_que_faltan
     assert datos['message'].startswith('Se crearon 2 producto(s) y 1 marca(s).')
     consola = ProductoFalabella.objects.get(pk='73713895')
     assert (consola.nombre_producto, consola.marca_id) == ('Consola PS5 Disc Edition', 'Sony')
-    assert consola.precio_venta_falabella == consola.precio_venta_coltrade == 2_246_000
+    assert consola.precio_venta_falabella == consola.precio_venta_coltrade == 2_000_000
     assert not ProductoFalabella.objects.filter(pk='99999999').exists()
+
+
+def test_el_reporte_de_ventas_falabella_deja_fuera_falabella_com_y_crea_tiendas(
+    app_bi_trade, catalogo_reporte_falabella
+):
+    editor = _editor(app_bi_trade)
+
+    def subir(**extra):
+        archivo = _reporte_ventas_fal(
+            _venta_csv('2026-11-16', '58563423', '123', 1, nombre_local='UNICENTRO'),
+            # Las dos de Falabella.com no entran, por el nombre del local.
+            _venta_csv('2026-11-16', '58563423', '2000', 9, nombre_local='TIENDA FALABELLA .COM'),
+            _venta_csv('2026-11-16', '58563423', '3000', 4, nombre_local='FALABELLA. COM ALTERNO'),
+            # Una tienda que no existe: se ofrece crearla.
+            _venta_csv('2026-11-16', '58563423', '30', 2, nombre_local='TIENDA ALEGRA'),
+        )
+        return editor.post(
+            RUTA_REPORTE_VENTAS_FAL, {'archivo': archivo, **extra}, format='multipart'
+        )
+
+    pregunta = subir()
+    assert pregunta.status_code == 409
+    assert pregunta.json()['productosPorCrear'] == []
+    assert pregunta.json()['puntosPorCrear'] == [
+        {'idPuntoVenta': '30', 'nombrePdv': 'Tienda Alegra', 'regional': 'Nacional',
+         'materiales': 'Todos los materiales', 'categoria': None},
+    ]
+
+    creada = subir(productos='crear')
+    assert creada.status_code == 200, creada.json()
+    datos = creada.json()
+    assert datos['deFalabellaCom'] == 2
+    assert datos['puntosCreados'] == 1
+    assert datos['creadas'] == 2
+    assert PuntoVentaFalabella.objects.get(pk='30').nombre_pdv == 'Tienda Alegra'
+    assert not VentaFalabella.objects.filter(id_punto_venta__in=['2000', '3000']).exists()
 
 
 def test_el_reporte_de_ventas_falabella_puede_importar_sin_crear_productos(
@@ -4324,30 +4382,34 @@ def test_el_reporte_de_inventario_falabella_reemplaza_por_id_local(
             # Va por ID Local (123), no por ID Tienda (10016).
             '1,58563423,Echo Dot,BOGOTA,123,UNICENTRO,10016,UNICENTRO,5,4',
             # El mismo producto dos veces en el mismo local: se suma.
-            '2,73722474,Switch 2,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,3,1',
-            '3,73722474,Switch 2,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,3,2',
+            '2,73722474,Switch 2,BOGOTA,123,UNICENTRO,10016,UNICENTRO,3,1',
+            '3,73722474,Switch 2,BOGOTA,123,UNICENTRO,10016,UNICENTRO,3,2',
+            # Falabella.com no entra.
+            '4,73722474,Switch 2,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,9,9',
             # Sin stock disponible: no entra.
-            '4,73722474,Switch 2,BOGOTA,123,UNICENTRO,10016,UNICENTRO,1,0',
-            '5,58563423,Echo Dot,INTERNET,2000,TIENDA FALABELLA .COM,10061,VENTA A DISTANCIA,0,-1',
-            # Un CD que no es tienda de la app.
-            '6,58563423,Echo Dot,CD,9903,CD FALABELLA,10001,FALABELLA DE COLOMBIA S.A.,20,20',
+            '5,73722474,Switch 2,BOGOTA,123,UNICENTRO,10016,UNICENTRO,1,0',
+            '6,58563423,Echo Dot,BOGOTA,123,UNICENTRO,10016,UNICENTRO,0,-1',
+            # Un CD que no es tienda de la app, y no se pidió crearla.
+            '7,58563423,Echo Dot,CD,9903,CD FALABELLA,10001,FALABELLA DE COLOMBIA S.A.,20,20',
         ],
     )
     respuesta = _editor(app_bi_trade).post(
-        RUTA_REPORTE_INVENTARIO_FAL, {'archivo': archivo}, format='multipart'
+        RUTA_REPORTE_INVENTARIO_FAL, {'archivo': archivo, 'productos': 'omitir'},
+        format='multipart',
     )
     assert respuesta.status_code == 200, respuesta.json()
     datos = respuesta.json()
     assert datos['creados'] == 2
     assert datos['eliminados'] == 1
     assert datos['sinUnidades'] == 2
+    assert datos['deFalabellaCom'] == 1
     assert datos['puntosFaltantes'] == ['9903']
 
     stock = {
         (i.id_producto_id, i.id_punto_venta_id): i.cantidad_inventario
         for i in InventarioFalabella.objects.all()
     }
-    assert stock == {('58563423', '123'): 4, ('73722474', '2000'): 3}
+    assert stock == {('58563423', '123'): 4, ('73722474', '123'): 3}
 
 
 def test_un_reporte_falabella_que_no_cruza_no_borra_nada(app_bi_trade, catalogo_reporte_falabella):

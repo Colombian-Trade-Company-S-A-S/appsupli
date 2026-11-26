@@ -870,11 +870,8 @@ class VentaViewSet(BiTradeViewSet):
 
     @property
     def solo_con_meta(self) -> bool:
-        """
-        Claro y Tmk solo cargan ventas de productos con meta (ver `VentasConMeta`).
-        Falabella carga todo, aunque su tablero solo cuente lo que tiene meta.
-        """
-        return self.canal.importa_solo_con_meta
+        """Claro y Tmk solo cargan ventas de productos con meta (ver `VentasConMeta`)."""
+        return self.canal.solo_con_meta
 
     @property
     def nota_plantilla(self) -> str:

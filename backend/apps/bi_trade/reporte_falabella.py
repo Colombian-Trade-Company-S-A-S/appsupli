@@ -21,16 +21,20 @@ varios locales (la tienda .com y su alterno, todos los CD…) y no cruzaría con
 las tiendas de las ventas.
 
 En los dos solo entran las filas con 1 unidad o más: cero y negativos
-(devoluciones, ajustes, stock en rojo) no son venta ni stock.
+(devoluciones, ajustes, stock en rojo) no son venta ni stock. Tampoco entra
+Falabella.com —la tienda .com y su alterno, por el nombre del local—: lo que
+se mide son las tiendas.
 
-De las mismas filas sale el producto, para crear los que falten en la app:
-`Producto` es el nombre (en nombre propio, como el resto del catálogo),
-`Marca` la marca y el precio es el costo de UNA unidad, que se usa como precio
-Falabella y como precio Coltrade. El archivo trae el costo de toda la fila:
+De las mismas filas sale lo que falte en la app, para crearlo:
 
-  · en ventas, `Costo` ÷ `Unidades`, de la venta más reciente del producto;
-  · en inventario, `Stock a costo Disponible` ÷ `Stock Disponible`, sumando
-    todos los locales donde hay stock.
+  · El producto: `Producto` es el nombre (en nombre propio, como el resto del
+    catálogo), `Marca` la marca, y el precio —Falabella y Coltrade— el valor
+    de UNA unidad. El archivo trae el de toda la fila:
+      - en ventas, la `Venta neta` ÷ `Unidades`, promediando todas las ventas
+        del producto en el archivo (no el costo: el tablero mide lo vendido);
+      - en inventario, `Stock a costo Disponible` ÷ `Stock Disponible`,
+        sumando todos los locales donde hay stock.
+  · La tienda: `ID Local` y `Local` (el nombre).
 
 El portal escribe mal algunas filas de ventas: cuando el costo trae decimales
 envuelve la fila entera entre comillas, y queda como una sola celda. Esa
@@ -56,8 +60,10 @@ COLUMNA_STOCK = 'Stock Disponible'
 # igual, solo que sin ofrecer crear nada.
 COLUMNA_NOMBRE = 'Producto'
 COLUMNA_MARCA = 'Marca'
-COLUMNA_COSTO = 'Costo'
+COLUMNA_VENTA_NETA = 'Venta neta'
 COLUMNA_COSTO_STOCK = 'Stock a costo Disponible'
+# El nombre del local: para crear la tienda y para reconocer Falabella.com.
+COLUMNA_NOMBRE_LOCAL = 'Local'
 
 #: Lo mínimo para que una fila entre, en ventas y en inventario.
 UNIDADES_MINIMAS = 1
@@ -105,8 +111,12 @@ class LecturaVentas:
     filas_leidas: int = 0
     #: Devoluciones y ajustes: cero unidades o negativas.
     sin_unidades: int = 0
-    #: sku → producto, de las filas con 1 unidad o más.
+    #: Filas de Falabella.com: no entran.
+    de_falabella_com: int = 0
+    #: sku → producto, de las filas que entran.
     productos: dict[str, ProductoDelReporte] = field(default_factory=dict)
+    #: ID Local → nombre, de las filas que entran (si el archivo trae `Local`).
+    tiendas: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -118,8 +128,12 @@ class LecturaInventario:
     filas_leidas: int = 0
     #: Filas con stock cero o negativo: no entran.
     sin_unidades: int = 0
+    #: Filas de Falabella.com: no entran.
+    de_falabella_com: int = 0
     #: sku → producto, de las filas con stock de 1 o más.
     productos: dict[str, ProductoDelReporte] = field(default_factory=dict)
+    #: ID Local → nombre, de las filas que entran (si el archivo trae `Local`).
+    tiendas: dict[str, str] = field(default_factory=dict)
 
 
 def _normalizar(texto) -> str:
@@ -225,20 +239,36 @@ def _codigo(texto: str) -> str:
     return texto[:-2] if texto.endswith('.0') and texto[:-2].isdigit() else texto
 
 
+def es_falabella_com(nombre_local: str) -> bool:
+    """«TIENDA FALABELLA .COM», «FALABELLA. COM ALTERNO»: la venta por internet."""
+    return 'FALABELLA.COM' in re.sub(r'\s', '', nombre_local or '').upper()
+
+
+def _nombre_tienda(nombre: str, local: str) -> str:
+    return nombre_propio(nombre, 100, conectores=False) or local
+
+
 # ── Lectores ───────────────────────────────────────────────────────────────
 
 
 def leer_ventas(archivo) -> LecturaVentas:
-    """Las ventas diarias: todas sus fechas, solo las filas con 1 unidad o más."""
+    """
+    Las ventas diarias: todas sus fechas, solo las filas con 1 unidad o más y
+    sin las de Falabella.com.
+    """
     encabezados, filas = _filas_csv(archivo)
     columnas = (COLUMNA_FECHA, COLUMNA_SKU, COLUMNA_LOCAL, COLUMNA_UNIDADES)
     i_fecha, i_sku, i_local, i_unidades = _indices(encabezados, columnas, 'Ventas diarias')
-    del_producto = _indices_opcionales(encabezados, (COLUMNA_NOMBRE, COLUMNA_MARCA, COLUMNA_COSTO))
+    del_producto = _indices_opcionales(
+        encabezados, (COLUMNA_NOMBRE, COLUMNA_MARCA, COLUMNA_VENTA_NETA)
+    )
+    con_nombre = _indices_opcionales(encabezados, (COLUMNA_NOMBRE_LOCAL,))
+    i_nombre_local = con_nombre[0] if con_nombre else None
     ultima = max(i_fecha, i_sku, i_local, i_unidades)
 
     lectura = LecturaVentas()
-    # sku → (fecha más reciente, costos unitarios de ese día)
-    costos: dict[str, tuple[date, list[float]]] = {}
+    # sku → [venta neta, unidades] de todas sus ventas: el precio es el promedio.
+    netas: dict[str, list[float]] = {}
     for fila in filas:
         if len(fila) <= ultima:
             continue
@@ -247,33 +277,38 @@ def leer_ventas(archivo) -> LecturaVentas:
         sku, local = _codigo(fila[i_sku]), _codigo(fila[i_local])
         if fecha is None or unidades is None or not sku or not local:
             continue
+        nombre_local = _celda(fila, i_nombre_local) if i_nombre_local is not None else ''
+        if es_falabella_com(nombre_local):
+            lectura.de_falabella_com += 1
+            continue
         lectura.filas_leidas += 1
         if unidades < UNIDADES_MINIMAS:
             lectura.sin_unidades += 1
             continue
         lectura.ventas.append(FilaVenta(fecha, sku, local, unidades))
+        if i_nombre_local is not None:
+            lectura.tiendas.setdefault(local, _nombre_tienda(nombre_local, local))
 
         if del_producto is None:
             continue
-        i_nombre, i_marca, i_costo = del_producto
+        i_nombre, i_marca, i_neta = del_producto
         lectura.productos.setdefault(
             sku,
             ProductoDelReporte(
                 sku, nombre_propio(_celda(fila, i_nombre)), _celda(fila, i_marca).strip(), None
             ),
         )
-        costo = _numero(_celda(fila, i_costo))
-        if costo is None or costo < 0:
+        neta = _numero(_celda(fila, i_neta))
+        if neta is None or neta < 0:
             continue
-        # El costo de la fila es el de todas sus unidades: se lleva a una.
-        anterior = costos.get(sku)
-        if anterior is None or fecha > anterior[0]:
-            costos[sku] = (fecha, [costo / unidades])
-        elif fecha == anterior[0]:
-            anterior[1].append(costo / unidades)
+        # La venta neta de la fila es la de todas sus unidades: se suma todo y
+        # al final se divide, para que el precio sea el promedio del archivo.
+        acumulado = netas.setdefault(sku, [0.0, 0.0])
+        acumulado[0] += neta
+        acumulado[1] += unidades
 
-    for sku, (_fecha_costo, unitarios) in costos.items():
-        lectura.productos[sku].precio = round(sum(unitarios) / len(unitarios))
+    for sku, (neta, unidades) in netas.items():
+        lectura.productos[sku].precio = round(neta / unidades)
 
     if not lectura.filas_leidas:
         raise ErrorDeReporte('El archivo no trae filas de ventas con fecha, SKU, local y unidades.')
@@ -285,7 +320,7 @@ def leer_inventario(archivo) -> LecturaInventario:
     El inventario: la foto del stock disponible, sin fecha.
 
     Si un producto aparece dos veces en el mismo local, se suma: es stock de
-    los dos lados.
+    los dos lados. El stock de Falabella.com no entra, como sus ventas.
     """
     encabezados, filas = _filas_csv(archivo)
     columnas = (COLUMNA_PRODUCTO, COLUMNA_LOCAL, COLUMNA_STOCK)
@@ -293,6 +328,8 @@ def leer_inventario(archivo) -> LecturaInventario:
     del_producto = _indices_opcionales(
         encabezados, (COLUMNA_NOMBRE, COLUMNA_MARCA, COLUMNA_COSTO_STOCK)
     )
+    con_nombre = _indices_opcionales(encabezados, (COLUMNA_NOMBRE_LOCAL,))
+    i_nombre_local = con_nombre[0] if con_nombre else None
     ultima = max(i_producto, i_local, i_stock)
 
     lectura = LecturaInventario()
@@ -305,11 +342,17 @@ def leer_inventario(archivo) -> LecturaInventario:
         sku, local = _codigo(fila[i_producto]), _codigo(fila[i_local])
         if unidades is None or not sku or not local:
             continue
+        nombre_local = _celda(fila, i_nombre_local) if i_nombre_local is not None else ''
+        if es_falabella_com(nombre_local):
+            lectura.de_falabella_com += 1
+            continue
         lectura.filas_leidas += 1
         if unidades < UNIDADES_MINIMAS:
             lectura.sin_unidades += 1
             continue
         lectura.inventario[(sku, local)] += unidades
+        if i_nombre_local is not None:
+            lectura.tiendas.setdefault(local, _nombre_tienda(nombre_local, local))
 
         if del_producto is None:
             continue

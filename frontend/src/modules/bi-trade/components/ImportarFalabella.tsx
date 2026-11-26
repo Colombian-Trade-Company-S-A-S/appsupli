@@ -54,22 +54,22 @@ interface FaltantesDelError {
 
 const DESCRIPCION: Record<Reporte, string> = {
   ventas:
-    'El reporte «Ventas diarias» del portal de Falabella. Se usan «SKU», «ID Local», «Fecha» y «Unidades»; para crear productos, «Producto», «Marca» y «Costo».',
+    'El reporte «Ventas diarias» del portal de Falabella. Se usan «SKU», «ID Local», «Fecha» y «Unidades»; para crear productos, «Producto», «Marca» y «Venta neta»; para crear puntos de venta, «Local».',
   inventario:
-    'El reporte «Análisis semanal» del portal de Falabella. Se usan «ID Producto», «ID Local» y «Stock Disponible»; para crear productos, «Producto», «Marca» y «Stock a costo Disponible».',
+    'El reporte «Análisis semanal» del portal de Falabella. Se usan «ID Producto», «ID Local» y «Stock Disponible»; para crear productos, «Producto», «Marca» y «Stock a costo Disponible»; para crear puntos de venta, «Local».',
 };
 
 /**
  * Importa los reportes .csv del portal de Falabella: las ventas diarias y el
- * inventario, desde un mismo botón. Entra todo, tenga meta o no: el tablero es
- * el que cuenta solo lo que tiene meta.
+ * inventario, desde un mismo botón. Entra todo, tenga meta o no, menos
+ * Falabella.com.
  *
  * Antes de guardar, el backend se detiene a preguntar, y aquí se muestra cada
  * pregunta en su propia pantalla:
  *
- * 1. Si el archivo trae productos que no existen: la vista previa de cómo
- *    quedarían (nombre, marca y costo de una unidad) y crearlos, importar sin
- *    ellos o cancelar.
+ * 1. Si el archivo trae productos o puntos de venta que no existen: la vista
+ *    previa de cómo quedarían (el precio, la venta neta de una unidad) y
+ *    crearlos, importar sin ellos o cancelar.
  * 2. Solo ventas: si algún día ya tiene ventas, sobrescribirlo o cancelar.
  *
  * La respuesta a la primera se recuerda para la segunda: si se crean los
@@ -215,8 +215,8 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                   <Alert>
                     <AlertTitle>Se cargan todos los días del archivo</AlertTitle>
                     <AlertDescription>
-                      Solo las filas con 1 unidad o más, tengan meta o no: el tablero solo cuenta lo
-                      que tiene meta. Si algún día ya tiene ventas, se te pregunta antes de tocarlo.
+                      Solo las filas con 1 unidad o más, tengan meta o no, y sin las de
+                      Falabella.com. Si algún día ya tiene ventas, se te pregunta antes de tocarlo.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -224,8 +224,7 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                     <AlertTitle>Se reemplaza todo el inventario</AlertTitle>
                     <AlertDescription>
                       Se borran los registros actuales y quedan los del archivo, solo con 1 unidad o
-                      más de stock disponible, tengan meta o no. El tablero solo cuenta el stock con
-                      meta.
+                      más de stock disponible y sin Falabella.com.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -247,9 +246,8 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                   </Alert>
                 ) : (
                   <FieldDescription>
-                    Si el archivo trae productos que no existen, te mostramos cómo quedarían y te
-                    preguntamos si crearlos. Los ID Local (puntos de venta) que no existan se
-                    omiten.
+                    Si el archivo trae productos o puntos de venta que no existen, te mostramos cómo
+                    quedarían y te preguntamos si crearlos.
                   </FieldDescription>
                 )}
               </FieldGroup>
@@ -299,10 +297,11 @@ function ResumenFalabella({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
-          {datos.productosCreados > 0 && (
+          {(datos.productosCreados > 0 || datos.puntosCreados > 0) && (
             <>
               <Bloque titulo="Catálogo">
                 <Renglon etiqueta="Productos creados" valor={datos.productosCreados} destacado />
+                <Renglon etiqueta="Puntos de venta creados" valor={datos.puntosCreados} />
                 {datos.marcasCreadas.length > 0 && (
                   <Renglon etiqueta="Marcas creadas" valor={datos.marcasCreadas.length} />
                 )}
@@ -331,6 +330,9 @@ function ResumenFalabella({
           <Separator />
 
           <Bloque titulo="Lo que no entró">
+            {datos.deFalabellaCom > 0 && (
+              <Renglon etiqueta="De Falabella.com" valor={datos.deFalabellaCom} />
+            )}
             <Renglon
               etiqueta={
                 resultado.reporte === 'ventas'

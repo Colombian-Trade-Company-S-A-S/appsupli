@@ -21,6 +21,7 @@ import {
   Input,
   Separator,
   Spinner,
+  Switch,
   ToggleGroup,
   ToggleGroupItem,
 } from '@/shared/components/ui';
@@ -55,6 +56,9 @@ interface FaltantesDelError {
   puntosFaltantes?: string[];
 }
 
+/** Los canales que quedan marcados al leer el archivo de ventas. */
+const CANALES_POR_DEFECTO = ['Tienda', 'Pantallas'];
+
 const DESCRIPCION: Record<Reporte, string> = {
   ventas:
     'El reporte de ventas del portal de Homecenter (.xlsx). Se usan «Fecha», «Código SKU», «EAN Tienda», «Unidades Vendidas» y «Canal».',
@@ -81,6 +85,8 @@ export function ImportarHc({ importar }: { importar: ImportadorHc }) {
   const [archivo, setArchivo] = useState<File | null>(null);
   const [lectura, setLectura] = useState<LecturaReporteHc | null>(null);
   const [canales, setCanales] = useState<string[]>([]);
+  // Venta Distancia no se carga salvo que se desactive el interruptor.
+  const [quitarVentaDistancia, setQuitarVentaDistancia] = useState(true);
   const [pregunta, setPregunta] = useState<PreguntaProductos | null>(null);
   const [decision, setDecision] = useState<DecisionProductos | undefined>(undefined);
   const [ocupados, setOcupados] = useState<DiaConVentas[] | null>(null);
@@ -91,6 +97,7 @@ export function ImportarHc({ importar }: { importar: ImportadorHc }) {
     setArchivo(null);
     setLectura(null);
     setCanales([]);
+    setQuitarVentaDistancia(true);
     setPregunta(null);
     setDecision(undefined);
     setOcupados(null);
@@ -102,12 +109,15 @@ export function ImportarHc({ importar }: { importar: ImportadorHc }) {
     reiniciar();
   };
 
-  // Ventas: leer el archivo sin cargar, para elegir canales. Todos marcados al empezar.
+  // Ventas: leer el archivo sin cargar, para elegir canales. Al empezar quedan
+  // marcados Tienda y Pantallas; si el archivo no trae ninguno de los dos, todos.
   const leer = useMutation({
     mutationFn: (elegido: File) => importar.leerVentas(elegido),
     onSuccess: (datos) => {
       setLectura(datos);
-      setCanales(datos.canales.filter((c) => c.ventas > 0).map((c) => c.canal));
+      const conVentas = datos.canales.filter((c) => c.ventas > 0).map((c) => c.canal);
+      const porDefecto = conVentas.filter((c) => CANALES_POR_DEFECTO.includes(c));
+      setCanales(porDefecto.length > 0 ? porDefecto : conVentas);
     },
     onError: (error) => toast.error(mensajeDeError(error)),
   });
@@ -115,7 +125,11 @@ export function ImportarHc({ importar }: { importar: ImportadorHc }) {
   const cargar = useMutation({
     mutationFn: async (opciones: OpcionesReporte): Promise<RespuestaReporte<Resultado['datos']>> =>
       reporte === 'ventas'
-        ? importar.ventas(archivo!, { ...opciones, canales })
+        ? importar.ventas(archivo!, {
+            ...opciones,
+            canales,
+            incluirVentaDistancia: !quitarVentaDistancia,
+          })
         : importar.inventario(archivo!, opciones),
     onMutate: (opciones) => {
       setFaltantes(null);
@@ -314,6 +328,31 @@ export function ImportarHc({ importar }: { importar: ImportadorHc }) {
                   </Field>
                 )}
 
+                {reporte === 'ventas' && lectura && (
+                  <label
+                    htmlFor="hc-quitar-vd"
+                    className="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5"
+                  >
+                    <Switch
+                      id="hc-quitar-vd"
+                      className="mt-0.5"
+                      checked={quitarVentaDistancia}
+                      onCheckedChange={(valor) => setQuitarVentaDistancia(!!valor)}
+                    />
+                    <span className="flex flex-col gap-0.5 text-sm">
+                      <span className="font-medium">Quitar ventas de Venta Distancia</span>
+                      <span className="text-xs text-muted-foreground">
+                        {lectura.ventaDistancia.ventas > 0
+                          ? `El archivo trae ${formatoNumero(lectura.ventaDistancia.ventas)} venta${lectura.ventaDistancia.ventas === 1 ? '' : 's'} (${formatoNumero(lectura.ventaDistancia.unidades)} u) de Venta Distancia, la tienda 7703670900993 o sin EAN de tienda. `
+                          : 'El archivo no trae ventas de Venta Distancia. '}
+                        {quitarVentaDistancia
+                          ? 'No se cargan.'
+                          : 'Se cargan, de los canales marcados.'}
+                      </span>
+                    </span>
+                  </label>
+                )}
+
                 {reporte === 'inventario' && (
                   <Alert variant="destructive">
                     <AlertTitle>Se reemplaza todo el inventario</AlertTitle>
@@ -456,6 +495,9 @@ function ResumenHc({
           <Bloque titulo="Lo que no entró">
             {resultado.reporte === 'ventas' && resultado.datos.fueraDeCanal > 0 && (
               <Renglon etiqueta="De otros canales" valor={resultado.datos.fueraDeCanal} />
+            )}
+            {resultado.reporte === 'ventas' && resultado.datos.deVentaDistancia > 0 && (
+              <Renglon etiqueta="De Venta Distancia" valor={resultado.datos.deVentaDistancia} />
             )}
             {resultado.reporte === 'inventario' && resultado.datos.deOtrosDias > 0 && (
               <Renglon etiqueta="De días anteriores" valor={resultado.datos.deOtrosDias} />

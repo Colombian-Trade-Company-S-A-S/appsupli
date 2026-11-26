@@ -413,7 +413,10 @@ interface FaltantesReporte {
 /** Los productos que se crearon con los datos del mismo reporte. */
 interface CreadosReporte {
   productosCreados: number;
+  puntosCreados: number;
   marcasCreadas: string[];
+  /** Filas de Falabella.com: no entran. */
+  deFalabellaCom: number;
 }
 
 /** Lo que devuelve el reporte «Ventas diarias» de Falabella cuando carga. */
@@ -481,6 +484,8 @@ export interface CanalReporte {
 /** Lo que trae el reporte de ventas de HC, antes de cargar: para elegir canales. */
 export interface LecturaReporteHc {
   canales: CanalReporte[];
+  /** Lo que trae de Venta Distancia (tienda 7703670900993 o sin EAN de tienda). */
+  ventaDistancia: { ventas: number; unidades: number };
   dias: string[];
   filasLeidas: number;
 }
@@ -508,6 +513,9 @@ export interface ResultadoReporteVentasHc extends CruceReporteHc, CatalogoCreado
   canales: string[];
   filasLeidas: number;
   fueraDeCanal: number;
+  incluyeVentaDistancia: boolean;
+  /** Filas de Venta Distancia que no entraron porque no se pidió cargarlas. */
+  deVentaDistancia: number;
   creadas: number;
   unidades: number;
   eliminadas: number;
@@ -535,6 +543,8 @@ export interface OpcionesReporte {
   productos?: DecisionProductos;
   /** Solo ventas HC: los canales que entran. Vacío, todos. */
   canales?: string[];
+  /** Solo ventas HC: cargar también Venta Distancia, que por defecto no entra. */
+  incluirVentaDistancia?: boolean;
 }
 
 /**
@@ -1228,13 +1238,14 @@ export const biTradeApiHc = {
 async function subirReporte<T>(
   ruta: string,
   archivo: File,
-  { sobrescribir, productos, canales }: OpcionesReporte = {},
+  { sobrescribir, productos, canales, incluirVentaDistancia }: OpcionesReporte = {},
 ): Promise<RespuestaReporte<T>> {
   const cuerpo = new FormData();
   cuerpo.append('archivo', archivo);
   if (sobrescribir) cuerpo.append('modo', 'sobrescribir');
   if (productos) cuerpo.append('productos', productos);
   for (const canal of canales ?? []) cuerpo.append('canales', canal);
+  if (incluirVentaDistancia) cuerpo.append('incluir_venta_distancia', '1');
   try {
     const { data } = await httpClient.post<T>(`${RUTA}${ruta}`, cuerpo, {
       headers: { 'Content-Type': undefined },

@@ -230,8 +230,12 @@ def leer_query_ventas(archivo) -> LecturaVentasQuery:
 #   · `Desc. SKU`            → nombre, en nombre propio y sin los asteriscos
 #   · `Marca`                → marca
 #   · `Ventas Precio Proveedor` ÷ `Unidades Vendidas` → precio Coltrade y HC.
-#     El valor es el de toda la fila: se lleva a una unidad, de la venta más
-#     reciente del producto.
+#     El valor es el de toda la fila: se suma el de todas las ventas del
+#     producto que entran y se divide por sus unidades. Con ese promedio, lo
+#     que muestra el tablero (unidades × precio) cuadra con el archivo.
+#
+# Venta Distancia —la tienda `TIENDA_SIN_EAN`, a la que también van las filas
+# sin `EAN Tienda`— no entra por defecto: se carga solo si se pide.
 
 COLUMNA_CANAL = 'Canal'
 COLUMNA_NOMBRE_TIENDA = 'Nombre Tienda'
@@ -287,6 +291,8 @@ class SeleccionVentas:
     sin_tienda: int = 0
     #: Filas de canales que no se eligieron.
     fuera_de_canal: int = 0
+    #: Filas de Venta Distancia, de los canales elegidos, que no se pidió cargar.
+    de_venta_distancia: int = 0
     #: sku → producto, de las ventas que entran.
     productos: dict[str, ProductoHcDelReporte] = field(default_factory=dict)
     #: EAN de tienda → nombre, de las ventas que entran.
@@ -354,6 +360,21 @@ def leer_reporte_ventas(archivo) -> list[FilaReporteVentas]:
     return leidas
 
 
+def es_venta_distancia(fila: FilaReporteVentas) -> bool:
+    """La tienda de Venta Distancia, o una fila sin tienda, que va a parar ahí."""
+    return (
+        not fila.tienda
+        or fila.tienda == TIENDA_SIN_EAN
+        or 'distancia' in fila.nombre_tienda.casefold()
+    )
+
+
+def venta_distancia_del_reporte(filas: list[FilaReporteVentas]) -> dict:
+    """Cuánto trae el archivo de Venta Distancia, para decirlo junto al interruptor."""
+    de_vd = [f for f in filas if f.unidades >= 1 and es_venta_distancia(f)]
+    return {'ventas': len(de_vd), 'unidades': sum(f.unidades for f in de_vd)}
+
+
 def canales_del_reporte(filas: list[FilaReporteVentas]) -> list[dict]:
     """Los canales del archivo con lo que traen para cargar: ventas de 1 unidad o más."""
     ventas, unidades = Counter(), Counter()
@@ -369,18 +390,24 @@ def canales_del_reporte(filas: list[FilaReporteVentas]) -> list[dict]:
 
 
 def seleccionar_ventas(
-    filas: list[FilaReporteVentas], canales: set[str] | None = None
+    filas: list[FilaReporteVentas],
+    canales: set[str] | None = None,
+    incluir_venta_distancia: bool = False,
 ) -> SeleccionVentas:
     """
     Las ventas de los canales elegidos (todos si `canales` va vacío), solo las
-    de 1 unidad o más, con los productos y tiendas que traen.
+    de 1 unidad o más, con los productos y tiendas que traen. Venta Distancia
+    queda fuera salvo que se pida.
     """
     seleccion = SeleccionVentas()
-    # sku → (fecha más reciente, valores unitarios de ese día)
-    valores: dict[str, tuple[date, list[float]]] = {}
+    # sku → [valor total, unidades] de las ventas que entran: el precio es el promedio.
+    valores: dict[str, list[float]] = {}
     for fila in filas:
         if canales and fila.canal not in canales:
             seleccion.fuera_de_canal += 1
+            continue
+        if not incluir_venta_distancia and es_venta_distancia(fila):
+            seleccion.de_venta_distancia += 1
             continue
         seleccion.filas_leidas += 1
         if fila.unidades < 1:
@@ -404,15 +431,12 @@ def seleccionar_ventas(
         )
         if fila.valor is None or fila.valor < 0:
             continue
-        unitario = fila.valor / fila.unidades
-        anterior = valores.get(fila.sku)
-        if anterior is None or fila.fecha > anterior[0]:
-            valores[fila.sku] = (fila.fecha, [unitario])
-        elif fila.fecha == anterior[0]:
-            anterior[1].append(unitario)
+        acumulado = valores.setdefault(fila.sku, [0.0, 0.0])
+        acumulado[0] += fila.valor
+        acumulado[1] += fila.unidades
 
-    for sku, (_dia, unitarios) in valores.items():
-        seleccion.productos[sku].precio = round(sum(unitarios) / len(unitarios))
+    for sku, (valor, unidades) in valores.items():
+        seleccion.productos[sku].precio = round(valor / unidades)
     return seleccion
 
 
