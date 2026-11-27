@@ -6,6 +6,7 @@ import { PublicLayout } from '@/app/layouts/PublicLayout';
 import { EsqueletoPagina, FullPageLoader } from '@/shared/components/feedback';
 import { PublicOnly } from './PublicOnly';
 import { RequireAdmin } from './RequireAdmin';
+import { RequireAdminDuranteMantenimiento } from './RequireAdminDuranteMantenimiento';
 import { RequireApp } from './RequireApp';
 import { RequireAuth } from './RequireAuth';
 import { RequirePermiso } from './RequirePermiso';
@@ -163,7 +164,11 @@ const routes: RouteObject[] = [
     children: [
       {
         path: 'inicio',
-        element: <AppLayout />,
+        element: (
+          <RequireAdminDuranteMantenimiento>
+            <AppLayout />
+          </RequireAdminDuranteMantenimiento>
+        ),
         children: [
           { index: true, element: withSuspense(<HomePage />) },
           { path: 'perfil', element: withSuspense(<ProfilePage />) },
@@ -340,7 +345,11 @@ const routes: RouteObject[] = [
   // layout les da una fuente de datos pública y de solo lectura.
   {
     path: 'tablero/:token',
-    element: withSuspense(<TableroPublicoLayout />),
+    element: (
+      <RequireAdminDuranteMantenimiento>
+        {withSuspense(<TableroPublicoLayout />)}
+      </RequireAdminDuranteMantenimiento>
+    ),
     children: [
       { index: true, element: <ClaroDashboardPage /> },
       { path: 'dia', element: <CumplimientoDiarioPage /> },
@@ -356,11 +365,19 @@ const routes: RouteObject[] = [
   // formulario de un plan sin cuenta. No ve los registros cargados ni los tableros.
   {
     path: 'formulario/:token',
-    element: withSuspense(<FormularioPublico />),
+    element: (
+      <RequireAdminDuranteMantenimiento>
+        {withSuspense(<FormularioPublico />)}
+      </RequireAdminDuranteMantenimiento>
+    ),
   },
   {
     path: 'formulario/belkin/:token',
-    element: withSuspense(<FormularioPublicoBelkin />),
+    element: (
+      <RequireAdminDuranteMantenimiento>
+        {withSuspense(<FormularioPublicoBelkin />)}
+      </RequireAdminDuranteMantenimiento>
+    ),
   },
 
   { path: '*', element: <Navigate to="/" replace /> },
