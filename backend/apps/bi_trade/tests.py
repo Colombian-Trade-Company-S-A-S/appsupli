@@ -55,6 +55,8 @@ from apps.bi_trade.models import (
     VentaHc,
     VentaTmk,
 )
+from apps.bi_trade.permisos import CATALOGO as CATALOGO_BI
+from apps.bi_trade.permisos import INFORMES as INFORMES_BI
 from apps.bi_trade.tickets import calcular_tickets, participa
 
 pytestmark = pytest.mark.django_db
@@ -87,16 +89,31 @@ def con_metas(*meses: tuple[int, int]) -> None:
 
 @pytest.fixture
 def app_bi_trade():
+    """La app con todo su catálogo de permisos: cada informe con los suyos adentro."""
     app = Application.objects.create(
         code='bi-trade', name='BI Trade Marketing', base_path='/inicio/bi-trade', order=200
     )
-    Permission.objects.create(
-        code='bi-trade:data:manage', name='Editar datos', application=app
-    )
+    creados = {}
+    for permiso in CATALOGO_BI:
+        creados[permiso.code] = Permission.objects.create(
+            code=permiso.code,
+            name=permiso.name,
+            application=app,
+            group=permiso.group,
+            parent=creados.get(permiso.parent),
+        )
     return app
 
 
-def crear_usuario(email, app=None, permisos=()):
+#: El administrador de BI Trade: edita y comparte todo. El editor de las pruebas de enlaces.
+EDITA_Y_COMPARTE = ['bi-trade:data:manage']
+
+
+def crear_usuario(email, app=None, permisos=(), informes=None):
+    """
+    Un usuario de prueba. Con la app de BI Trade ve todos los informes, salvo
+    que `informes` diga cuáles (`['hc']`, o `[]` para ninguno).
+    """
     usuario = User.objects.create_user(
         email=email,
         username=email.split('@')[0],
@@ -105,6 +122,10 @@ def crear_usuario(email, app=None, permisos=()):
     )
     if app:
         usuario.applications.add(app)
+        if app.code == 'bi-trade':
+            elegidos = INFORMES_BI if informes is None else informes
+            codigos = [INFORMES_BI[informe] for informe in elegidos]
+            usuario.extra_permissions.add(*Permission.objects.filter(code__in=codigos))
     if permisos:
         rol = Role.objects.create(code=f'rol-{usuario.pk}', name='rol')
         rol.permissions.set(Permission.objects.filter(code__in=permisos))
@@ -1580,7 +1601,9 @@ def _importar(cliente, filas, anio=2026, mes=3, modo='completar', **extra):
 @pytest.fixture
 def editor(app_bi_trade):
     return cliente_de(
-        crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+        crear_usuario(
+            'editor@supli.tech', app_bi_trade, EDITA_Y_COMPARTE
+        )
     )
 
 
@@ -2569,7 +2592,7 @@ def enlace(app_bi_trade):
     prueba que agota los intentos dejaría bloqueadas a las siguientes.
     """
     cache.clear()
-    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     datos = cliente_de(editor).post(
         '/api/bi-trade/enlaces', {'nombre': 'Gerencia Claro'}, format='json'
     ).json()
@@ -2606,7 +2629,7 @@ def test_la_clave_se_muestra_una_vez_y_se_guarda_como_hash(app_bi_trade, enlace)
     assert clave.replace('-', '') not in guardado.clave_hash
     assert check_password(clave.replace('-', ''), guardado.clave_hash)
 
-    editor = crear_usuario('otro@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('otro@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     listado = cliente_de(editor).get('/api/bi-trade/enlaces').json()
     assert 'clave' not in listado[0]
     assert 'claveHash' not in listado[0]
@@ -2620,7 +2643,7 @@ def test_la_clave_tiene_tres_bloques_sin_caracteres_ambiguos(enlace):
 
 
 def test_dos_enlaces_no_comparten_token_ni_clave(app_bi_trade, enlace):
-    editor = crear_usuario('otro@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('otro@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     otro = cliente_de(editor).post(
         '/api/bi-trade/enlaces', {'nombre': 'Otro'}, format='json'
     ).json()
@@ -2733,7 +2756,7 @@ def test_los_catalogos_publicos_no_llevan_precios(enlace, catalogo):
 
 def test_el_acceso_de_un_enlace_no_abre_otro(app_bi_trade, enlace):
     token, clave, _id = enlace
-    editor = crear_usuario('otro@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('otro@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     otro = cliente_de(editor).post(
         '/api/bi-trade/enlaces', {'nombre': 'Otro'}, format='json'
     ).json()
@@ -2760,7 +2783,7 @@ def test_un_acceso_vencido_vuelve_a_pedir_la_clave(enlace, monkeypatch):
 def test_regenerar_la_clave_invalida_los_accesos_abiertos(app_bi_trade, enlace):
     token, clave_vieja, id_enlace = enlace
     cliente = _con_acceso(token, clave_vieja)
-    editor = crear_usuario('otro@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('otro@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
 
     nueva = cliente_de(editor).post(f'/api/bi-trade/enlaces/{id_enlace}/regenerar-clave').json()
 
@@ -2774,7 +2797,7 @@ def test_regenerar_la_clave_invalida_los_accesos_abiertos(app_bi_trade, enlace):
 def test_un_enlace_revocado_no_abre_aunque_el_acceso_siga_firmado(app_bi_trade, enlace):
     token, clave, id_enlace = enlace
     cliente = _con_acceso(token, clave)
-    editor = crear_usuario('otro@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('otro@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
 
     cliente_de(editor).patch(f'/api/bi-trade/enlaces/{id_enlace}', {'activo': False}, format='json')
 
@@ -2797,7 +2820,7 @@ def test_un_enlace_vencido_no_abre(enlace):
 
 
 def test_no_se_crea_un_enlace_ya_vencido(app_bi_trade):
-    editor = crear_usuario('editor@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('editor@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     respuesta = cliente_de(editor).post(
         '/api/bi-trade/enlaces',
         {'nombre': 'Viejo', 'expira': (timezone.now() - timedelta(days=1)).isoformat()},
@@ -2857,7 +2880,7 @@ def test_el_acceso_publico_no_sirve_en_la_api_de_la_app(enlace):
 
 def test_eliminar_un_enlace(app_bi_trade, enlace):
     token, clave, id_enlace = enlace
-    editor = crear_usuario('otro@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('otro@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
 
     assert cliente_de(editor).delete(f'/api/bi-trade/enlaces/{id_enlace}').status_code == 204
     assert not EnlacePublico.objects.filter(pk=id_enlace).exists()
@@ -2974,7 +2997,9 @@ def _venta_hc(punto, producto, unidades, fecha=date(2026, 3, 4)):
 
 
 def _editor(app):
-    return cliente_de(crear_usuario('editor@supli.tech', app, ['bi-trade:data:manage']))
+    return cliente_de(
+        crear_usuario('editor@supli.tech', app, EDITA_Y_COMPARTE)
+    )
 
 
 def _xlsx(encabezados, filas):
@@ -5141,7 +5166,7 @@ RUTA_FORMULARIO = '/api/publico/formulario'
 @pytest.fixture
 def enlace_formulario(app_bi_trade):
     """Un enlace del formulario del plan: solo el token, no tiene contraseña."""
-    editor = crear_usuario('editor-form@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('editor-form@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     datos = (
         cliente_de(editor)
         .post(
@@ -5223,7 +5248,7 @@ def test_un_formulario_revocado_deja_de_recibir(
 ):
     norte, _sur, producto = catalogo_partners
     token = enlace_formulario
-    editor = crear_usuario('revoca@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('revoca@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     id_enlace = EnlacePublico.objects.get(token=token).pk
     cliente_de(editor).patch(
         f'/api/bi-trade/enlaces/{id_enlace}', {'activo': False}, format='json'
@@ -5241,7 +5266,7 @@ def test_un_formulario_revocado_deja_de_recibir(
 
 
 def test_el_formulario_no_tiene_contrasena_que_regenerar(app_bi_trade, enlace_formulario):
-    editor = crear_usuario('regenera@supli.tech', app_bi_trade, ['bi-trade:data:manage'])
+    editor = crear_usuario('regenera@supli.tech', app_bi_trade, EDITA_Y_COMPARTE)
     id_enlace = EnlacePublico.objects.get(token=enlace_formulario).pk
 
     respuesta = cliente_de(editor).post(f'/api/bi-trade/enlaces/{id_enlace}/regenerar-clave')
@@ -5962,3 +5987,154 @@ def test_en_la_regional_lo_que_falta_se_reparte_en_todos_los_dias(
 def test_una_regional_que_no_existe_es_404(app_bi_trade, catalogo):
     lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
     assert lector.get('/api/bi-trade/regional-detalle?regional=Marte').status_code == 404
+
+
+# ── Permisos de BI Trade: informes, módulos y compartir ────────────────────
+
+
+def test_solo_ve_los_informes_que_tiene(app_bi_trade, catalogo_hc):
+    cliente = cliente_de(crear_usuario('hc@supli.tech', app_bi_trade, informes=['hc']))
+
+    assert cliente.get('/api/bi-trade/hc/avance-mensual?anio=2026&mes=3').status_code == 200
+    assert cliente.get('/api/bi-trade/hc/ventas').status_code == 200
+    # Los demás informes, no: Claro (sin tramo), Falabella, Tmk, los planes.
+    for ruta in (
+        '/api/bi-trade/avance-mensual?anio=2026&mes=3',
+        '/api/bi-trade/ventas',
+        '/api/bi-trade/falabella/opciones',
+        '/api/bi-trade/tmk/ventas',
+        '/api/bi-trade/partners/dashboard',
+        '/api/bi-trade/belkin/opciones',
+    ):
+        respuesta = cliente.get(ruta)
+        assert respuesta.status_code == 403, ruta
+        assert 'informe' in respuesta.json()['message'], ruta
+    # Lo que comparten todos los informes sí: la lista de marcas.
+    assert cliente.get('/api/bi-trade/marcas').status_code == 200
+
+
+def test_con_la_app_pero_sin_informes_no_ve_nada(app_bi_trade):
+    cliente = cliente_de(crear_usuario('nada@supli.tech', app_bi_trade, informes=[]))
+    assert cliente.get('/api/bi-trade/hc/ventas').status_code == 403
+    assert cliente.get('/api/bi-trade/ventas').status_code == 403
+
+
+def test_edita_solo_el_modulo_que_tiene_en_ese_informe(app_bi_trade, catalogo_hc):
+    marca('Black+Decker')
+    cliente = cliente_de(
+        crear_usuario(
+            'ventas@supli.tech',
+            app_bi_trade,
+            ['bi-trade:hc:ventas:editar'],
+            informes=['hc', 'claro'],
+        )
+    )
+    venta = cliente.post(
+        '/api/bi-trade/hc/ventas',
+        {'idProducto': 'HCP-001', 'idPuntoVenta': 'HC-101', 'fechaVenta': '2026-03-04',
+         'cantidadVendida': 2},
+        format='json',
+    )
+    assert venta.status_code == 201, venta.json()
+
+    producto = cliente.post(
+        '/api/bi-trade/hc/productos',
+        {'idProducto': 'HCP-900', 'nombreProducto': 'Taladro', 'marca': 'Black+Decker'},
+        format='json',
+    )
+    assert producto.status_code == 403
+    assert cliente.post('/api/bi-trade/hc/inventario', {}, format='json').status_code == 403
+    assert cliente.delete('/api/bi-trade/hc/metas/eliminar-todos').status_code == 403
+    # Las ventas de HC no abren las de Claro, aunque vea ese informe.
+    assert cliente.get('/api/bi-trade/ventas').status_code == 200
+    assert cliente.post('/api/bi-trade/ventas', {}, format='json').status_code == 403
+
+
+def test_un_permiso_de_un_informe_no_vale_sin_ver_el_informe(app_bi_trade, catalogo_hc):
+    cliente = cliente_de(
+        crear_usuario(
+            'sin-hc@supli.tech', app_bi_trade, ['bi-trade:hc:ventas:editar'], informes=['claro']
+        )
+    )
+    assert cliente.post('/api/bi-trade/hc/ventas', {}, format='json').status_code == 403
+
+
+def test_el_administrador_de_bi_trade_tiene_todo(app_bi_trade, catalogo_hc):
+    cliente = cliente_de(
+        crear_usuario('todo@supli.tech', app_bi_trade, ['bi-trade:data:manage'], informes=[])
+    )
+    # Ve los informes aunque no tenga ninguno marcado, edita y comparte.
+    assert cliente.get('/api/bi-trade/hc/ventas').status_code == 200
+    respuesta = cliente.post(
+        '/api/bi-trade/hc/puntos-venta',
+        {'idPuntoVenta': 'HC-900', 'nombrePdv': 'Homecenter Prueba'},
+        format='json',
+    )
+    assert respuesta.status_code == 201, respuesta.json()
+    assert cliente.get('/api/bi-trade/enlaces').status_code == 200
+
+
+def test_las_marcas_las_edita_quien_edita_productos_en_algun_informe(app_bi_trade):
+    con_productos = cliente_de(
+        crear_usuario(
+            'productos@supli.tech',
+            app_bi_trade,
+            ['bi-trade:falabella:productos:editar'],
+            informes=['falabella'],
+        )
+    )
+    creada = con_productos.post('/api/bi-trade/marcas', {'nombre': 'Belkin'}, format='json')
+    assert creada.status_code == 201, creada.json()
+
+    sin_productos = cliente_de(
+        crear_usuario(
+            'solo-ventas@supli.tech', app_bi_trade, ['bi-trade:falabella:ventas:editar']
+        )
+    )
+    assert (
+        sin_productos.post('/api/bi-trade/marcas', {'nombre': 'Otra'}, format='json').status_code
+        == 403
+    )
+
+
+def test_compartir_va_por_informe(app_bi_trade, catalogo_hc):
+    sin_permiso = cliente_de(
+        crear_usuario('editor-sin@supli.tech', app_bi_trade, ['bi-trade:hc:ventas:editar'])
+    )
+    assert sin_permiso.get('/api/bi-trade/enlaces').status_code == 403
+
+    # Ve Claro y HC, pero solo comparte HC.
+    cliente = cliente_de(
+        crear_usuario(
+            'comparte@supli.tech', app_bi_trade, ['bi-trade:hc:compartir'], informes=['hc', 'claro']
+        )
+    )
+    de_hc = cliente.post(
+        '/api/bi-trade/enlaces', {'nombre': 'Gerencia HC', 'canal': 'hc'}, format='json'
+    )
+    assert de_hc.status_code == 201, de_hc.json()
+    de_claro = cliente.post(
+        '/api/bi-trade/enlaces', {'nombre': 'Gerencia Claro', 'canal': 'claro'}, format='json'
+    )
+    assert de_claro.status_code == 403
+    assert [e['nombre'] for e in cliente.get('/api/bi-trade/enlaces').json()] == ['Gerencia HC']
+
+
+def test_crear_productos_al_importar_pide_editar_productos(app_bi_trade):
+    PuntoVentaHc.objects.create(id_punto_venta='7703670900177', nombre_pdv='Neiva')
+    PuntoVentaHc.objects.create(id_punto_venta='7703670900306', nombre_pdv='Cali Sur')
+    cliente = cliente_de(
+        crear_usuario('solo-ventas@supli.tech', app_bi_trade, ['bi-trade:hc:ventas:editar'])
+    )
+
+    def subir(**extra):
+        return cliente.post(
+            RUTA_REPORTE_VENTAS_HC, {'archivo': _reporte_ventas_hc(), **extra}, format='multipart'
+        )
+
+    creando = subir(productos='crear')
+    assert creando.status_code == 403
+    assert 'productos' in creando.json()['message']
+    assert not ProductoHc.objects.exists()
+    # Sin crearlos sí: las ventas de productos que no existen quedan fuera.
+    assert subir(productos='omitir').status_code == 400

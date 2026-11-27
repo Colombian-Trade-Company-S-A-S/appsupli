@@ -66,6 +66,7 @@ class PrecioViewSet(BiTradeViewSet):
     archivo ni de lo que ya estaba—. Si alguno se pisa no se guarda nada.
     """
 
+    modulo_edicion = 'productos'
     canal = CLARO
     queryset = PrecioProducto.objects.select_related('id_producto').order_by(
         'id_producto__nombre_producto', '-desde'

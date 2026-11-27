@@ -49,7 +49,7 @@ import {
 } from '@/shared/components/ui';
 import { Encabezado, Kpi } from '@/shared/components/layout';
 import { formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
-import { useAuth } from '@/core/auth';
+import { usePermisosBi } from '../permisos';
 import { partnersTableroApi, type FiltrosPartners, type ResultadoMetas } from '../api';
 import { CampoSelect } from '../components/CampoSelect';
 import { LISTAS_PARTNERS, ORDEN_LISTAS_PARTNERS } from '../listasPartners';
@@ -72,8 +72,6 @@ const configuracionDia = {
   unidades: { label: 'Registradas', color: 'var(--chart-1)' },
 } satisfies ChartConfig;
 
-const PERMISO = 'bi-trade:data:manage';
-
 // El mes de arranque del tablero. Fuera del render: si se calculara adentro,
 // sería un objeto nuevo en cada pasada y los `useMemo` se recalcularían siempre.
 const ANIO_ACTUAL = new Date().getFullYear();
@@ -87,8 +85,7 @@ const MES_ACTUAL = new Date().getMonth() + 1;
  * regional, punto de venta y promotor. Las metas se suben con el Excel mensual.
  */
 export default function PlanPartnersPage() {
-  const { user } = useAuth();
-  const puedeAdministrar = !!user?.isAdmin || !!user?.permissions.includes(PERMISO);
+  const puedeAdministrar = usePermisosBi().editar('partners', 'plan');
   const [filtros, setFiltros] = useState<FiltrosPartners>({
     anio: ANIO_ACTUAL,
     mes: MES_ACTUAL,

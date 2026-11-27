@@ -22,8 +22,8 @@ export const AYUDA_APPS: Record<string, Ayuda> = {
   },
   'bi-trade': {
     texto:
-      'Los tableros de ventas de los canales (Claro, Homecenter, Falabella y Tmk): cuánto se ha vendido contra la meta del mes, por regional y por punto de venta.',
-    ojo: 'Con esto solo consulta. Para cargar o corregir datos necesita además un rol con el permiso de editar datos de BI Trade.',
+      'Los tableros de ventas de los canales (Claro, Homecenter, Falabella y Tmk) y de los planes Partners y Belkin: cuánto se ha vendido contra la meta del mes, por regional y por punto de venta.',
+    ojo: 'Dentro, marca cada informe que ve y, en cada uno, qué puede cargar, editar o compartir en ese informe y en ningún otro. «Administrador de BI Trade» da todo. Sin ningún informe, entra pero no ve nada.',
   },
   'supli-performance': {
     texto:
@@ -99,11 +99,6 @@ export const AYUDA_PERMISOS: Record<string, Ayuda> = {
     ojo: ADMIN_SIN_EFECTO,
   },
   'admin:roles:manage': { texto: 'Crear y editar roles.', ojo: ADMIN_SIN_EFECTO },
-
-  'bi-trade:data:manage': {
-    texto:
-      'Cargar y corregir los datos de BI Trade: puntos de venta, productos, ventas y metas. Sin este permiso, la persona solo mira los tableros.',
-  },
 
   'performance:objetivos:manage_all': {
     texto:

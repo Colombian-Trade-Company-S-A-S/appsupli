@@ -38,6 +38,7 @@ import type {
   ResultadoReporteVentasHc,
 } from '../api';
 import type { ImportadorHc } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import { biTradeKeys, mensajeDeError } from '../hooks';
 import { Bloque, Renglon } from './ImportarInforme';
 import { Faltantes, fechaCorta } from './ImportarQuery';
@@ -81,7 +82,10 @@ const DESCRIPCION: Record<Reporte, string> = {
 export function ImportarHc({ importar }: { importar: ImportadorHc }) {
   const queryClient = useQueryClient();
   const [abierto, setAbierto] = useState(false);
-  const [reporte, setReporte] = useState<Reporte>('ventas');
+  const puedeVentas = usePuedeEditar('ventas');
+  const puedeInventario = usePuedeEditar('inventario');
+  // Cada reporte pide su permiso: arranca en el que la persona sí puede cargar.
+  const [reporte, setReporte] = useState<Reporte>(puedeVentas ? 'ventas' : 'inventario');
   const [archivo, setArchivo] = useState<File | null>(null);
   const [lectura, setLectura] = useState<LecturaReporteHc | null>(null);
   const [canales, setCanales] = useState<string[]>([]);
@@ -246,8 +250,12 @@ export function ImportarHc({ importar }: { importar: ImportadorHc }) {
                     onValueChange={(v) => v[0] && elegirReporte(v[0] as Reporte)}
                     variant="outline"
                   >
-                    <ToggleGroupItem value="ventas">Ventas</ToggleGroupItem>
-                    <ToggleGroupItem value="inventario">Inventario</ToggleGroupItem>
+                    <ToggleGroupItem value="ventas" disabled={!puedeVentas}>
+                      Ventas
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="inventario" disabled={!puedeInventario}>
+                      Inventario
+                    </ToggleGroupItem>
                   </ToggleGroup>
                 </Field>
 

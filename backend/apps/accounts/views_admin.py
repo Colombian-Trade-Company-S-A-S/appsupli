@@ -1,5 +1,5 @@
 """Módulo de Administración: gestión de usuarios, áreas, apps, permisos y roles."""
-from django.db.models import Count
+from django.db.models import Count, Prefetch
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed
@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from .api_permissions import IsPlatformAdmin
 from .models import Application, Area, Permission, Role, User
 from .serializers_admin import (
+    AdminUserListaSerializer,
     AdminUserSerializer,
     ApplicationSerializer,
     AreaSerializer,
@@ -41,7 +42,10 @@ class AreaViewSet(viewsets.ReadOnlyModelViewSet):
 class ApplicationViewSet(AdminViewSet):
     queryset = (
         Application.objects.annotate(conteo_usuarios=_CONTEO_USUARIOS)
-        .prefetch_related('permissions')
+        # Cada permiso trae el nombre de su permiso de afuera: en la misma consulta.
+        .prefetch_related(
+            Prefetch('permissions', queryset=Permission.objects.select_related('parent'))
+        )
         .order_by('order', 'name')
     )
     serializer_class = ApplicationSerializer
@@ -50,7 +54,7 @@ class ApplicationViewSet(AdminViewSet):
 
 
 class PermissionViewSet(AdminViewSet):
-    queryset = Permission.objects.select_related('application').order_by('code')
+    queryset = Permission.objects.select_related('application', 'parent').order_by('code')
     serializer_class = PermissionSerializer
     search_fields = ('code', 'name')
     filterset_fields = ('application',)
@@ -68,13 +72,13 @@ class RoleViewSet(AdminViewSet):
 
 
 class UserViewSet(AdminViewSet):
-    # `extra_permissions` también va precargado: el serializer lo devuelve y,
-    # sin esto, cada usuario del listado (hasta 200) era una consulta más.
-    # La foto no se trae: el listado solo necesita saber si hay (su fecha).
+    # La foto no se trae —tampoco la del jefe, que viene con `select_related`—:
+    # basta su fecha para armar la dirección. Antes cada fila traía la imagen
+    # del jefe y un listado de 70 personas tardaba 3 s contra Render.
     queryset = (
         User.objects.select_related('area', 'manager', 'departamento__padre__padre')
         .prefetch_related('applications', 'roles', 'extra_permissions')
-        .defer('foto')
+        .defer('foto', 'manager__foto')
     )
     serializer_class = AdminUserSerializer
     search_fields = ('first_name', 'last_name', 'email', 'username', 'position')
@@ -86,6 +90,25 @@ class UserViewSet(AdminViewSet):
     # Ni se crean ni se borran aquí: las personas entran y salen con la
     # sincronización de Odoo. Queda editar sus accesos y activar/inactivar.
     http_method_names = ['get', 'patch', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        """
+        El listado lee solo las columnas que muestra y precarga solo las apps:
+        tres consultas (el conteo, las filas y sus apps) para cualquier número
+        de personas. El detalle y la edición traen todo.
+        """
+        if self.action != 'list':
+            return super().get_queryset()
+        return (
+            User.objects.select_related('area', 'manager')
+            .only(*AdminUserListaSerializer.COLUMNAS)
+            .prefetch_related(
+                Prefetch('applications', queryset=Application.objects.only('id', 'name'))
+            )
+        )
+
+    def get_serializer_class(self):
+        return AdminUserListaSerializer if self.action == 'list' else AdminUserSerializer
 
     def create(self, request, *args, **kwargs):
         raise MethodNotAllowed(

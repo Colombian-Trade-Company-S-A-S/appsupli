@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { Badge } from '@/shared/components/ui';
 import { formatoMoneda } from '@/shared/lib/formato';
-import { useAuth } from '@/core/auth';
+import { usePermisosBi } from '../permisos';
 import {
   partnersApi,
   type ProductoPartner,
@@ -234,8 +234,7 @@ const PANTALLAS: Record<ListaPartners, (props: { puedeAdministrar: boolean }) =>
 /** El CRUD de una lista del plan Partners; la lista sale de la URL. */
 export default function PlanPartnersListaPage() {
   const { lista: ruta } = useParams();
-  const { user } = useAuth();
-  const puedeAdministrar = !!user?.isAdmin || !!user?.permissions.includes('bi-trade:data:manage');
+  const puedeAdministrar = usePermisosBi().editar('partners', 'plan');
   const lista = listaPartnersDeRuta(ruta);
 
   if (!lista) return <Navigate to={PLAN} replace />;

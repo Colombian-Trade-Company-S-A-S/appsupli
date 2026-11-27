@@ -125,11 +125,29 @@ class Permission(TimeStampedModel):
     )
     code = models.CharField('código', max_length=120, unique=True)
     name = models.CharField('nombre', max_length=150)
+    # Para quien reparte accesos sin saber de código: qué puede hacer la
+    # persona con este permiso, en sus palabras. Se ve al editar un usuario.
+    description = models.TextField('qué permite', blank=True)
+    # Cómo se agrupan dentro de la app al editar un usuario: «Informes que puede
+    # ver», «Qué puede cargar y editar»… Vacío, van sueltos.
+    group = models.CharField('grupo', max_length=80, blank=True)
+    order = models.PositiveIntegerField('orden', default=100)
+    # Un permiso que solo tiene sentido con otro: en BI Trade, «cargar ventas de
+    # HC» va dentro de «ver el informe de HC». Al editar un usuario se muestra
+    # adentro del otro, y quitar el de afuera quita también los de adentro.
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='hijos',
+        verbose_name='va dentro de',
+    )
 
     class Meta:
         verbose_name = 'permiso'
         verbose_name_plural = 'permisos'
-        ordering = ('application__order', 'code')
+        ordering = ('application__order', 'order', 'code')
 
     def __str__(self) -> str:
         return self.code

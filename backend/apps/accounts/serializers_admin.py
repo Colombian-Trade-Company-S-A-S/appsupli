@@ -33,10 +33,24 @@ class AreaSerializer(serializers.ModelSerializer):
 
 class PermissionSerializer(serializers.ModelSerializer):
     application_name = serializers.CharField(source='application.name', read_only=True)
+    # En las listas planas (roles, detalle del usuario) los de adentro se
+    # nombran con su permiso de afuera: «Informe de Ventas HC › Cargar ventas».
+    parent_name = serializers.CharField(source='parent.name', read_only=True, default='')
 
     class Meta:
         model = Permission
-        fields = ('id', 'code', 'name', 'application', 'application_name')
+        fields = (
+            'id',
+            'code',
+            'name',
+            'description',
+            'group',
+            'order',
+            'parent',
+            'parent_name',
+            'application',
+            'application_name',
+        )
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
@@ -80,6 +94,67 @@ class RoleSerializer(serializers.ModelSerializer):
             'permission_codes',
             'user_count',
         )
+
+
+class AdminUserListaSerializer(serializers.ModelSerializer):
+    """
+    Una fila del listado de usuarios: solo lo que muestran la tabla y el
+    «equipo a cargo». Los roles y permisos sueltos van en el detalle, que es
+    donde se ven y se editan; aquí costarían dos consultas más por listado.
+
+    Solo lectura: se edita con `AdminUserSerializer`.
+    """
+
+    full_name = serializers.CharField(read_only=True)
+    is_admin = serializers.BooleanField(read_only=True)
+    puede_iniciar_sesion = serializers.BooleanField(read_only=True)
+    area_name = serializers.CharField(source='area.name', read_only=True, default='')
+    manager_name = serializers.CharField(source='manager.full_name', read_only=True, default='')
+    application_names = serializers.SlugRelatedField(
+        source='applications', slug_field='name', many=True, read_only=True
+    )
+    foto = serializers.SerializerMethodField()
+    destacado = serializers.SerializerMethodField()
+
+    #: Las columnas que lee: con `only()` no viaja nada más (ni la foto).
+    COLUMNAS = (
+        'id', 'email', 'username', 'first_name', 'last_name', 'position', 'kind', 'is_active',
+        'is_superuser', 'last_login_at', 'foto_actualizada_at', 'area', 'area__name', 'manager',
+        'manager__first_name', 'manager__last_name',
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            'id',
+            'email',
+            'username',
+            'first_name',
+            'last_name',
+            'full_name',
+            'foto',
+            'destacado',
+            'area',
+            'area_name',
+            'position',
+            'kind',
+            'manager',
+            'manager_name',
+            'is_active',
+            'is_admin',
+            'puede_iniciar_sesion',
+            'last_login_at',
+            'application_names',
+        )
+        read_only_fields = fields
+
+    def get_foto(self, usuario: User) -> str | None:
+        from .fotos import ruta_de_foto  # noqa: PLC0415 — fotos importa los serializers
+
+        return ruta_de_foto(usuario)
+
+    def get_destacado(self, usuario: User) -> bool:
+        return (usuario.email or '').lower() in settings.USUARIOS_DESTACADOS
 
 
 class AdminUserSerializer(serializers.ModelSerializer):

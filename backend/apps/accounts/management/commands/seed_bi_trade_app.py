@@ -4,15 +4,17 @@ Crea la aplicación de BI Trade Marketing.
     python manage.py seed_bi_trade_app
     python manage.py seed_bi_trade_app --todos
 
-Crea la aplicación y su permiso de escritura. Consultar los tableros solo
-exige tener la app; crear, editar o borrar puntos de venta, productos y ventas
-exige además `bi-trade:data:manage`, que se reparte con roles desde
-Administración.
+Crea la aplicación y sus permisos (ver `apps.bi_trade.permisos`): cada
+informe, y dentro de él qué puede cargar o editar y si puede compartirlo. Se
+reparten desde Administración, al editar el usuario. A quien se le da la app
+con `--asignar-a` o `--todos` se le dan también todos los informes, sin
+permisos de edición.
 """
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.accounts.models import Application, Permission, User
+from apps.bi_trade.permisos import CATALOGO, INFORMES
 
 
 class Command(BaseCommand):
@@ -45,13 +47,21 @@ class Command(BaseCommand):
                 'is_active': True,
             },
         )
-        Permission.objects.update_or_create(
-            code='bi-trade:data:manage',
-            defaults={
-                'name': 'Editar puntos de venta, productos y ventas',
-                'application': app,
-            },
-        )
+        # El catálogo trae cada informe antes que los permisos que van dentro.
+        creados: dict[str, Permission] = {}
+        for permiso in CATALOGO:
+            creados[permiso.code], _ = Permission.objects.update_or_create(
+                code=permiso.code,
+                defaults={
+                    'application': app,
+                    'name': permiso.name,
+                    'group': permiso.group,
+                    'order': permiso.order,
+                    'description': permiso.description,
+                    'parent': creados[permiso.parent] if permiso.parent else None,
+                },
+            )
+        informes = list(Permission.objects.filter(code__in=INFORMES.values()))
 
         self.stdout.write(
             self.style.SUCCESS(f'Aplicación "{app.name}" {"creada" if creada else "actualizada"}.')
@@ -69,6 +79,7 @@ class Command(BaseCommand):
 
         for usuario in destinatarios:
             usuario.applications.add(app)
+            usuario.extra_permissions.add(*informes)
         if destinatarios:
             self.stdout.write(
                 self.style.SUCCESS(f'{destinatarios.count()} usuario(s) con acceso a la app.')

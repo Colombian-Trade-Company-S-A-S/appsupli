@@ -41,6 +41,7 @@ import { ImportarHc } from '../components/ImportarHc';
 import { HojasBi } from '../components/HojasBi';
 import { CompartirTablero } from '../components/CompartirTablero';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 
 /** Los accesos a cada módulo. Se declaran una vez para no repetir el botón. */
 const MODULOS = [
@@ -55,6 +56,9 @@ const MODULOS = [
 export default function ClaroDashboardPage() {
   const fuente = useFuente();
   const { soloLectura } = fuente;
+  // Cada canal mira su propio informe: cargar ventas de HC no deja cargar las de Claro.
+  const puedeVentas = usePuedeEditar('ventas');
+  const puedeInventario = usePuedeEditar('inventario');
   // Al volver del detalle de un punto, el tablero abre en el mismo mes.
   const [params] = useSearchParams();
   const [mes, setMes] = useState<Mes>(() => desdeValorMes(params.get('mes') ?? '') ?? mesActual());
@@ -101,12 +105,19 @@ export default function ClaroDashboardPage() {
         {!soloLectura && (
           <>
             <CompartirTablero canal={fuente.canal} />
-            {/* El informe del ERP: Claro y Tmk sí; Homecenter y Falabella no. */}
-            {fuente.importarInforme && <ImportarInforme importar={fuente.importarInforme} />}
-            {/* Falabella: sus reportes .csv del portal, ventas e inventario. */}
-            {fuente.importarFalabella && <ImportarFalabella importar={fuente.importarFalabella} />}
-            {/* Homecenter: sus reportes .xlsx del portal, ventas por canal e inventario. */}
-            {fuente.importarHc && <ImportarHc importar={fuente.importarHc} />}
+            {/* El informe del ERP: Claro y Tmk sí; Homecenter y Falabella no. Carga
+                ventas e inventario a la vez, así que pide editar los dos. */}
+            {fuente.importarInforme && puedeVentas && puedeInventario && (
+              <ImportarInforme importar={fuente.importarInforme} />
+            )}
+            {/* Falabella y Homecenter: sus reportes del portal, ventas e inventario.
+                Cada reporte pide su permiso; el diálogo solo deja elegir los que tiene. */}
+            {fuente.importarFalabella && (puedeVentas || puedeInventario) && (
+              <ImportarFalabella importar={fuente.importarFalabella} />
+            )}
+            {fuente.importarHc && (puedeVentas || puedeInventario) && (
+              <ImportarHc importar={fuente.importarHc} />
+            )}
             {MODULOS.map(({ ruta, etiqueta, icono: Icono }) => (
               <Button key={ruta} variant="outline" render={<Link to={`${fuente.base}/${ruta}`} />}>
                 <Icono data-icon="inline-start" />

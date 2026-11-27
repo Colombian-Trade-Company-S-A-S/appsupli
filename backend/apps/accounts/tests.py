@@ -248,13 +248,46 @@ def test_el_listado_de_usuarios_sigue_trayendo_sus_accesos():
     poblar_accesos(0, 1)
     fila = next(u for u in cliente.get(RUTA).json()['items'] if u['username'] == 'persona0')
     assert fila['applicationNames'] == ['App 0']
-    assert fila['roleNames'] == ['Rol 0']
-    assert len(fila['extraPermissions']) == 1
+    # Los roles y permisos sueltos, en el detalle: es donde se ven y se editan.
+    detalle = cliente.get(f'{RUTA}/{fila["id"]}').json()
+    assert detalle['roleNames'] == ['Rol 0']
+    assert len(detalle['extraPermissions']) == 1
 
     areas = {a['name']: a['userCount'] for a in cliente.get('/api/admin/areas').json()['items']}
     assert areas['Área 0'] == 1
     roles = {r['name']: r['userCount'] for r in cliente.get('/api/admin/roles').json()['items']}
     assert roles['Rol 0'] == 1
+
+
+def test_el_listado_de_usuarios_no_trae_fotos_ni_columnas_de_mas():
+    """
+    Ni la foto de la persona ni la de su jefe: con `select_related` la del jefe
+    viajaba en cada fila y un listado de 70 personas tardaba 3 s contra Render.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    cliente = cliente_admin()
+    jefe = User.objects.create(username='jefe', first_name='Jefa', foto=b'x' * 1000)
+    User.objects.create(username='uno', first_name='Uno', manager=jefe, foto=b'y' * 1000)
+    with CaptureQueriesContext(connection) as capturadas:
+        filas = cliente.get(RUTA).json()['items']
+    assert len(capturadas) == 3  # el conteo, las filas y sus apps
+    assert all('"foto"' not in consulta['sql'] for consulta in capturadas.captured_queries)
+    uno = next(f for f in filas if f['username'] == 'uno')
+    assert uno['managerName'] == 'Jefa'
+
+
+def test_el_detalle_no_trae_la_foto_del_jefe():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    cliente = cliente_admin()
+    jefe = User.objects.create(username='jefe', first_name='Jefa', foto=b'x' * 1000)
+    uno = User.objects.create(username='uno', first_name='Uno', manager=jefe)
+    with CaptureQueriesContext(connection) as capturadas:
+        assert cliente.get(f'{RUTA}/{uno.id}').json()['managerName'] == 'Jefa'
+    assert all('"foto"' not in consulta['sql'] for consulta in capturadas.captured_queries)
 
 
 def test_administracion_solo_le_aparece_al_administrador():

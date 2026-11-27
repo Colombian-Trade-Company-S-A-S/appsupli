@@ -3,14 +3,13 @@ import { ArrowLeftIcon, MapPinIcon, StoreIcon } from 'lucide-react';
 import { Badge, Button, Card, CardContent } from '@/shared/components/ui';
 import { Encabezado, Kpi } from '@/shared/components/layout';
 import { EsqueletoPagina } from '@/shared/components/feedback';
-import { useAuth } from '@/core/auth';
+import { usePermisosBi } from '../permisos';
 import { formatoNumero } from '@/shared/lib/formato';
 import { useCatalogoBelkin } from '../hooks';
 import { PLANES } from '../planes';
 import { AsesoresDelPunto, fechaCorta } from '../components/AsesoresDelPunto';
 
 const PLAN = PLANES.belkin.ruta;
-const PERMISO_EDITAR = 'bi-trade:data:manage';
 
 /**
  * Un punto de venta del plan Recomiéndame Belkin: sus datos y la historia de
@@ -19,8 +18,7 @@ const PERMISO_EDITAR = 'bi-trade:data:manage';
 export default function PlanBelkinPuntoPage() {
   const { id = '' } = useParams();
   const idPunto = decodeURIComponent(id);
-  const { user } = useAuth();
-  const puedeAdministrar = !!user?.isAdmin || !!user?.permissions.includes(PERMISO_EDITAR);
+  const puedeAdministrar = usePermisosBi().editar('belkin', 'plan');
   const { data: puntos, isLoading } = useCatalogoBelkin('puntosVenta');
   const { data: asesores = [] } = useCatalogoBelkin('asesores');
 

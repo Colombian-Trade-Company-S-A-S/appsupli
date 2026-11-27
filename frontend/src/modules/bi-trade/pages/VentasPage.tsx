@@ -35,6 +35,7 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { biTradeApi, type ResumenVentas, type Venta, type VentaPayload } from '../api';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import {
   useBiTradeMutation,
   useListado,
@@ -67,6 +68,8 @@ interface FiltrosVenta {
 
 export default function VentasPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('ventas');
   const recursos = fuente.recursos ?? biTradeApi;
   const [filtros, setFiltros] = useState<FiltrosVenta>({});
   const [pagina, setPagina] = useState(1);
@@ -116,27 +119,31 @@ export default function VentasPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nueva venta
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nueva venta
+          </Button>
+        )}
         <BotonesExcel recurso="ventas" filtrosExport={consulta} />
-        {fuente.importarQueryVentas && (
+        {puedeEditar && fuente.importarQueryVentas && (
           <ImportarQueryVentas importar={fuente.importarQueryVentas} />
         )}
-        <Button
-          variant="destructive"
-          disabled={total === 0 || vaciar.isPending}
-          onClick={() => setVaciarAbierto(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Eliminar todo
-        </Button>
+        {puedeEditar && (
+          <Button
+            variant="destructive"
+            disabled={total === 0 || vaciar.isPending}
+            onClick={() => setVaciarAbierto(true)}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            Eliminar todo
+          </Button>
+        )}
       </Encabezado>
 
       <div
@@ -265,7 +272,7 @@ export default function VentasPage() {
                 <TableHead className="hidden xl:table-cell">Regional</TableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
                 <TableHead className="text-right">Total</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -293,29 +300,31 @@ export default function VentasPage() {
                   <TableCell className="text-right tabular-nums">
                     {formatoMoneda(venta.totalColtrade)}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(venta);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(venta)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(venta);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(venta)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

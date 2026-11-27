@@ -38,7 +38,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/shared/components/ui';
-import { adminApi, type AdminUser } from '../api';
+import { adminApi, type AdminUserFila } from '../api';
 import { useAdminMutation, useAdminUsers, useAreas } from '../hooks';
 
 const TIPOS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
@@ -70,7 +70,7 @@ export function UsersTab() {
   );
 
   // Editar es una página aparte, no una ventana.
-  const abrirEdicion = (usuario: AdminUser) =>
+  const abrirEdicion = (usuario: AdminUserFila) =>
     navigate(`/inicio/admin/usuarios/${usuario.id}/editar`);
 
   return (

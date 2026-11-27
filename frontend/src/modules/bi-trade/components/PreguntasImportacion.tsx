@@ -19,6 +19,7 @@ import {
 } from '@/shared/components/ui';
 import { formatoMoneda, formatoNumero } from '@/shared/lib/formato';
 import type { DecisionProductos, DiaConVentas, PreguntaProductos } from '../api';
+import { usePuedeEditar } from '../permisos';
 import { Faltantes, fechaCorta } from './ImportarQuery';
 
 /**
@@ -50,6 +51,13 @@ export function VistaPreviaCatalogo({
   onDecidir: (decision: DecisionProductos) => void;
 }) {
   const { productos, puntos, marcasNuevas, puntosFaltantes } = pregunta;
+  // Crear pide poder editar eso; sin el permiso, solo queda importar sin crearlos.
+  const puedeProductos = usePuedeEditar('productos');
+  const puedePuntos = usePuedeEditar('puntos-venta');
+  const sinPermiso = [
+    productos.length > 0 && !puedeProductos && 'productos',
+    puntos.length > 0 && !puedePuntos && 'puntos de venta',
+  ].filter(Boolean);
   // El EAN y el SKU Coltrade solo los trae HC: la columna aparece si alguno los tiene.
   const conCodigos = productos.some((p) => p.ean || p.skuColtrade);
   const partes = [
@@ -171,6 +179,16 @@ export function VistaPreviaCatalogo({
         </Alert>
       )}
 
+      {sinPermiso.length > 0 && (
+        <Alert>
+          <AlertTitle>No puedes crear {sinPermiso.join(' ni ')}</AlertTitle>
+          <AlertDescription>
+            Tu usuario no tiene ese permiso. Importa sin crearlos o pídele el permiso a un
+            administrador.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <DialogFooter>
         <Button variant="outline" onClick={onCancelar} disabled={cargando}>
           Cancelar
@@ -179,7 +197,7 @@ export function VistaPreviaCatalogo({
           {decisionEnCurso === 'omitir' && <Spinner data-icon="inline-start" />}
           Importar sin crearlos
         </Button>
-        <Button disabled={cargando} onClick={() => onDecidir('crear')}>
+        <Button disabled={cargando || sinPermiso.length > 0} onClick={() => onDecidir('crear')}>
           {decisionEnCurso === 'crear' ? (
             <Spinner data-icon="inline-start" />
           ) : (

@@ -34,7 +34,6 @@ import {
   ToggleGroupItem,
 } from '@/shared/components/ui';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
-import { useAuth } from '@/core/auth';
 import { ApiError } from '@/shared/api/http-client';
 import { formatoFechaHora, formatoNumero } from '@/shared/lib/formato';
 import {
@@ -47,8 +46,8 @@ import {
   type EnlaceConClave,
   type EnlacePublico,
 } from '../api';
+import { informeDelEnlace, usePermisosBi } from '../permisos';
 
-const PERMISO = 'bi-trade:data:manage';
 const LLAVE = ['bi-trade', 'enlaces'] as const;
 
 /** Cuánto dura un enlace nuevo. `null` es que no vence. */
@@ -74,7 +73,7 @@ async function copiar(texto: string, aviso: string) {
 /**
  * Compartir el tablero con alguien que no tiene cuenta.
  *
- * Solo lo ve quien puede editar datos: compartir el tablero es sacar
+ * Solo lo ve quien puede compartir ese informe: compartir el tablero es sacar
  * información del negocio, y el backend lo exige igual. Esconder el botón no
  * es la protección —esa está en el servidor—, es no ofrecer lo que va a fallar.
  */
@@ -93,10 +92,10 @@ export function CompartirTablero({
   /** Cómo se nombra al copiar el enlace con su contraseña. */
   etiqueta?: string;
 }) {
-  const { user } = useAuth();
+  const puede = usePermisosBi().compartir(informeDelEnlace(canal));
   const [abierto, setAbierto] = useState(false);
 
-  const puede = !!user && (user.isAdmin || user.permissions.includes(PERMISO));
+  // Compartir es un permiso de cada informe: verlo no basta para sacarlo afuera.
   if (!puede) return null;
 
   return (

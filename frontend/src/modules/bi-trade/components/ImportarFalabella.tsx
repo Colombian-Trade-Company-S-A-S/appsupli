@@ -35,6 +35,7 @@ import type {
   ResultadoReporteVentas,
 } from '../api';
 import type { ImportadorFalabella } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import { biTradeKeys, mensajeDeError } from '../hooks';
 import { Bloque, Renglon } from './ImportarInforme';
 import { Faltantes, fechaCorta } from './ImportarQuery';
@@ -78,7 +79,10 @@ const DESCRIPCION: Record<Reporte, string> = {
 export function ImportarFalabella({ importar }: { importar: ImportadorFalabella }) {
   const queryClient = useQueryClient();
   const [abierto, setAbierto] = useState(false);
-  const [reporte, setReporte] = useState<Reporte>('ventas');
+  const puedeVentas = usePuedeEditar('ventas');
+  const puedeInventario = usePuedeEditar('inventario');
+  // Cada reporte pide su permiso: arranca en el que la persona sí puede cargar.
+  const [reporte, setReporte] = useState<Reporte>(puedeVentas ? 'ventas' : 'inventario');
   const [archivo, setArchivo] = useState<File | null>(null);
   const [pregunta, setPregunta] = useState<PreguntaProductos | null>(null);
   const [decision, setDecision] = useState<DecisionProductos | undefined>(undefined);
@@ -186,8 +190,12 @@ export function ImportarFalabella({ importar }: { importar: ImportadorFalabella 
                     onValueChange={(v) => v[0] && elegir(v[0] as Reporte)}
                     variant="outline"
                   >
-                    <ToggleGroupItem value="ventas">Ventas</ToggleGroupItem>
-                    <ToggleGroupItem value="inventario">Inventario</ToggleGroupItem>
+                    <ToggleGroupItem value="ventas" disabled={!puedeVentas}>
+                      Ventas
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="inventario" disabled={!puedeInventario}>
+                      Inventario
+                    </ToggleGroupItem>
                   </ToggleGroup>
                 </Field>
 

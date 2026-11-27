@@ -26,13 +26,11 @@ import {
   TableRow,
 } from '@/shared/components/ui';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
-import { useAuth } from '@/core/auth';
 import { formatoNumero } from '@/shared/lib/formato';
 import { marcasApi, type Marca } from '../api';
 import { useBiTradeMutation, useMarcas } from '../hooks';
+import { usePermisosBi } from '../permisos';
 import { CampoSelect } from './CampoSelect';
-
-const PERMISO = 'bi-trade:data:manage';
 
 /** «Bélkin » y «BELKIN» son la misma: así compara también el backend. */
 const normalizar = (texto: string) =>
@@ -72,8 +70,8 @@ export function MarcasDialog() {
 }
 
 function ListaMarcas() {
-  const { user } = useAuth();
-  const puedeEditar = !!user && (user.isAdmin || user.permissions.includes(PERMISO));
+  // Las marcas son de todos los canales: las edita quien edita productos en alguno.
+  const puedeEditar = usePermisosBi().editarEnAlguno('productos');
   const { data: marcas = [], isLoading } = useMarcas();
   const [buscar, setBuscar] = useState('');
   const [nueva, setNueva] = useState('');

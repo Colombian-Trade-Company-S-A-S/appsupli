@@ -38,6 +38,7 @@ import { biTradeApi, type PrecioPeriodo, type PrecioPeriodoPayload } from '../ap
 import { BotonesExcel } from '../components/BotonesExcel';
 import { CampoSelect } from '../components/CampoSelect';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import { useBiTradeMutation, usePrecios, useProductos } from '../hooks';
 
 const PRECIO_MAXIMO = 100_000_000;
@@ -80,6 +81,8 @@ function Estado({ precio }: { precio: PrecioPeriodo }) {
  */
 export default function PreciosPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('productos');
   const recursos = fuente.recursos ?? biTradeApi;
   const [parametros] = useSearchParams();
   const [buscar, setBuscar] = useState(parametros.get('producto') ?? '');
@@ -104,15 +107,17 @@ export default function PreciosPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Productos
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nuevo precio
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nuevo precio
+          </Button>
+        )}
         <BotonesExcel recurso="precios" filtrosExport={filtros} />
       </Encabezado>
 
@@ -142,7 +147,7 @@ export default function PreciosPage() {
                 <TableHead>Hasta</TableHead>
                 <TableHead className="text-right">Precio Coltrade</TableHead>
                 <TableHead className="hidden sm:table-cell">Estado</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -168,29 +173,31 @@ export default function PreciosPage() {
                   <TableCell className="hidden sm:table-cell">
                     <Estado precio={precio} />
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(precio);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(precio)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(precio);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(precio)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

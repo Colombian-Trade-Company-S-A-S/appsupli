@@ -8,6 +8,7 @@ import { PublicOnly } from './PublicOnly';
 import { RequireAdmin } from './RequireAdmin';
 import { RequireApp } from './RequireApp';
 import { RequireAuth } from './RequireAuth';
+import { RequirePermiso } from './RequirePermiso';
 
 const LandingPage = lazy(() => import('@/app/pages/LandingPage'));
 const LoginPage = lazy(() => import('@/app/pages/LoginPage'));
@@ -104,6 +105,38 @@ function CargandoRuta() {
 
 const withSuspense = (node: ReactNode) => <Suspense fallback={<CargandoRuta />}>{node}</Suspense>;
 
+/**
+ * Las rutas de un informe de BI Trade: sin su permiso —ni el de administrador
+ * de BI Trade, que los ve todos— de vuelta a la portada.
+ */
+const informe = (nombre: string, children: RouteObject[]): RouteObject => ({
+  element: (
+    <RequirePermiso
+      permiso={[`bi-trade:informe:${nombre}`, 'bi-trade:data:manage']}
+      volverA="/inicio/bi-trade"
+    />
+  ),
+  children,
+});
+
+/** Homecenter, Falabella y Tmk: el tablero y sus CRUD, con la fuente del canal. */
+const rutasDeCanal = (canal: 'hc' | 'falabella' | 'tmk', metas: ReactNode): RouteObject => ({
+  path: `bi-trade/ventas-${canal}`,
+  element: withSuspense(<CanalLayout canal={canal} />),
+  children: [
+    { index: true, element: withSuspense(<ClaroDashboardPage />) },
+    { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
+    { path: 'ventas', element: withSuspense(<VentasPage />) },
+    { path: 'productos', element: withSuspense(<ProductosPage />) },
+    { path: 'precios', element: withSuspense(<PreciosPage />) },
+    { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
+    { path: 'inventario', element: withSuspense(<InventarioPage />) },
+    { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
+    { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
+    { path: 'metas', element: withSuspense(metas) },
+  ],
+});
+
 const routes: RouteObject[] = [
   // ── Público: siempre en tema claro ───────────────────────────────────────
   {
@@ -148,109 +181,66 @@ const routes: RouteObject[] = [
           {
             element: <RequireApp code="bi-trade" />,
             children: [
+              // La portada muestra solo los informes que la persona ve.
               { path: 'bi-trade', element: withSuspense(<BiTradeHomePage />) },
-              { path: 'bi-trade/claro', element: withSuspense(<ClaroDashboardPage />) },
-              { path: 'bi-trade/claro/ventas', element: withSuspense(<VentasPage />) },
-              { path: 'bi-trade/claro/productos', element: withSuspense(<ProductosPage />) },
-              { path: 'bi-trade/claro/precios', element: withSuspense(<PreciosPage />) },
-              {
-                path: 'bi-trade/claro/puntos-venta',
-                element: withSuspense(<PuntosVentaPage />),
-              },
-              { path: 'bi-trade/claro/inventario', element: withSuspense(<InventarioPage />) },
-              {
-                path: 'bi-trade/claro/punto/:id',
-                element: withSuspense(<PuntoVentaDetallePage />),
-              },
-              {
-                path: 'bi-trade/claro/regional/:nombre',
-                element: withSuspense(<RegionalDetallePage />),
-              },
-              { path: 'bi-trade/claro/metas', element: withSuspense(<MetasPage />) },
-              { path: 'bi-trade/claro/tickets', element: withSuspense(<TicketsPage />) },
+              // Cada informe pide su permiso; sin él, vuelve a la portada.
+              informe('claro', [
+                { path: 'bi-trade/claro', element: withSuspense(<ClaroDashboardPage />) },
+                { path: 'bi-trade/claro/dia', element: withSuspense(<CumplimientoDiarioPage />) },
+                { path: 'bi-trade/claro/ventas', element: withSuspense(<VentasPage />) },
+                { path: 'bi-trade/claro/productos', element: withSuspense(<ProductosPage />) },
+                { path: 'bi-trade/claro/precios', element: withSuspense(<PreciosPage />) },
+                {
+                  path: 'bi-trade/claro/puntos-venta',
+                  element: withSuspense(<PuntosVentaPage />),
+                },
+                { path: 'bi-trade/claro/inventario', element: withSuspense(<InventarioPage />) },
+                {
+                  path: 'bi-trade/claro/punto/:id',
+                  element: withSuspense(<PuntoVentaDetallePage />),
+                },
+                {
+                  path: 'bi-trade/claro/regional/:nombre',
+                  element: withSuspense(<RegionalDetallePage />),
+                },
+                { path: 'bi-trade/claro/metas', element: withSuspense(<MetasPage />) },
+                { path: 'bi-trade/claro/tickets', element: withSuspense(<TicketsPage />) },
+              ]),
               // Homecenter, Falabella y Tmk: las mismas páginas de Claro con la fuente
               // de cada canal. El layout pone la fuente, el acento y la franja.
-              {
-                path: 'bi-trade/ventas-hc',
-                element: withSuspense(<CanalLayout canal="hc" />),
-                children: [
-                  { index: true, element: withSuspense(<ClaroDashboardPage />) },
-                  { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
-                  { path: 'ventas', element: withSuspense(<VentasPage />) },
-                  { path: 'productos', element: withSuspense(<ProductosPage />) },
-                  { path: 'precios', element: withSuspense(<PreciosPage />) },
-                  { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
-                  { path: 'inventario', element: withSuspense(<InventarioPage />) },
-                  { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
-                  { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
-                  // La meta de HC es por tienda y mes, en pesos: su propia página.
-                  { path: 'metas', element: withSuspense(<MetasHcPage />) },
-                ],
-              },
-              {
-                path: 'bi-trade/ventas-falabella',
-                element: withSuspense(<CanalLayout canal="falabella" />),
-                children: [
-                  { index: true, element: withSuspense(<ClaroDashboardPage />) },
-                  { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
-                  { path: 'ventas', element: withSuspense(<VentasPage />) },
-                  { path: 'productos', element: withSuspense(<ProductosPage />) },
-                  { path: 'precios', element: withSuspense(<PreciosPage />) },
-                  { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
-                  { path: 'inventario', element: withSuspense(<InventarioPage />) },
-                  { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
-                  { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
-                  { path: 'metas', element: withSuspense(<MetasPage />) },
-                ],
-              },
-              {
-                path: 'bi-trade/ventas-tmk',
-                element: withSuspense(<CanalLayout canal="tmk" />),
-                children: [
-                  { index: true, element: withSuspense(<ClaroDashboardPage />) },
-                  { path: 'dia', element: withSuspense(<CumplimientoDiarioPage />) },
-                  { path: 'ventas', element: withSuspense(<VentasPage />) },
-                  { path: 'productos', element: withSuspense(<ProductosPage />) },
-                  { path: 'precios', element: withSuspense(<PreciosPage />) },
-                  { path: 'puntos-venta', element: withSuspense(<PuntosVentaPage />) },
-                  { path: 'inventario', element: withSuspense(<InventarioPage />) },
-                  { path: 'punto/:id', element: withSuspense(<PuntoVentaDetallePage />) },
-                  { path: 'regional/:nombre', element: withSuspense(<RegionalDetallePage />) },
-                  { path: 'metas', element: withSuspense(<MetasPage />) },
-                ],
-              },
-              {
-                path: 'bi-trade/claro/dia',
-                element: withSuspense(<CumplimientoDiarioPage />),
-              },
-              {
-                path: 'bi-trade/plan-recomiendame-belkin',
-                element: withSuspense(<PlanBelkinPage />),
-              },
-              {
-                path: 'bi-trade/plan-recomiendame-belkin/formulario',
-                element: withSuspense(<PlanBelkinFormularioPage />),
-              },
-              {
-                path: 'bi-trade/plan-recomiendame-belkin/listas/:lista',
-                element: withSuspense(<PlanBelkinListaPage />),
-              },
-              {
-                path: 'bi-trade/plan-recomiendame-belkin/puntos/:id',
-                element: withSuspense(<PlanBelkinPuntoPage />),
-              },
-              {
-                path: 'bi-trade/plan-partners',
-                element: withSuspense(<PlanPartnersPage />),
-              },
-              {
-                path: 'bi-trade/plan-partners/formulario',
-                element: withSuspense(<PlanPartnersFormularioPage />),
-              },
-              {
-                path: 'bi-trade/plan-partners/listas/:lista',
-                element: withSuspense(<PlanPartnersListaPage />),
-              },
+              // La meta de HC es por tienda y mes, en pesos: su propia página.
+              informe('hc', [rutasDeCanal('hc', <MetasHcPage />)]),
+              informe('falabella', [rutasDeCanal('falabella', <MetasPage />)]),
+              informe('tmk', [rutasDeCanal('tmk', <MetasPage />)]),
+              informe('belkin', [
+                {
+                  path: 'bi-trade/plan-recomiendame-belkin',
+                  element: withSuspense(<PlanBelkinPage />),
+                },
+                {
+                  path: 'bi-trade/plan-recomiendame-belkin/formulario',
+                  element: withSuspense(<PlanBelkinFormularioPage />),
+                },
+                {
+                  path: 'bi-trade/plan-recomiendame-belkin/listas/:lista',
+                  element: withSuspense(<PlanBelkinListaPage />),
+                },
+                {
+                  path: 'bi-trade/plan-recomiendame-belkin/puntos/:id',
+                  element: withSuspense(<PlanBelkinPuntoPage />),
+                },
+              ]),
+              informe('partners', [
+                { path: 'bi-trade/plan-partners', element: withSuspense(<PlanPartnersPage />) },
+                {
+                  path: 'bi-trade/plan-partners/formulario',
+                  element: withSuspense(<PlanPartnersFormularioPage />),
+                },
+                {
+                  path: 'bi-trade/plan-partners/listas/:lista',
+                  element: withSuspense(<PlanPartnersListaPage />),
+                },
+              ]),
             ],
           },
           // Supli Performance es el contenedor: su página muestra los

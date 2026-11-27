@@ -46,7 +46,13 @@ import {
 import { EsqueletoPagina } from '@/shared/components/feedback';
 import { cn } from '@/shared/lib/utils';
 import { Cuadricula } from '@/app/layouts/Marca';
-import { adminApi, type AdminPermission, type AdminUser } from '../api';
+import {
+  adminApi,
+  nombreDePermiso,
+  type AdminPermission,
+  type AdminUser,
+  type AdminUserFila,
+} from '../api';
 import { planIdDeUrl } from '../planner';
 import {
   useAdminMutation,
@@ -170,7 +176,7 @@ function Vacio({ children }: { children: ReactNode }) {
 }
 
 /** Una persona en una lista: foto, nombre y cargo, con enlace a su detalle. */
-function FilaPersona({ usuario }: { usuario: AdminUser }) {
+function FilaPersona({ usuario }: { usuario: AdminUserFila }) {
   return (
     <Link
       to={`${BASE}/usuarios/${usuario.id}`}
@@ -463,7 +469,7 @@ export default function UsuarioDetallePage() {
                         key={permiso.id}
                         className="flex items-center justify-between gap-3 text-sm"
                       >
-                        <span className="min-w-0 truncate">{permiso.name}</span>
+                        <span className="min-w-0 truncate">{nombreDePermiso(permiso)}</span>
                         {permiso.adicional && (
                           <Badge variant="outline" className="shrink-0">
                             Adicional

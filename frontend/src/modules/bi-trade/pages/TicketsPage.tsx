@@ -48,6 +48,7 @@ import { ReglasConcurso } from '../components/ReglasConcurso';
 import { CampanaDialog } from '../components/CampanaDialog';
 import { ACCION_TARJETA } from '../components/estilos';
 import { useFuente } from '../fuente';
+import { usePermisosBi } from '../permisos';
 
 const BASE = '/inicio/bi-trade/claro';
 
@@ -57,6 +58,8 @@ type Vista = 'todos' | 'participan' | 'cerca';
 /** Concurso de tickets: quién acumula, quién participa y cuánto falta. */
 export default function TicketsPage() {
   const { soloLectura } = useFuente();
+  // Las campañas del concurso van con las metas: crearlas o cambiarlas pide editar metas.
+  const puedeConfigurar = usePermisosBi().editar('claro', 'metas') && !soloLectura;
   const [campana, setCampana] = useState<string>('');
   const [filtros, setFiltros] = useState<{
     regional?: string;
@@ -106,10 +109,12 @@ export default function TicketsPage() {
               <ArrowLeftIcon data-icon="inline-start" />
               Avance del mes
             </Button>
-            <Button variant="outline" onClick={() => setConfigurar(true)}>
-              <SettingsIcon data-icon="inline-start" />
-              {activa ? 'Editar reglas' : 'Crear campaña'}
-            </Button>
+            {puedeConfigurar && (
+              <Button variant="outline" onClick={() => setConfigurar(true)}>
+                <SettingsIcon data-icon="inline-start" />
+                {activa ? 'Editar reglas' : 'Crear campaña'}
+              </Button>
+            )}
             {activa && (
               <Tooltip>
                 <TooltipTrigger
@@ -147,7 +152,7 @@ export default function TicketsPage() {
             </EmptyMedia>
             <EmptyTitle>Todavía no hay campaña</EmptyTitle>
             <EmptyDescription>
-              {soloLectura
+              {!puedeConfigurar
                 ? 'Todavía no hay un concurso activo para mostrar.'
                 : (data?.message ??
                   'Crea una campaña con sus escalas y umbrales para empezar a medir el concurso.')}
@@ -292,7 +297,7 @@ export default function TicketsPage() {
         </>
       )}
 
-      {!soloLectura && (
+      {puedeConfigurar && (
         <CampanaDialog
           abierto={configurar}
           onOpenChange={setConfigurar}

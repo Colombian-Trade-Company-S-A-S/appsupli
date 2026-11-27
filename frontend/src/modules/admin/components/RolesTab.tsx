@@ -30,7 +30,7 @@ import {
   TableRow,
   Textarea,
 } from '@/shared/components/ui';
-import { adminApi, type AdminPermission, type AdminRole } from '../api';
+import { adminApi, nombreDePermiso, type AdminPermission, type AdminRole } from '../api';
 import { useAdminMutation, usePermissions, useRoles } from '../hooks';
 import { AYUDA_PERMISOS, ayudaDe } from '../ayudas';
 import { AyudaAcceso } from './AyudaAcceso';
@@ -278,7 +278,7 @@ function RolDialog({
                               onCheckedChange={() => alternar(permiso.id)}
                             />
                             <span className="flex flex-col">
-                              <span className="text-sm">{permiso.name}</span>
+                              <span className="text-sm">{nombreDePermiso(permiso)}</span>
                               <span className="font-mono text-xs text-muted-foreground">
                                 {permiso.code}
                               </span>

@@ -17,9 +17,20 @@ import { ApiError } from '@/shared/api/http-client';
 import { biTradeApi } from '../api';
 import { useFuente } from '../fuente';
 import { useBiTradeMutation } from '../hooks';
+import { usePuedeEditar, type ModuloEdicion } from '../permisos';
 
 /** Los recursos que tienen plantilla e importador. */
 type Recurso = 'ventas' | 'productos' | 'precios' | 'puntosVenta' | 'inventario' | 'metas';
+
+/** Qué permiso de edición pide importar cada recurso. Los precios son del catálogo. */
+const MODULO: Record<Recurso, ModuloEdicion> = {
+  ventas: 'ventas',
+  productos: 'productos',
+  precios: 'productos',
+  puntosVenta: 'puntos-venta',
+  inventario: 'inventario',
+  metas: 'metas',
+};
 
 interface FilaConError {
   fila: number;
@@ -48,6 +59,8 @@ export function BotonesExcel({
 }) {
   // Los recursos del canal en el que se está: Claro o Homecenter.
   const recursos = useFuente().recursos ?? biTradeApi;
+  // Exportar lo puede cualquiera que vea la tabla; la plantilla e importar, quien edita.
+  const puedeImportar = usePuedeEditar(MODULO[recurso]);
   const inputArchivo = useRef<HTMLInputElement>(null);
   const [filasConError, setFilasConError] = useState<FilaConError[]>([]);
   const [resumenError, setResumenError] = useState('');
@@ -100,33 +113,37 @@ export function BotonesExcel({
         </Button>
       )}
 
-      <Button
-        variant="outline"
-        disabled={descargar.isPending}
-        onClick={() => descargar.mutate(undefined)}
-      >
-        {descargar.isPending && <Spinner data-icon="inline-start" />}
-        <DownloadIcon data-icon="inline-start" />
-        Descargar plantilla
-      </Button>
+      {puedeImportar && (
+        <>
+          <Button
+            variant="outline"
+            disabled={descargar.isPending}
+            onClick={() => descargar.mutate(undefined)}
+          >
+            {descargar.isPending && <Spinner data-icon="inline-start" />}
+            <DownloadIcon data-icon="inline-start" />
+            Descargar plantilla
+          </Button>
 
-      <Button
-        variant="outline"
-        disabled={importar.isPending}
-        onClick={() => inputArchivo.current?.click()}
-      >
-        {importar.isPending && <Spinner data-icon="inline-start" />}
-        <UploadIcon data-icon="inline-start" />
-        Importar Excel
-      </Button>
+          <Button
+            variant="outline"
+            disabled={importar.isPending}
+            onClick={() => inputArchivo.current?.click()}
+          >
+            {importar.isPending && <Spinner data-icon="inline-start" />}
+            <UploadIcon data-icon="inline-start" />
+            Importar Excel
+          </Button>
 
-      <input
-        ref={inputArchivo}
-        type="file"
-        accept=".xlsx"
-        className="hidden"
-        onChange={alElegirArchivo}
-      />
+          <input
+            ref={inputArchivo}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            onChange={alElegirArchivo}
+          />
+        </>
+      )}
 
       <Dialog
         open={filasConError.length > 0}

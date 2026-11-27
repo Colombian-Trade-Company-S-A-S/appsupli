@@ -37,6 +37,7 @@ import { Encabezado, EstadoTabla } from '@/shared/components/layout';
 import { formatoMoneda, formatoNumero } from '@/shared/lib/formato';
 import { biTradeApi, type Producto, type ProductoPayload } from '../api';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import { BotonesExcel } from '../components/BotonesExcel';
 import { CampoSelect } from '../components/CampoSelect';
 import { MarcasDialog } from '../components/MarcasDialog';
@@ -47,6 +48,8 @@ const PRECIO_MAXIMO = 100_000_000;
 
 export default function ProductosPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('productos');
   const recursos = fuente.recursos ?? biTradeApi;
   const [buscar, setBuscar] = useState('');
   const { data: productos = [], isLoading } = useProductos({ search: buscar || undefined });
@@ -74,15 +77,17 @@ export default function ProductosPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nuevo producto
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nuevo producto
+          </Button>
+        )}
         <BotonesExcel
           recurso="productos"
           // Solo HC exporta su catálogo; con la misma búsqueda que la tabla.
@@ -97,14 +102,16 @@ export default function ProductosPage() {
           Precios por periodo
         </Button>
         <MarcasDialog />
-        <Button
-          variant="destructive"
-          disabled={productos.length === 0 || vaciar.isPending}
-          onClick={() => setVaciarAbierto(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Eliminar todo
-        </Button>
+        {puedeEditar && (
+          <Button
+            variant="destructive"
+            disabled={productos.length === 0 || vaciar.isPending}
+            onClick={() => setVaciarAbierto(true)}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            Eliminar todo
+          </Button>
+        )}
       </Encabezado>
 
       <div className="relative max-w-md">
@@ -147,7 +154,7 @@ export default function ProductosPage() {
                   <TableHead className="hidden md:table-cell">Puntaje</TableHead>
                 )}
                 <TableHead className="hidden md:table-cell">Ventas</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -193,41 +200,43 @@ export default function ProductosPage() {
                   <TableCell className="hidden tabular-nums md:table-cell">
                     {formatoNumero(producto.ventasCount)}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Precios por periodo de ${producto.nombreProducto}`}
-                        render={
-                          <Link
-                            to={`${fuente.base}/precios?producto=${encodeURIComponent(producto.idProducto)}`}
-                          />
-                        }
-                      >
-                        <CalendarRangeIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(producto);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(producto)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Precios por periodo de ${producto.nombreProducto}`}
+                          render={
+                            <Link
+                              to={`${fuente.base}/precios?producto=${encodeURIComponent(producto.idProducto)}`}
+                            />
+                          }
+                        >
+                          <CalendarRangeIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(producto);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(producto)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

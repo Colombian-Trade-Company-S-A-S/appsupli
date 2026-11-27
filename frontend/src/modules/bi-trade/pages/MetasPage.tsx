@@ -35,6 +35,7 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { biTradeApi, type MetaComercial, type MetaPayload, type ResumenMetas } from '../api';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import {
   useBiTradeMutation,
   useListado,
@@ -67,6 +68,8 @@ interface FiltrosMeta {
 
 export default function MetasPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('metas');
   const recursos = fuente.recursos ?? biTradeApi;
   const [filtros, setFiltros] = useState<FiltrosMeta>({});
   // El `<input type="month">` se guarda aparte porque en la API el periodo son
@@ -122,24 +125,28 @@ export default function MetasPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nueva meta
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nueva meta
+          </Button>
+        )}
         <BotonesExcel recurso="metas" filtrosExport={consulta} />
-        <Button
-          variant="destructive"
-          disabled={total === 0 || vaciar.isPending}
-          onClick={() => setVaciarAbierto(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Eliminar todo
-        </Button>
+        {puedeEditar && (
+          <Button
+            variant="destructive"
+            disabled={total === 0 || vaciar.isPending}
+            onClick={() => setVaciarAbierto(true)}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            Eliminar todo
+          </Button>
+        )}
       </Encabezado>
 
       <div
@@ -268,7 +275,7 @@ export default function MetasPage() {
                 {fuente.conPuntos && (
                   <TableHead className="hidden text-right md:table-cell">Puntos</TableHead>
                 )}
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -301,29 +308,31 @@ export default function MetasPage() {
                       {formatoNumero(meta.metaPuntos)}
                     </TableCell>
                   )}
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(meta);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(meta)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(meta);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(meta)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

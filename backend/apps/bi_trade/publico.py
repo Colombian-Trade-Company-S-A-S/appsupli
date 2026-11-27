@@ -39,7 +39,7 @@ from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
-from .api_permissions import CanManageData, HasBiTradeApp
+from .api_permissions import HasBiTradeApp, PuedeCompartir, puede_compartir
 from .canales import CANALES, CLARO, TMK, Canal
 from .models import CANALES_FORMULARIO, Campana, CanalEnlace, EnlacePublico
 from .views import (
@@ -51,6 +51,17 @@ from .views import (
     opciones_de,
 )
 from .views_belkin import _calcular_tablero as _calcular_tablero_belkin
+
+#: De qué informe es cada enlace: compartirlo pide poder ver ese informe.
+INFORME_DEL_ENLACE = {
+    CanalEnlace.CLARO: 'claro',
+    CanalEnlace.HC: 'hc',
+    CanalEnlace.FALABELLA: 'falabella',
+    CanalEnlace.TMK: 'tmk',
+    CanalEnlace.BELKIN_TABLERO: 'belkin',
+    CanalEnlace.PARTNERS: 'partners',
+    CanalEnlace.BELKIN: 'belkin',
+}
 
 #: Cuánto dura un acceso antes de volver a pedir la contraseña: una jornada.
 DURACION_ACCESO = 12 * 60 * 60
@@ -336,26 +347,31 @@ class EnlacePublicoViewSet(
     """
     Crear, revocar y regenerar enlaces públicos.
 
-    Exige el permiso de edición y no solo la app: compartir el tablero con
-    alguien sin cuenta es sacar datos del negocio, no consultarlos.
+    Exige el permiso de compartir y no solo la app: compartir el tablero con
+    alguien sin cuenta es sacar datos del negocio, no consultarlos. Compartir
+    va por informe: quien comparte el de HC no ve ni revoca los de Claro.
     """
 
     queryset = EnlacePublico.objects.select_related('creado_por').order_by('-created_at')
     serializer_class = EnlacePublicoSerializer
-    permission_classes = [HasBiTradeApp, CanManageData]
+    permission_classes = [HasBiTradeApp, PuedeCompartir]
     pagination_class = None
 
     def get_queryset(self):
         # `?canal=hc` lista solo los de Homecenter, `?canal=falabella` los de
-    # Falabella: cada tablero muestra sus
-        # propios enlaces.
-        consulta = super().get_queryset()
+        # Falabella: cada tablero muestra sus propios enlaces.
+        user = self.request.user
+        propios = [c for c, informe in INFORME_DEL_ENLACE.items() if puede_compartir(user, informe)]
+        consulta = super().get_queryset().filter(canal__in=propios)
         canal = self.request.query_params.get('canal')
         return consulta.filter(canal=canal) if canal else consulta
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        informe = INFORME_DEL_ENLACE.get(serializer.validated_data.get('canal'))
+        if informe and not puede_compartir(request.user, informe):
+            raise exceptions.PermissionDenied('No tienes permiso para compartir este informe.')
         # El formulario de un plan va abierto: se diligencia a diario y no
         # muestra nada, así que no tiene contraseña que entregar.
         abierto = serializer.validated_data.get('canal') in CANALES_FORMULARIO

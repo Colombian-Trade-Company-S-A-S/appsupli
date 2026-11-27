@@ -23,7 +23,7 @@ from rest_framework.response import Response
 
 from apps.core.excel import Columna, ColumnaExport, construir_plantilla
 
-from .api_permissions import CanManageData, HasBiTradeApp
+from .api_permissions import CanManageData, HasBiTradeApp, informe_de_la_ruta, puede_editar
 from .canales import HC
 from .catalogo_reporte import CREAR, OMITIR, MarcasDelReporte, capitalizada, decision_de
 from .filters import InventarioHcFilter, MetaHcFilter, VentaHcFilter
@@ -426,6 +426,32 @@ def con_lo_creado(mensaje: str, creado: dict) -> str:
     return f'Se crearon {lista}. {mensaje}'
 
 
+def sin_permiso_para_crear(request, por_crear, decision: str) -> Response | None:
+    """
+    Crear lo que falta al importar pide poder editar eso en el informe de la
+    ruta: productos para los productos y puntos de venta para las tiendas. Sin
+    el permiso, el 403 dice cuál falta; importar sin crearlos sigue disponible.
+    """
+    if decision != CREAR:
+        return None
+    user, informe = request.user, informe_de_la_ruta(request.path)
+    faltan = []
+    if por_crear.productos and not puede_editar(user, 'productos', informe):
+        faltan.append('productos')
+    if por_crear.tiendas and not puede_editar(user, 'puntos-venta', informe):
+        faltan.append('puntos de venta')
+    if not faltan:
+        return None
+    return Response(
+        {
+            'code': 'permission_denied',
+            'message': f'No tienes permiso para crear {" ni ".join(faltan)}. Importa sin '
+            'crearlos, o pide el permiso.',
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
 def _canales_elegidos(request) -> set[str]:
     """Los canales que se eligieron; vacío es todos."""
     obtener = getattr(request.data, 'getlist', None)
@@ -723,6 +749,9 @@ class VentaHcViewSet(_PlantillaHc, VentaViewSet):
         decision = decision_de(request)
         if por_crear and decision not in (CREAR, OMITIR):
             return por_crear.pregunta()
+        sin_permiso = sin_permiso_para_crear(request, por_crear, decision)
+        if sin_permiso:
+            return sin_permiso
 
         cruce = _Cruce((fila.sku, fila.tienda) for fila in seleccion.ventas)
         if decision == CREAR:
@@ -903,6 +932,9 @@ class InventarioHcViewSet(_PlantillaHc, InventarioViewSet):
         decision = decision_de(request)
         if por_crear and decision not in (CREAR, OMITIR):
             return por_crear.pregunta()
+        sin_permiso = sin_permiso_para_crear(request, por_crear, decision)
+        if sin_permiso:
+            return sin_permiso
 
         cruce = _Cruce(lectura.inventario)
         if decision == CREAR:

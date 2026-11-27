@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import { CalendarRangeIcon } from 'lucide-react';
 import { Badge, Button, Label, Switch } from '@/shared/components/ui';
 import { formatoNumero } from '@/shared/lib/formato';
-import { useAuth } from '@/core/auth';
+import { usePermisosBi } from '../permisos';
 import {
   belkinApi,
   type AsesorApple,
@@ -457,8 +457,7 @@ const PANTALLAS: Record<ListaBelkin, (props: { puedeAdministrar: boolean }) => R
 /** El CRUD de una lista del plan Belkin; la lista sale de la URL. */
 export default function PlanBelkinListaPage() {
   const { lista: ruta } = useParams();
-  const { user } = useAuth();
-  const puedeAdministrar = !!user?.isAdmin || !!user?.permissions.includes('bi-trade:data:manage');
+  const puedeAdministrar = usePermisosBi().editar('belkin', 'plan');
   const lista = listaDeRuta(ruta);
 
   if (!lista) return <Navigate to={PLAN} replace />;

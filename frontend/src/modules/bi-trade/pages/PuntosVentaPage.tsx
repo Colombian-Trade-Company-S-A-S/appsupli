@@ -38,6 +38,7 @@ import { Encabezado, EstadoTabla } from '@/shared/components/layout';
 import { formatoNumero } from '@/shared/lib/formato';
 import { biTradeApi, type PuntoVenta, type PuntoVentaPayload } from '../api';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import { useBiTradeMutation, useOpciones, usePuntosVenta } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BotonesExcel } from '../components/BotonesExcel';
@@ -47,6 +48,8 @@ const conAsesor = (canal: string) => canal === 'claro';
 
 export default function PuntosVentaPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('puntos-venta');
   const recursos = fuente.recursos ?? biTradeApi;
   const [buscar, setBuscar] = useState('');
   const { data: puntos = [], isLoading } = usePuntosVenta({ search: buscar || undefined });
@@ -74,28 +77,32 @@ export default function PuntosVentaPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nuevo punto de venta
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nuevo punto de venta
+          </Button>
+        )}
         <BotonesExcel
           recurso="puntosVenta"
           // Solo HC exporta su catálogo; con la misma búsqueda que la tabla.
           filtrosExport={fuente.catalogoHc ? { search: buscar || undefined } : undefined}
         />
-        <Button
-          variant="destructive"
-          disabled={puntos.length === 0 || vaciar.isPending}
-          onClick={() => setVaciarAbierto(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Eliminar todo
-        </Button>
+        {puedeEditar && (
+          <Button
+            variant="destructive"
+            disabled={puntos.length === 0 || vaciar.isPending}
+            onClick={() => setVaciarAbierto(true)}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            Eliminar todo
+          </Button>
+        )}
       </Encabezado>
 
       <div className="relative max-w-md">
@@ -126,7 +133,7 @@ export default function PuntosVentaPage() {
                 {fuente.catalogoHc && <TableHead>Categoría</TableHead>}
                 {conAsesor(fuente.canal) && <TableHead>Asesor</TableHead>}
                 <TableHead>Ventas</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -165,29 +172,31 @@ export default function PuntosVentaPage() {
                     </TableCell>
                   )}
                   <TableCell className="tabular-nums">{formatoNumero(punto.ventasCount)}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(punto);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(punto)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(punto);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(punto)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

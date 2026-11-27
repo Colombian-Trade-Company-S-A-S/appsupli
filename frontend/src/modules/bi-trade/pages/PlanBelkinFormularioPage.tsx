@@ -23,7 +23,7 @@ import {
 } from '@/shared/components/ui';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
 import { Encabezado, EstadoTabla } from '@/shared/components/layout';
-import { useAuth } from '@/core/auth';
+import { usePermisosBi } from '../permisos';
 import { belkinApi, type RegistroBelkinPayload } from '../api';
 import { CompartirFormularioBelkin } from '../components/CompartirTablero';
 import { FormularioBelkin } from '../components/FormularioBelkin';
@@ -43,8 +43,7 @@ const POR_PAGINA = 15;
  * el punto elegido en vez de escribirse a mano.
  */
 export default function PlanBelkinFormularioPage() {
-  const { user } = useAuth();
-  const puedeAdministrar = !!user?.isAdmin || !!user?.permissions.includes('bi-trade:data:manage');
+  const puedeAdministrar = usePermisosBi().editar('belkin', 'plan');
   const { data: opciones } = useOpcionesBelkin();
   const [buscar, setBuscar] = useState('');
   const [pagina, setPagina] = useState(1);

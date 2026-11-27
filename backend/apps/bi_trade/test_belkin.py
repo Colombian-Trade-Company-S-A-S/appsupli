@@ -249,7 +249,9 @@ RUTA_FORMULARIO = '/api/publico/formulario'
 
 
 def _enlace(app, canal):
-    editor = crear_usuario(f'editor-{canal}@supli.tech', app, ['bi-trade:data:manage'])
+    editor = crear_usuario(
+        f'editor-{canal}@supli.tech', app, ['bi-trade:data:manage']
+    )
     datos = (
         cliente_de(editor)
         .post('/api/bi-trade/enlaces', {'nombre': 'Asesores Norte', 'canal': canal}, format='json')
@@ -532,7 +534,9 @@ def test_el_excel_por_punto_trae_todos_los_puntos_aunque_esten_en_cero(
 
 def _abrir_enlace(app, canal):
     """Crea un enlace de tablero y entra con su contraseña: devuelve token y acceso."""
-    editor = crear_usuario(f'editor-{canal}@supli.tech', app, ['bi-trade:data:manage'])
+    editor = crear_usuario(
+        f'editor-{canal}@supli.tech', app, ['bi-trade:data:manage']
+    )
     creado = (
         cliente_de(editor)
         .post('/api/bi-trade/enlaces', {'nombre': 'Gerencia', 'canal': canal}, format='json')

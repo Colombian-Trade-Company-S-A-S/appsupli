@@ -26,7 +26,8 @@ import { EsqueletoPagina } from '@/shared/components/feedback';
 import { formatoFechaHora } from '@/shared/lib/formato';
 import { cn } from '@/shared/lib/utils';
 import { adminApi, type AdminUser, type AdminUserPayload } from '../api';
-import { AYUDA_APPS, AYUDA_ROLES, ayudaDe, type Ayuda } from '../ayudas';
+import { AYUDA_ROLES, ayudaDe, type Ayuda } from '../ayudas';
+import { AccesosPorApp } from '../components/AccesosPorApp';
 import { AyudaAcceso } from '../components/AyudaAcceso';
 import { useAdminMutation, useAdminUser, useApplications, useRoles } from '../hooks';
 import { planIdDeUrl } from '../planner';
@@ -47,6 +48,7 @@ const datosDe = (usuario: AdminUser): AdminUserPayload => ({
   plannerUrl: usuario.plannerUrl,
   applications: usuario.applications,
   roles: usuario.roles,
+  extraPermissions: usuario.extraPermissions,
   password: '',
 });
 
@@ -113,7 +115,7 @@ export default function UsuarioEditarPage() {
   const set = <K extends keyof AdminUserPayload>(campo: K, valor: AdminUserPayload[K]) =>
     setDatos((prev) => (prev ? { ...prev, [campo]: valor } : prev));
 
-  const alternar = (campo: 'applications' | 'roles', idOpcion: number) =>
+  const alternar = (campo: 'roles', idOpcion: number) =>
     setDatos((prev) => {
       if (!prev) return prev;
       const actuales = prev[campo] ?? [];
@@ -283,24 +285,38 @@ export default function UsuarioEditarPage() {
       </Seccion>
 
       <Seccion
-        titulo="Aplicaciones"
-        descripcion="A qué áreas de la plataforma puede entrar."
+        titulo="Aplicaciones y permisos"
+        descripcion="Marca la app a la que entra y, dentro de ella, qué puede hacer. Cada permiso explica lo que permite."
         total={datos.applications?.length ?? 0}
       >
-        <Casillas
-          opciones={apps.map((a) => ({
-            id: a.id,
-            label: a.name,
-            ayuda: ayudaDe(AYUDA_APPS, a.code, a.description),
-          }))}
-          seleccionadas={datos.applications ?? []}
-          onToggle={(idApp) => alternar('applications', idApp)}
+        <AccesosPorApp
+          apps={apps}
+          roles={roles}
+          esAdmin={datos.kind === 'admin'}
+          accesos={{
+            applications: datos.applications ?? [],
+            roles: datos.roles ?? [],
+            extraPermissions: datos.extraPermissions ?? [],
+          }}
+          onCambio={(accesos) =>
+            setDatos((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    applications: accesos.applications,
+                    // Desmarcar un permiso que daba un rol quita ese rol.
+                    roles: accesos.roles,
+                    extraPermissions: accesos.extraPermissions,
+                  }
+                : prev,
+            )
+          }
         />
       </Seccion>
 
       <Seccion
         titulo="Roles"
-        descripcion="Paquetes de permisos que se suman a los accesos directos."
+        descripcion="Paquetes de permisos ya armados. Lo que da un rol aparece marcado arriba, en su app, con el nombre del rol; si desmarcas uno de esos permisos, el rol se quita y lo demás que daba queda como permisos sueltos."
         total={datos.roles?.length ?? 0}
       >
         <Casillas

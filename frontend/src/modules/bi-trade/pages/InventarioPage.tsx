@@ -34,6 +34,7 @@ import {
   type ResumenInventario,
 } from '../api';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import {
   useBiTradeMutation,
   useListado,
@@ -65,6 +66,8 @@ interface FiltrosInventario {
 
 export default function InventarioPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('inventario');
   const recursos = fuente.recursos ?? biTradeApi;
   const [filtros, setFiltros] = useState<FiltrosInventario>({});
   const [pagina, setPagina] = useState(1);
@@ -114,25 +117,29 @@ export default function InventarioPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nuevo registro
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nuevo registro
+          </Button>
+        )}
         <BotonesExcel recurso="inventario" filtrosExport={consulta} />
-        {fuente.importarQuery && <ImportarQuery importar={fuente.importarQuery} />}
-        <Button
-          variant="destructive"
-          disabled={total === 0 || vaciar.isPending}
-          onClick={() => setVaciarAbierto(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Eliminar todo
-        </Button>
+        {puedeEditar && fuente.importarQuery && <ImportarQuery importar={fuente.importarQuery} />}
+        {puedeEditar && (
+          <Button
+            variant="destructive"
+            disabled={total === 0 || vaciar.isPending}
+            onClick={() => setVaciarAbierto(true)}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            Eliminar todo
+          </Button>
+        )}
       </Encabezado>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -257,7 +264,7 @@ export default function InventarioPage() {
                 <TableHead>Producto</TableHead>
                 <TableHead className="hidden lg:table-cell">Marca</TableHead>
                 <TableHead className="text-right">Existencias</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -283,29 +290,31 @@ export default function InventarioPage() {
                       <span className="tabular-nums">{formatoNumero(fila.cantidadInventario)}</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(fila);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(fila)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(fila);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(fila)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

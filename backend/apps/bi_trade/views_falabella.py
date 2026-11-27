@@ -63,6 +63,7 @@ from .views_hc import (
     _error,
     cargar_ventas_por_dia,
     con_lo_creado,
+    sin_permiso_para_crear,
 )
 
 
@@ -374,6 +375,9 @@ class VentaFalabellaViewSet(_PlantillaFalabella, VentaViewSet):
         decision = decision_de(request)
         if por_crear and decision not in (CREAR, OMITIR):
             return por_crear.pregunta(cruce, (local for _, local in pares))
+        sin_permiso = sin_permiso_para_crear(request, por_crear, decision)
+        if sin_permiso:
+            return sin_permiso
         if decision == CREAR:
             # Lo que se va a crear cuenta como existente al cruzar.
             cruce.productos |= por_crear.skus
@@ -496,6 +500,9 @@ class InventarioFalabellaViewSet(_PlantillaFalabella, InventarioViewSet):
         decision = decision_de(request)
         if por_crear and decision not in (CREAR, OMITIR):
             return por_crear.pregunta(cruce, (local for _, local in lectura.inventario))
+        sin_permiso = sin_permiso_para_crear(request, por_crear, decision)
+        if sin_permiso:
+            return sin_permiso
         if decision == CREAR:
             cruce.productos |= por_crear.skus
             cruce.puntos |= por_crear.locales

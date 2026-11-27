@@ -112,6 +112,7 @@ def _en_uso(nombre: str, dependencias: list[tuple[str, int]]) -> Response | None
 class RegionalPartnerViewSet(viewsets.ModelViewSet):
     # Los conteos van anotados: con `prefetch_related` se traían todos los
     # registros del plan a memoria solo para contarlos.
+    modulo_edicion = 'plan'
     queryset = RegionalPartner.objects.annotate(
         conteo_puntos_venta=Count('puntos_venta', distinct=True),
         conteo_registros=Count('registros', distinct=True),
@@ -135,6 +136,7 @@ class RegionalPartnerViewSet(viewsets.ModelViewSet):
 
 
 class PuntoVentaPartnerViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = (
         PuntoVentaPartner.objects.select_related('id_regional')
         .annotate(conteo_registros=Count('registros'))
@@ -165,6 +167,7 @@ class PuntoVentaPartnerViewSet(viewsets.ModelViewSet):
 
 
 class ProductoPartnerViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = ProductoPartner.objects.annotate(conteo_registros=Count('registros')).order_by(
         'nombre_producto'
     )
@@ -181,6 +184,7 @@ class ProductoPartnerViewSet(viewsets.ModelViewSet):
 
 
 class RegistroPartnerViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = RegistroPartner.objects.select_related(
         'id_regional', 'id_punto_venta', 'id_producto', 'registrado_por'
     ).order_by('-fecha_recomendacion', '-id_registro')
@@ -297,6 +301,7 @@ def _a_decimal(valor) -> Decimal | None:
 class MetaPartnerViewSet(viewsets.ModelViewSet):
     """Las metas del plan. Se suben con el mismo Excel que Trade arma cada mes."""
 
+    modulo_edicion = 'plan'
     queryset = MetaPartner.objects.select_related(
         'id_punto_venta', 'id_punto_venta__id_regional'
     ).order_by('-anio', '-mes', 'id_punto_venta__nombre_pdv', 'marca')

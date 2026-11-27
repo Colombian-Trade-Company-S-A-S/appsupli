@@ -31,7 +31,7 @@ from apps.core.excel import (
 )
 from apps.core.pagination import StandardPagination
 
-from .api_permissions import CanManageData, HasBiTradeApp, ReadOnlyOrCanManage
+from .api_permissions import CanManageData, HasBiTradeApp, PuedeEditar, ReadOnlyOrCanManage
 from .belkin import registros_del_informe
 from .calendario import dias_del_mes, dias_habiles, es_habil, festivos
 from .canales import CLARO, Canal
@@ -681,6 +681,7 @@ def aviso_sin_meta(omitidas: int) -> str:
 
 
 class PuntoVentaViewSet(BiTradeViewSet):
+    modulo_edicion = 'puntos-venta'
     queryset = PuntoVenta.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_pdv')
     serializer_class = PuntoVentaSerializer
     search_fields = ('id_punto_venta', 'nombre_pdv')
@@ -735,6 +736,7 @@ class PuntoVentaViewSet(BiTradeViewSet):
 
 
 class ProductoViewSet(BiTradeViewSet):
+    modulo_edicion = 'productos'
     canal = CLARO
     queryset = Producto.objects.annotate(conteo_ventas=Count('ventas')).order_by('nombre_producto')
     serializer_class = ProductoSerializer
@@ -800,6 +802,7 @@ class ProductoViewSet(BiTradeViewSet):
 
 
 class VentaViewSet(BiTradeViewSet):
+    modulo_edicion = 'ventas'
     canal = CLARO
     queryset = Venta.objects.select_related('id_producto', 'id_punto_venta').order_by(
         '-fecha_venta', '-id_venta'
@@ -928,6 +931,7 @@ class VentaViewSet(BiTradeViewSet):
 
 
 class InventarioViewSet(BiTradeViewSet):
+    modulo_edicion = 'inventario'
     canal = CLARO
     queryset = Inventario.objects.select_related('id_producto', 'id_punto_venta').order_by(
         'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
@@ -991,6 +995,7 @@ class InventarioViewSet(BiTradeViewSet):
 
 
 class MetaViewSet(BiTradeViewSet):
+    modulo_edicion = 'metas'
     canal = CLARO
     queryset = MetaComercial.objects.select_related('id_producto', 'id_punto_venta').order_by(
         'id_punto_venta__nombre_pdv', 'id_producto__nombre_producto'
@@ -1928,7 +1933,7 @@ MODOS = (MODO_COMPLETAR, MODO_SOBRESCRIBIR)
 
 
 @api_view(['POST'])
-@permission_classes([HasBiTradeApp, CanManageData])
+@permission_classes([HasBiTradeApp, PuedeEditar('ventas', 'inventario')])
 @parser_classes([MultiPartParser])
 def importar_informe(request):
     """Carga el informe del ERP en las tablas de Claro."""
@@ -1936,7 +1941,7 @@ def importar_informe(request):
 
 
 @api_view(['GET'])
-@permission_classes([HasBiTradeApp, CanManageData])
+@permission_classes([HasBiTradeApp, PuedeEditar('ventas', 'inventario')])
 def informe_del_correo(request):
     """
     El último informe del ERP que llegó al buzón compartido, sin bajarlo.
@@ -2225,6 +2230,7 @@ def _importar_inventario(lectura, productos, puntos, canal: Canal) -> dict:
 class CampanaViewSet(BiTradeViewSet):
     """CRUD de las campañas de tickets. Las reglas se editan aquí, no en código."""
 
+    modulo_edicion = 'metas'
     queryset = Campana.objects.prefetch_related(
         'escalas', 'aceleradores', 'productos_foco', 'productos_cargador'
     ).order_by('-desde', 'nombre')

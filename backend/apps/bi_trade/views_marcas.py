@@ -27,6 +27,7 @@ def productos_de(marca: Marca) -> int:
 
 
 class MarcaViewSet(BiTradeViewSet):
+    modulo_edicion = 'productos'
     serializer_class = MarcaSerializer
     search_fields = ('nombre',)
     nombre_plural = 'las marcas'

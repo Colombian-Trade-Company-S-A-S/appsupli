@@ -14,7 +14,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/shared/components/ui';
-import { COMANDOS_POR_APP } from './comandos';
+import { COMANDOS_POR_APP, cumpleRequisito } from './comandos';
 
 /** Mac usa ⌘, el resto Ctrl. Se decide una vez, no en cada render. */
 const esMac =
@@ -50,8 +50,7 @@ export function CommandPalette({
 
   if (!user) return null;
 
-  const puede = (permiso?: string) =>
-    !permiso || user.isAdmin || user.permissions.includes(permiso);
+  const tiene = (codigo: string) => user.isAdmin || user.permissions.includes(codigo);
 
   // Los sub-módulos también se buscan y traen sus atajos (Valoración, Objetivos).
   const apps = aplanarApps(user.applications);
@@ -59,7 +58,7 @@ export function CommandPalette({
   const atajosDeApps = apps
     .map((app) => ({
       app,
-      comandos: (COMANDOS_POR_APP[app.code] ?? []).filter((c) => puede(c.permiso)),
+      comandos: (COMANDOS_POR_APP[app.code] ?? []).filter((c) => cumpleRequisito(c.permiso, tiene)),
     }))
     .filter(({ comandos }) => comandos.length > 0);
 

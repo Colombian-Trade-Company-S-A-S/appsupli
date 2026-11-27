@@ -33,6 +33,7 @@ import {
   type ResumenMetasPunto,
 } from '../api';
 import { useFuente } from '../fuente';
+import { usePuedeEditar } from '../permisos';
 import { useBiTradeMutation, useListado, useOpciones, usePuntosVenta, useResumen } from '../hooks';
 import { CampoSelect } from '../components/CampoSelect';
 import { BotonesExcel } from '../components/BotonesExcel';
@@ -68,6 +69,8 @@ const mesDe = (fecha: string) => {
  */
 export default function MetasHcPage() {
   const fuente = useFuente();
+  // Sin permiso de edición, la tabla se ve pero sin crear, importar, editar ni borrar.
+  const puedeEditar = usePuedeEditar('metas');
   const [filtros, setFiltros] = useState<FiltrosMeta>({});
   // El `<input type="month">` va aparte: en la API el periodo son `anio` y `mes`.
   const [periodo, setPeriodo] = useState('');
@@ -118,24 +121,28 @@ export default function MetasHcPage() {
           <ArrowLeftIcon data-icon="inline-start" />
           Tablero
         </Button>
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nueva meta
-        </Button>
+        {puedeEditar && (
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nueva meta
+          </Button>
+        )}
         <BotonesExcel recurso="metas" filtrosExport={consulta} />
-        <Button
-          variant="destructive"
-          disabled={total === 0 || vaciar.isPending}
-          onClick={() => setVaciarAbierto(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Eliminar todo
-        </Button>
+        {puedeEditar && (
+          <Button
+            variant="destructive"
+            disabled={total === 0 || vaciar.isPending}
+            onClick={() => setVaciarAbierto(true)}
+          >
+            <Trash2Icon data-icon="inline-start" />
+            Eliminar todo
+          </Button>
+        )}
       </Encabezado>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -224,7 +231,7 @@ export default function MetasHcPage() {
                 <TableHead>Punto de venta</TableHead>
                 <TableHead className="hidden lg:table-cell">Regional</TableHead>
                 <TableHead className="text-right">Meta</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -243,29 +250,31 @@ export default function MetasHcPage() {
                   <TableCell className="text-right tabular-nums">
                     {formatoMoneda(meta.totalMeta)}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setEditando(meta);
-                          setAbierto(true);
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Eliminar"
-                        onClick={() => setPorBorrar(meta)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {puedeEditar && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar"
+                          onClick={() => {
+                            setEditando(meta);
+                            setAbierto(true);
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Eliminar"
+                          onClick={() => setPorBorrar(meta)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

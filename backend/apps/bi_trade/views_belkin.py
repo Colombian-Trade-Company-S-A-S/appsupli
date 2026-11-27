@@ -55,6 +55,7 @@ FILTRO_FUERA = 'fuera'
 
 
 class RegionalBelkinViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = RegionalBelkin.objects.annotate(
         conteo_puntos_venta=Count('puntos_venta')
     ).order_by('nombre')
@@ -73,6 +74,7 @@ class RegionalBelkinViewSet(viewsets.ModelViewSet):
 
 
 class PuntoVentaBelkinViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = (
         PuntoVentaBelkin.objects.select_related('id_regional')
         .annotate(
@@ -100,6 +102,7 @@ class PuntoVentaBelkinViewSet(viewsets.ModelViewSet):
 
 
 class AsesorAppleViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = (
         AsesorApple.objects.select_related(
             'id_punto_venta', 'id_punto_venta__id_regional', 'reemplazado_por'
@@ -212,6 +215,7 @@ def _fecha(valor, campo: str, obligatoria: bool = False) -> date | None:
 
 
 class CategoriaBelkinViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = CategoriaBelkin.objects.annotate(conteo_productos=Count('productos')).order_by(
         'nombre'
     )
@@ -228,6 +232,7 @@ class CategoriaBelkinViewSet(viewsets.ModelViewSet):
 
 
 class ProductoBelkinViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = (
         ProductoBelkin.objects.select_related('id_categoria')
         .annotate(conteo_registros=Count('registros'))
@@ -246,6 +251,7 @@ class ProductoBelkinViewSet(viewsets.ModelViewSet):
 
 
 class RegistroBelkinViewSet(viewsets.ModelViewSet):
+    modulo_edicion = 'plan'
     queryset = RegistroBelkin.objects.select_related(
         'id_punto_venta',
         'id_punto_venta__id_regional',

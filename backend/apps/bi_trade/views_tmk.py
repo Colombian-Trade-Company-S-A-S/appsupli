@@ -16,7 +16,7 @@ from rest_framework.response import Response
 
 from apps.core.excel import Columna
 
-from .api_permissions import CanManageData, HasBiTradeApp
+from .api_permissions import HasBiTradeApp, PuedeEditar
 from .canales import TMK
 from .filters import InventarioTmkFilter, MetaTmkFilter, VentaTmkFilter
 from .models import (
@@ -236,7 +236,7 @@ def cumplimiento_diario_tmk_exportar(request):
 
 
 @api_view(['POST'])
-@permission_classes([HasBiTradeApp, CanManageData])
+@permission_classes([HasBiTradeApp, PuedeEditar('ventas', 'inventario')])
 @parser_classes([MultiPartParser])
 def importar_informe_tmk(request):
     """El informe del ERP, igual que en Claro, pero sobre las tablas `_tmk`."""

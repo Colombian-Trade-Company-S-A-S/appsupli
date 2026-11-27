@@ -14,9 +14,21 @@ export interface AdminPermission {
   id: number;
   code: string;
   name: string;
+  /** Qué puede hacer la persona con este permiso, para quien reparte accesos. */
+  description: string;
+  /** Cómo se agrupa dentro de la app («Informes que puede ver»…). Vacío: suelto. */
+  group: string;
+  order: number;
+  /** El permiso dentro del que va (en BI Trade, su informe). Null: va suelto en la app. */
+  parent: number | null;
+  parentName: string;
   application: number;
   applicationName: string;
 }
+
+/** «Informe de Ventas HC › Cargar y editar ventas»: para las listas sin jerarquía. */
+export const nombreDePermiso = (permiso: Pick<AdminPermission, 'name' | 'parentName'>) =>
+  permiso.parentName ? `${permiso.parentName} › ${permiso.name}` : permiso.name;
 
 export interface AdminApplication {
   id: number;
@@ -27,6 +39,8 @@ export interface AdminApplication {
   icon: string;
   order: number;
   isActive: boolean;
+  /** Si es un sub-módulo, la app que lo contiene. */
+  parent: number | null;
   permissions: AdminPermission[];
   userCount: number;
 }
@@ -72,6 +86,8 @@ export interface AdminUser {
   managerName: string;
   isActive: boolean;
   isAdmin: boolean;
+  /** Sin correo no hay cómo entrar, aunque exista (asesores y promotores). */
+  puedeIniciarSesion: boolean;
   /** Si su plan de Planner entra en la medición semanal (lo decide People). */
   medirPlanner: boolean;
   /** El enlace de su plan en Planner: es el plan que mide Ejecución Planner. */
@@ -83,6 +99,33 @@ export interface AdminUser {
   roleNames: string[];
   extraPermissions: number[];
 }
+
+/**
+ * Una fila del listado de usuarios: lo que muestran la tabla y el «equipo a
+ * cargo». Los roles, permisos y demás vienen en el detalle (`users.get`).
+ */
+export type AdminUserFila = Pick<
+  AdminUser,
+  | 'id'
+  | 'email'
+  | 'username'
+  | 'firstName'
+  | 'lastName'
+  | 'fullName'
+  | 'foto'
+  | 'destacado'
+  | 'area'
+  | 'areaName'
+  | 'position'
+  | 'kind'
+  | 'manager'
+  | 'managerName'
+  | 'isActive'
+  | 'isAdmin'
+  | 'puedeIniciarSesion'
+  | 'lastLoginAt'
+  | 'applicationNames'
+>;
 
 /**
  * Campos que el formulario envía. Área, cargo, jefe y el resto del organigrama
@@ -156,7 +199,7 @@ const recurso = <T, P>(ruta: string) => ({
 export const adminApi = {
   // Sin crear ni borrar: las personas entran y salen con la sincronización de Odoo.
   users: {
-    list: (params?: Record<string, unknown>) => api.getList<AdminUser>('/admin/users', params),
+    list: (params?: Record<string, unknown>) => api.getList<AdminUserFila>('/admin/users', params),
     get: (id: number) => api.get<AdminUser>(`/admin/users/${id}`),
     update: (id: number, payload: AdminUserPayload) =>
       api.patch<AdminUser>(`/admin/users/${id}`, payload),
