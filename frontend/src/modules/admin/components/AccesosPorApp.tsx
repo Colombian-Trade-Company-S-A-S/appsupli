@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Badge, Checkbox } from '@/shared/components/ui';
 import { cn } from '@/shared/lib/utils';
 import type { AdminApplication, AdminPermission, AdminRole } from '../api';
-import { AYUDA_APPS, AYUDA_PERMISOS, ayudaDe } from '../ayudas';
+import { AYUDA_APPS, AYUDA_PERMISOS, AYUDA_ROLES, ayudaDe } from '../ayudas';
 import { AyudaAcceso } from './AyudaAcceso';
 
 /** Lo que se edita de los accesos de una persona. */
@@ -27,10 +27,15 @@ const TODO_EN_LA_APP: Record<string, string> = {
  *
  *   App → (sub-módulo) → permiso → lo que va dentro del permiso
  *
- * Cada app es una tarjeta: al marcarla se despliegan sus permisos, agrupados
- * y cada uno con lo que permite. Un permiso con otros adentro —en BI Trade,
- * cada informe— es un recuadro propio: al marcarlo aparece lo que la persona
- * puede hacer en él (cargar ventas, compartir…), y solo ahí.
+ * Cada app es una tarjeta: al marcarla se despliegan sus roles y sus permisos,
+ * agrupados y cada uno con lo que permite. Un permiso con otros adentro —en BI
+ * Trade, cada informe— es un recuadro propio: al marcarlo aparece lo que la
+ * persona puede hacer en él (cargar ventas, compartir…), y solo ahí.
+ *
+ * Un rol va en la app de sus permisos. Si da permisos en varios sub-módulos
+ * de la misma app (los de Supli Performance dan en Objetivos y en Planner),
+ * va en esa app, arriba de los sub-módulos. Si no da permisos o los da en
+ * apps distintas, va al final, en «Otros roles».
  *
  * Lo marcado es lo que la persona tiene de verdad, venga de donde venga:
  *
@@ -76,6 +81,38 @@ export function AccesosPorApp({
     accesos.applications.includes(app.id) ||
     app.permissions.some((p) => tienePermiso(p.id)) ||
     hijas(app).some(entra);
+
+  // Cada rol, en la tarjeta de la app (o sub-módulo) donde da sus permisos.
+  const appDePermiso = new Map<number, AdminApplication>();
+  for (const app of apps) for (const p of app.permissions) appDePermiso.set(p.id, app);
+  const raizDe = (app: AdminApplication) =>
+    (app.parent && apps.find((a) => a.id === app.parent)) || app;
+  const rolesPorApp = new Map<number, RolEnTarjeta[]>();
+  const otrosRoles: RolEnTarjeta[] = [];
+  for (const rol of [...roles].sort((a, b) => a.name.localeCompare(b.name))) {
+    const suyas = [
+      ...new Set(rol.permissions.map((id) => appDePermiso.get(id)).filter((a) => !!a)),
+    ].sort((a, b) => a.order - b.order);
+    const raicesSuyas = new Set(suyas.map((a) => raizDe(a).id));
+    const lugar =
+      suyas.length === 1 ? suyas[0] : raicesSuyas.size === 1 ? raizDe(suyas[0]) : undefined;
+    // En la app de arriba se dice en cuáles de sus sub-módulos da permisos.
+    const enRol = { rol, en: suyas.length > 1 ? suyas.map((a) => a.name) : [] };
+    if (lugar) rolesPorApp.set(lugar.id, [...(rolesPorApp.get(lugar.id) ?? []), enRol]);
+    else otrosRoles.push(enRol);
+  }
+  const rolesDe = (app: AdminApplication) => rolesPorApp.get(app.id) ?? [];
+  const tieneRol = (id: number) => accesos.roles.includes(id);
+
+  // Con el rol entra a la app: no hace falta marcarla. Al quitarlo pierde lo
+  // que daba, salvo lo que tenga marcado aparte.
+  const alternarRol = (rol: AdminRole) =>
+    onCambio({
+      ...accesos,
+      roles: tieneRol(rol.id)
+        ? accesos.roles.filter((id) => id !== rol.id)
+        : [...accesos.roles, rol.id],
+    });
 
   /**
    * Quita estos permisos aunque vengan de un rol: cada rol que dé alguno se
@@ -144,22 +181,107 @@ export function AccesosPorApp({
       {esAdmin && (
         <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
           <InfoIcon className="mt-0.5 size-4 shrink-0 text-primary" />
-          Es administrador: entra a todas las apps y tiene todos los permisos, marques lo que
-          marques aquí.
+          <span>
+            Es administrador: entra a todas las apps y tiene todos los permisos, así que aquí no hay
+            nada que marcar. Para darle accesos uno por uno, apaga «Administrador» en{' '}
+            <span className="font-medium">Estado y medición</span>.
+          </span>
         </p>
       )}
-      {raices.map((app) => (
-        <TarjetaApp
-          key={app.id}
-          app={app}
-          hijas={hijas(app)}
-          entra={entra}
-          tienePermiso={tienePermiso}
-          porRol={porRol}
-          onApp={alternarApp}
-          onPermiso={alternarPermiso}
-        />
-      ))}
+      {/* Al administrador no le cambia nada lo marcado: se ve, pero no se toca.
+          Lo que tenga guardado vuelve a valer si deja de ser administrador. */}
+      <div
+        inert={esAdmin}
+        aria-disabled={esAdmin || undefined}
+        className={cn('flex flex-col gap-3', esAdmin && 'opacity-50 select-none')}
+      >
+        {raices.map((app) => (
+          <TarjetaApp
+            key={app.id}
+            app={app}
+            hijas={hijas(app)}
+            entra={entra}
+            tienePermiso={tienePermiso}
+            porRol={porRol}
+            onApp={alternarApp}
+            onPermiso={alternarPermiso}
+            rolesDe={rolesDe}
+            tieneRol={tieneRol}
+            onRol={alternarRol}
+          />
+        ))}
+        {otrosRoles.length > 0 && (
+          <div className="flex flex-col gap-2 rounded-xl border p-3">
+            <span className="font-medium">Otros roles</span>
+            <span className="text-xs text-muted-foreground">
+              No dan permisos en ninguna app, o los dan en apps distintas.
+            </span>
+            <Roles roles={otrosRoles} tieneRol={tieneRol} onRol={alternarRol} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Un rol y, si va en una app con sub-módulos, en cuáles de ellos da permisos. */
+interface RolEnTarjeta {
+  rol: AdminRole;
+  en: string[];
+}
+
+interface PropsRoles {
+  rolesDe: (app: AdminApplication) => RolEnTarjeta[];
+  tieneRol: (id: number) => boolean;
+  onRol: (rol: AdminRole) => void;
+}
+
+const lista = (nombres: string[]) =>
+  nombres.length > 1 ? `${nombres.slice(0, -1).join(', ')} y ${nombres.at(-1)}` : nombres[0];
+
+/** Los roles de una app: paquetes de permisos ya armados, antes que los sueltos. */
+function Roles({
+  roles,
+  tieneRol,
+  onRol,
+}: Omit<PropsRoles, 'rolesDe'> & { roles: RolEnTarjeta[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TituloGrupo>Roles</TituloGrupo>
+      <p className="text-xs text-muted-foreground text-pretty">
+        Paquetes de permisos ya armados: lo que da queda marcado abajo con el nombre del rol.
+      </p>
+      <div className="grid gap-2 md:grid-cols-2">
+        {roles.map(({ rol, en }) => {
+          const marcado = tieneRol(rol.id);
+          const ayuda = ayudaDe(AYUDA_ROLES, rol.code, rol.description);
+          const cuantos = rol.permissions.length;
+          return (
+            <div
+              key={rol.id}
+              className={cn(
+                'flex items-start rounded-lg border pr-1.5 text-sm transition-colors',
+                marcado && 'border-primary/40 bg-primary/5',
+              )}
+            >
+              <label className="flex min-w-0 flex-1 cursor-pointer gap-3 p-2.5">
+                <Checkbox className="mt-0.5" checked={marcado} onCheckedChange={() => onRol(rol)} />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="font-medium">{rol.name}</span>
+                  <span className="text-xs text-muted-foreground text-pretty">
+                    {cuantos === 0
+                      ? 'No da ningún permiso.'
+                      : `Da ${cuantos} ${cuantos === 1 ? 'permiso' : 'permisos'}${
+                          en.length > 0 ? ` en ${lista(en)}` : ''
+                        }.`}
+                  </span>
+                </span>
+              </label>
+              {ayuda && <AyudaAcceso titulo={rol.name} ayuda={ayuda} />}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -192,17 +314,29 @@ function TarjetaApp({
   porRol,
   onApp,
   onPermiso,
-}: PropsPermisos & {
-  app: AdminApplication;
-  hijas: AdminApplication[];
-  entra: (app: AdminApplication) => boolean;
-  onApp: (app: AdminApplication) => void;
-}) {
+  rolesDe,
+  tieneRol,
+  onRol,
+}: PropsPermisos &
+  PropsRoles & {
+    app: AdminApplication;
+    hijas: AdminApplication[];
+    entra: (app: AdminApplication) => boolean;
+    onApp: (app: AdminApplication) => void;
+  }) {
   const todas = [app, ...hijas];
   const activa = entra(app);
   const [abierta, setAbierta] = useState(activa);
   const desplegada = abierta || activa;
-  const conPermisos = todas.some((a) => a.permissions.length > 0) || hijas.length > 0;
+  const conPermisos =
+    todas.some((a) => a.permissions.length > 0 || rolesDe(a).length > 0) || hijas.length > 0;
+  const rolesMarcados = todas.flatMap(rolesDe).filter(({ rol }) => tieneRol(rol.id)).length;
+  const detalle = [
+    rolesMarcados > 0 && `${rolesMarcados} ${rolesMarcados === 1 ? 'rol' : 'roles'}`,
+    hijas.length === 0 && app.permissions.length > 0 && resumen(app, tienePermiso),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div
@@ -216,9 +350,7 @@ function TarjetaApp({
           <Checkbox checked={activa} onCheckedChange={() => onApp(app)} />
           <span className="flex min-w-0 flex-col">
             <span className="truncate font-medium">{app.name}</span>
-            {hijas.length === 0 && app.permissions.length > 0 && (
-              <span className="text-xs text-muted-foreground">{resumen(app, tienePermiso)}</span>
-            )}
+            {detalle && <span className="text-xs text-muted-foreground">{detalle}</span>}
           </span>
         </label>
         {(() => {
@@ -245,6 +377,9 @@ function TarjetaApp({
 
       {desplegada && conPermisos && (
         <div className="flex flex-col gap-4 border-t px-3 pt-3 pb-4">
+          {rolesDe(app).length > 0 && (
+            <Roles roles={rolesDe(app)} tieneRol={tieneRol} onRol={onRol} />
+          )}
           {app.permissions.length > 0 && (
             <Permisos
               app={app}
@@ -266,6 +401,9 @@ function TarjetaApp({
                   return ayuda ? <AyudaAcceso titulo={hija.name} ayuda={ayuda} /> : null;
                 })()}
               </div>
+              {rolesDe(hija).length > 0 && (
+                <Roles roles={rolesDe(hija)} tieneRol={tieneRol} onRol={onRol} />
+              )}
               {hija.permissions.length > 0 && (
                 <Permisos
                   app={hija}

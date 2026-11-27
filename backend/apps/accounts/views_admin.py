@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
-from .api_permissions import IsPlatformAdmin
+from .api_permissions import VeUsuariosOAdmin
 from .models import Application, Area, Permission, Role, User
 from .serializers_admin import (
     AdminUserListaSerializer,
@@ -18,9 +18,12 @@ from .serializers_admin import (
 
 
 class AdminViewSet(viewsets.ModelViewSet):
-    """Base: todo el módulo exige ser administrador de la plataforma."""
+    """
+    Base: cambiar algo exige ser administrador de la plataforma; consultar,
+    también lo puede quien tiene «Ver usuarios».
+    """
 
-    permission_classes = [IsPlatformAdmin]
+    permission_classes = [VeUsuariosOAdmin]
 
 
 # Los conteos de usuarios van anotados en la misma consulta: con `users.count`
@@ -32,7 +35,7 @@ _CONTEO_USUARIOS = Count('users', distinct=True)
 class AreaViewSet(viewsets.ReadOnlyModelViewSet):
     """Solo lectura: las áreas vienen de Odoo con la sincronización."""
 
-    permission_classes = [IsPlatformAdmin]
+    permission_classes = [VeUsuariosOAdmin]
     queryset = Area.objects.annotate(conteo_usuarios=_CONTEO_USUARIOS).order_by('name')
     serializer_class = AreaSerializer
     search_fields = ('name',)

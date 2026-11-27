@@ -1,4 +1,5 @@
 import { BuildingIcon, DatabaseIcon, KeyRoundIcon, LayoutGridIcon, UsersIcon } from 'lucide-react';
+import { useAuth } from '@/core/auth';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui';
 import { ApplicationsTab } from '../components/ApplicationsTab';
 import { AreasTab } from '../components/AreasTab';
@@ -6,8 +7,28 @@ import { OdooTab } from '../components/OdooTab';
 import { RolesTab } from '../components/RolesTab';
 import { UsersTab } from '../components/UsersTab';
 
-/** Módulo de Administración: usuarios, áreas, aplicaciones, roles y la integración con Odoo. */
+/**
+ * Módulo de Administración: usuarios, áreas, aplicaciones, roles y la
+ * integración con Odoo. Quien no es administrador y entra con «Ver usuarios»
+ * solo ve la lista de personas, para consultar.
+ */
 export default function AdminPage() {
+  const esAdmin = !!useAuth().user?.isAdmin;
+
+  if (!esAdmin) {
+    return (
+      <div className="flex flex-col gap-6">
+        <header className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Usuarios</h1>
+          <p className="text-sm text-muted-foreground">
+            Las personas de la compañía: su área, cargo, jefe y a qué entra cada una.
+          </p>
+        </header>
+        <UsersTab />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">

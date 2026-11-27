@@ -82,9 +82,15 @@ class Departamento(TimeStampedModel):
         return cadena[::-1]
 
 
-#: El código de la app de Administración: es la única que no se reparte, porque
-#: solo entra la cuenta de tipo Administrador (`User.is_admin`).
+#: El código de la app de Administración. No basta con tenerla asignada: la
+#: maneja la cuenta de tipo Administrador (`User.is_admin`) y, solo para
+#: consultar las personas, quien tiene uno de `PERMISOS_VER_USUARIOS`.
 APP_ADMINISTRACION = 'admin'
+
+#: «Ver usuarios» (y «Crear, editar e inactivar», que lo incluye): con alguno,
+#: quien no es Administrador entra a Administración a consultar la lista y el
+#: detalle de las personas, sin cambiar nada.
+PERMISOS_VER_USUARIOS = ('admin:users:view', 'admin:users:manage')
 
 
 class Application(TimeStampedModel):
@@ -381,23 +387,34 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         extra = self.extra_permissions.values_list('code', flat=True)
         return sorted(set(from_roles) | set(extra))
 
+    def puede_ver_usuarios(self) -> bool:
+        """
+        Si entra a Administración a consultar las personas: el Administrador o
+        quien tiene «Ver usuarios», suelto o por un rol. Consultar, no editar.
+        """
+        if self.is_admin:
+            return True
+        return (
+            Permission.objects.filter(code__in=PERMISOS_VER_USUARIOS)
+            .filter(models.Q(roles__users=self) | models.Q(users=self))
+            .exists()
+        )
+
     def get_accessible_applications(self):
         """Apps activas a las que puede entrar."""
         active = Application.objects.filter(is_active=True)
         if self.is_admin:
             return active
-        propias = (
-            active.filter(
-                models.Q(users=self)
-                | models.Q(permissions__roles__users=self)
-                | models.Q(permissions__users=self)
-            )
-            # A Administración solo entra la cuenta de tipo Administrador (así lo
-            # exigen su API y su ruta): aunque alguien la tenga asignada o tenga
-            # alguno de sus permisos, no se le ofrece en el menú.
-            .exclude(code=APP_ADMINISTRACION)
-            .distinct()
+        propias = active.filter(
+            models.Q(users=self)
+            | models.Q(permissions__roles__users=self)
+            | models.Q(permissions__users=self)
         )
+        # A Administración no basta con tenerla asignada (así lo exigen su API
+        # y su ruta): sin «Ver usuarios» entraría a una sección vacía.
+        if not self.puede_ver_usuarios():
+            propias = propias.exclude(code=APP_ADMINISTRACION)
+        propias = propias.distinct()
         # Un sub-módulo arrastra a su contenedor: sin él, el menú no tendría
         # de dónde colgarlo aunque la persona sí tenga acceso al sub-módulo.
         ids = set(propias.values_list('id', flat=True))

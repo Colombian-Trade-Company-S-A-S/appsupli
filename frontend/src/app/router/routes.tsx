@@ -6,7 +6,6 @@ import { PublicLayout } from '@/app/layouts/PublicLayout';
 import { EsqueletoPagina, FullPageLoader } from '@/shared/components/feedback';
 import { PublicOnly } from './PublicOnly';
 import { RequireAdmin } from './RequireAdmin';
-import { RequireAdminDuranteMantenimiento } from './RequireAdminDuranteMantenimiento';
 import { RequireApp } from './RequireApp';
 import { RequireAuth } from './RequireAuth';
 import { RequirePermiso } from './RequirePermiso';
@@ -164,22 +163,30 @@ const routes: RouteObject[] = [
     children: [
       {
         path: 'inicio',
-        element: (
-          <RequireAdminDuranteMantenimiento>
-            <AppLayout />
-          </RequireAdminDuranteMantenimiento>
-        ),
+        element: <AppLayout />,
         children: [
           { index: true, element: withSuspense(<HomePage />) },
           { path: 'perfil', element: withSuspense(<ProfilePage />) },
           {
-            element: <RequireAdmin />,
+            // Con «Ver usuarios» se consulta la lista y el detalle (el
+            // administrador tiene todos los permisos); editar es solo suyo.
+            element: (
+              <RequirePermiso
+                permiso={['admin:users:view', 'admin:users:manage']}
+                volverA="/inicio"
+              />
+            ),
             children: [
               { path: 'admin', element: withSuspense(<AdminPage />) },
               { path: 'admin/usuarios/:id', element: withSuspense(<UsuarioDetallePage />) },
               {
-                path: 'admin/usuarios/:id/editar',
-                element: withSuspense(<UsuarioEditarPage />),
+                element: <RequireAdmin />,
+                children: [
+                  {
+                    path: 'admin/usuarios/:id/editar',
+                    element: withSuspense(<UsuarioEditarPage />),
+                  },
+                ],
               },
             ],
           },
@@ -345,11 +352,7 @@ const routes: RouteObject[] = [
   // layout les da una fuente de datos pública y de solo lectura.
   {
     path: 'tablero/:token',
-    element: (
-      <RequireAdminDuranteMantenimiento>
-        {withSuspense(<TableroPublicoLayout />)}
-      </RequireAdminDuranteMantenimiento>
-    ),
+    element: withSuspense(<TableroPublicoLayout />),
     children: [
       { index: true, element: <ClaroDashboardPage /> },
       { path: 'dia', element: <CumplimientoDiarioPage /> },
@@ -365,19 +368,11 @@ const routes: RouteObject[] = [
   // formulario de un plan sin cuenta. No ve los registros cargados ni los tableros.
   {
     path: 'formulario/:token',
-    element: (
-      <RequireAdminDuranteMantenimiento>
-        {withSuspense(<FormularioPublico />)}
-      </RequireAdminDuranteMantenimiento>
-    ),
+    element: withSuspense(<FormularioPublico />),
   },
   {
     path: 'formulario/belkin/:token',
-    element: (
-      <RequireAdminDuranteMantenimiento>
-        {withSuspense(<FormularioPublicoBelkin />)}
-      </RequireAdminDuranteMantenimiento>
-    ),
+    element: withSuspense(<FormularioPublicoBelkin />),
   },
 
   { path: '*', element: <Navigate to="/" replace /> },

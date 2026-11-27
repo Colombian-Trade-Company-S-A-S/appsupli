@@ -13,7 +13,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Checkbox,
   Field,
   FieldDescription,
   FieldLabel,
@@ -26,9 +25,7 @@ import { EsqueletoPagina } from '@/shared/components/feedback';
 import { formatoFechaHora } from '@/shared/lib/formato';
 import { cn } from '@/shared/lib/utils';
 import { adminApi, type AdminUser, type AdminUserPayload } from '../api';
-import { AYUDA_ROLES, ayudaDe, type Ayuda } from '../ayudas';
 import { AccesosPorApp } from '../components/AccesosPorApp';
-import { AyudaAcceso } from '../components/AyudaAcceso';
 import { useAdminMutation, useAdminUser, useApplications, useRoles } from '../hooks';
 import { planIdDeUrl } from '../planner';
 
@@ -114,18 +111,6 @@ export default function UsuarioEditarPage() {
 
   const set = <K extends keyof AdminUserPayload>(campo: K, valor: AdminUserPayload[K]) =>
     setDatos((prev) => (prev ? { ...prev, [campo]: valor } : prev));
-
-  const alternar = (campo: 'roles', idOpcion: number) =>
-    setDatos((prev) => {
-      if (!prev) return prev;
-      const actuales = prev[campo] ?? [];
-      return {
-        ...prev,
-        [campo]: actuales.includes(idOpcion)
-          ? actuales.filter((x) => x !== idOpcion)
-          : [...actuales, idOpcion],
-      };
-    });
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -286,7 +271,7 @@ export default function UsuarioEditarPage() {
 
       <Seccion
         titulo="Aplicaciones y permisos"
-        descripcion="Marca la app a la que entra y, dentro de ella, qué puede hacer. Cada permiso explica lo que permite."
+        descripcion="Marca la app a la que entra y, dentro de ella, qué puede hacer: un rol (un paquete de permisos ya armado) o permisos sueltos. Si desmarcas un permiso que da un rol, el rol se quita y lo demás que daba queda como permisos sueltos."
         total={datos.applications?.length ?? 0}
       >
         <AccesosPorApp
@@ -311,23 +296,6 @@ export default function UsuarioEditarPage() {
                 : prev,
             )
           }
-        />
-      </Seccion>
-
-      <Seccion
-        titulo="Roles"
-        descripcion="Paquetes de permisos ya armados. Lo que da un rol aparece marcado arriba, en su app, con el nombre del rol; si desmarcas uno de esos permisos, el rol se quita y lo demás que daba queda como permisos sueltos."
-        total={datos.roles?.length ?? 0}
-      >
-        <Casillas
-          opciones={roles.map((r) => ({
-            id: r.id,
-            label: r.name,
-            ayuda: ayudaDe(AYUDA_ROLES, r.code, r.description),
-          }))}
-          seleccionadas={datos.roles ?? []}
-          onToggle={(idRol) => alternar('roles', idRol)}
-          vacio="Todavía no hay roles creados."
         />
       </Seccion>
 
@@ -567,41 +535,5 @@ function DatosOdoo({ usuario }: { usuario: AdminUser }) {
         ))}
       </dl>
     </Seccion>
-  );
-}
-
-function Casillas({
-  opciones,
-  seleccionadas,
-  onToggle,
-  vacio = 'No hay opciones disponibles.',
-}: {
-  opciones: Array<{ id: number; label: string; ayuda?: Ayuda }>;
-  seleccionadas: number[];
-  onToggle: (id: number) => void;
-  vacio?: string;
-}) {
-  if (opciones.length === 0) return <p className="text-sm text-muted-foreground">{vacio}</p>;
-  return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {opciones.map((opcion) => {
-        const marcada = seleccionadas.includes(opcion.id);
-        return (
-          <div
-            key={opcion.id}
-            className={cn(
-              'flex items-center rounded-lg border pr-1.5 text-sm transition-colors',
-              marcada && 'border-primary/40 bg-primary/5',
-            )}
-          >
-            <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 p-2.5">
-              <Checkbox checked={marcada} onCheckedChange={() => onToggle(opcion.id)} />
-              <span className="truncate">{opcion.label}</span>
-            </label>
-            {opcion.ayuda && <AyudaAcceso titulo={opcion.label} ayuda={opcion.ayuda} />}
-          </div>
-        );
-      })}
-    </div>
   );
 }

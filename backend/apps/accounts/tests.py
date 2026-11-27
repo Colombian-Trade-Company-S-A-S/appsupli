@@ -313,3 +313,66 @@ def test_administracion_solo_le_aparece_al_administrador():
     }
     assert colaborador.has_app_access('admin') is False
     assert administrador.has_app_access('admin') is True
+
+
+def _persona_con_ver_usuarios(por_rol: bool = False) -> User:
+    from apps.accounts.models import Permission, Role
+
+    admin_app = Application.objects.create(
+        code='admin', name='Administración', base_path='/inicio/admin'
+    )
+    ver = Permission.objects.create(
+        code='admin:users:view', name='Ver usuarios', application=admin_app
+    )
+    persona = User.objects.create_user(
+        email='ve@supli.tech', username='ve', first_name='Ve', password='clave-123456'
+    )
+    if por_rol:
+        rol = Role.objects.create(code='consulta', name='Consulta')
+        rol.permissions.add(ver)
+        persona.roles.add(rol)
+    else:
+        persona.applications.add(admin_app)
+        persona.extra_permissions.add(ver)
+    return persona
+
+
+@pytest.mark.parametrize('por_rol', [False, True])
+def test_con_ver_usuarios_le_aparece_administracion(por_rol):
+    assert _persona_con_ver_usuarios(por_rol).has_app_access('admin') is True
+
+
+def test_con_ver_usuarios_consulta_las_personas_pero_no_cambia_nada():
+    persona = _persona_con_ver_usuarios()
+    otra = User.objects.create(username='otra', first_name='Otra')
+    cliente = APIClient()
+    cliente.force_authenticate(user=persona)
+
+    for ruta in (
+        RUTA,
+        f'{RUTA}/{otra.id}',
+        '/api/admin/areas',
+        '/api/admin/applications',
+        '/api/admin/roles',
+        '/api/admin/permissions',
+    ):
+        assert cliente.get(ruta).status_code == 200, ruta
+
+    assert cliente.patch(f'{RUTA}/{otra.id}', {'phone': '1'}, format='json').status_code == 403
+    assert cliente.post(f'{RUTA}/{otra.id}/toggle-active').status_code == 403
+    hacerse_admin = cliente.patch(f'{RUTA}/{persona.id}', {'kind': 'admin'}, format='json')
+    assert hacerse_admin.status_code == 403
+    assert cliente.post('/api/admin/roles', {'code': 'x', 'name': 'X'}).status_code == 403
+    assert cliente.get('/api/admin/odoo/estado').status_code == 403
+    persona.refresh_from_db()
+    assert persona.kind != User.Kind.ADMIN
+
+
+def test_sin_ver_usuarios_no_consulta_administracion():
+    colaborador = User.objects.create_user(
+        email='colab@supli.tech', username='colab', first_name='Colab', password='clave-123456'
+    )
+    cliente = APIClient()
+    cliente.force_authenticate(user=colaborador)
+    assert cliente.get(RUTA).status_code == 403
+    assert cliente.get('/api/admin/applications').status_code == 403

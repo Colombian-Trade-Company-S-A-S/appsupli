@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { urlFotoDe } from '@/core/auth';
+import { urlFotoDe, useAuth } from '@/core/auth';
 import {
   Avatar,
   AvatarFallback,
@@ -202,6 +202,8 @@ function FilaPersona({ usuario }: { usuario: AdminUserFila }) {
 export default function UsuarioDetallePage() {
   const { id } = useParams();
   const usuarioId = Number(id);
+  // Con «Ver usuarios» se consulta; editar e inactivar es del administrador.
+  const puedeEditar = !!useAuth().user?.isAdmin;
   const { data: usuario, isLoading, isError } = useAdminUser(usuarioId);
   const { data: jefe } = useAdminUser(usuario?.manager ?? 0);
   const { data: equipo = [] } = useAdminUsers({ manager: usuarioId, is_active: true });
@@ -348,24 +350,26 @@ export default function UsuarioDetallePage() {
             )}
           </div>
 
-          <div className="flex flex-wrap justify-center gap-2">
-            <Button render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}>
-              <PencilIcon data-icon="inline-start" />
-              Editar accesos
-            </Button>
-            <Button
-              variant="outline"
-              disabled={alternarActivo.isPending}
-              onClick={() => alternarActivo.mutate(usuario.id)}
-            >
-              {usuario.isActive ? (
-                <UserXIcon data-icon="inline-start" />
-              ) : (
-                <UserCheckIcon data-icon="inline-start" />
-              )}
-              {usuario.isActive ? 'Inactivar' : 'Activar'}
-            </Button>
-          </div>
+          {puedeEditar && (
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}>
+                <PencilIcon data-icon="inline-start" />
+                Editar accesos
+              </Button>
+              <Button
+                variant="outline"
+                disabled={alternarActivo.isPending}
+                onClick={() => alternarActivo.mutate(usuario.id)}
+              >
+                {usuario.isActive ? (
+                  <UserXIcon data-icon="inline-start" />
+                ) : (
+                  <UserCheckIcon data-icon="inline-start" />
+                )}
+                {usuario.isActive ? 'Inactivar' : 'Activar'}
+              </Button>
+            </div>
+          )}
         </CardContent>
 
         {/* Cuatro cifras del mismo ancho, separadas por líneas finas. */}
@@ -506,7 +510,7 @@ export default function UsuarioDetallePage() {
         </Seccion>
 
         <div className="md:col-span-2">
-          <PlannerDelUsuario usuario={usuario} />
+          <PlannerDelUsuario usuario={usuario} puedeEditar={puedeEditar} />
         </div>
       </div>
     </div>
@@ -517,7 +521,7 @@ export default function UsuarioDetallePage() {
  * Ejecución Planner: si se mide, si tiene la URL de su plan cargada y cuál es.
  * El plan que se mide es el de esa URL; se cambia al editar el usuario.
  */
-function PlannerDelUsuario({ usuario }: { usuario: AdminUser }) {
+function PlannerDelUsuario({ usuario, puedeEditar }: { usuario: AdminUser; puedeEditar: boolean }) {
   const url = usuario.plannerUrl;
   const planId = planIdDeUrl(url);
   const copiar = () => {
@@ -588,14 +592,16 @@ function PlannerDelUsuario({ usuario }: { usuario: AdminUser }) {
             <p className="flex-1 text-sm text-muted-foreground">
               Sin URL de Planner: no tiene plan que medir.
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}
-            >
-              <PencilIcon data-icon="inline-start" />
-              Ponerle la URL
-            </Button>
+            {puedeEditar && (
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}
+              >
+                <PencilIcon data-icon="inline-start" />
+                Ponerle la URL
+              </Button>
+            )}
           </div>
         )}
       </div>

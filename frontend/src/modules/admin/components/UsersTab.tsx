@@ -50,6 +50,8 @@ const ESTADOS = [
 
 export function UsersTab() {
   const { user: yo } = useAuth();
+  // Con «Ver usuarios» se consulta; editar e inactivar es del administrador.
+  const puedeEditar = !!yo?.isAdmin;
   const [busqueda, setBusqueda] = useState('');
   const [estado, setEstado] = useState('todos');
   const [area, setArea] = useState('');
@@ -123,8 +125,9 @@ export function UsersTab() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Las personas llegan y salen con la sincronización de Odoo (pestaña Odoo). Aquí se manejan
-        sus accesos.
+        {puedeEditar
+          ? 'Las personas llegan y salen con la sincronización de Odoo (pestaña Odoo). Aquí se manejan sus accesos.'
+          : 'Las personas llegan y salen con la sincronización de Odoo. Toca un nombre para ver su detalle.'}
       </p>
 
       <Card className="py-0">
@@ -157,7 +160,7 @@ export function UsersTab() {
                   <TableHead>Tipo</TableHead>
                   <TableHead>Aplicaciones</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  {puedeEditar && <TableHead className="text-right">Acciones</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -203,32 +206,34 @@ export function UsersTab() {
                         {usuario.isActive ? 'Activo' : 'Inactivo'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button variant="ghost" size="icon" aria-label="Acciones">
-                              <MoreHorizontalIcon />
-                            </Button>
-                          }
-                        />
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuGroup>
-                            <DropdownMenuItem onClick={() => abrirEdicion(usuario)}>
-                              <PencilIcon />
-                              Editar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={usuario.id === yo?.id}
-                              onClick={() => alternarActivo.mutate(usuario.id)}
-                            >
-                              {usuario.isActive ? <UserXIcon /> : <UserCheckIcon />}
-                              {usuario.isActive ? 'Inactivar' : 'Activar'}
-                            </DropdownMenuItem>
-                          </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+                    {puedeEditar && (
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button variant="ghost" size="icon" aria-label="Acciones">
+                                <MoreHorizontalIcon />
+                              </Button>
+                            }
+                          />
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem onClick={() => abrirEdicion(usuario)}>
+                                <PencilIcon />
+                                Editar
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={usuario.id === yo?.id}
+                                onClick={() => alternarActivo.mutate(usuario.id)}
+                              >
+                                {usuario.isActive ? <UserXIcon /> : <UserCheckIcon />}
+                                {usuario.isActive ? 'Inactivar' : 'Activar'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

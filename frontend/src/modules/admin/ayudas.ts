@@ -18,7 +18,7 @@ export const AYUDA_APPS: Record<string, Ayuda> = {
   admin: {
     texto:
       'Es este panel: aquí se crean usuarios, áreas y roles, y se decide a qué entra cada persona.',
-    ojo: 'Solo funciona si la cuenta es de tipo Administrador. Si no lo es, no le aparece en el menú aunque la marques: para darle acceso, cambia su tipo de usuario a Administrador.',
+    ojo: 'Sin ser Administrador, la persona entra solo si le das «Ver usuarios»: consulta la lista y el detalle de las personas, sin cambiar nada. Editar, roles, áreas, apps y Odoo siguen siendo de las cuentas de tipo Administrador.',
   },
   'bi-trade': {
     texto:
@@ -85,11 +85,17 @@ export const AYUDA_ROLES: Record<string, Ayuda> = {
 };
 
 const ADMIN_SIN_EFECTO =
-  'Por ahora este permiso no cambia nada: a Administración solo entran las cuentas de tipo Administrador.';
+  'Por ahora este permiso no cambia nada: esto solo lo hacen las cuentas de tipo Administrador.';
 
 export const AYUDA_PERMISOS: Record<string, Ayuda> = {
-  'admin:users:view': { texto: 'Ver la lista de usuarios.', ojo: ADMIN_SIN_EFECTO },
-  'admin:users:manage': { texto: 'Crear, editar e inactivar usuarios.', ojo: ADMIN_SIN_EFECTO },
+  'admin:users:view': {
+    texto: 'Ver la lista de usuarios.',
+    ojo: 'Le aparece Administración con la lista y el detalle de cada persona (área, cargo, jefe, accesos y datos de contacto), solo para consultar.',
+  },
+  'admin:users:manage': {
+    texto: 'Crear, editar e inactivar usuarios.',
+    ojo: 'Por ahora solo deja consultar, como «Ver usuarios»: editar e inactivar siguen siendo de las cuentas de tipo Administrador.',
+  },
   'admin:areas:manage': {
     texto: 'Crear y editar las áreas de la compañía.',
     ojo: ADMIN_SIN_EFECTO,
