@@ -293,6 +293,8 @@ export const COMANDOS_POR_APP: Record<string, ComandoDeApp[]> = {
       label: 'Usuarios',
       to: '/inicio/admin',
       keywords: ['personas', 'cuentas', 'accesos', 'crear usuario'],
+      // Ver el listado (o editarlo, que lo incluye).
+      permiso: [['admin:users:view', 'admin:users:manage']],
     },
   ],
 };

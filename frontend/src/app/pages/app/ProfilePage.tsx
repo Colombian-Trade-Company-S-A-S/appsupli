@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRightIcon,
   AtSignIcon,
   BriefcaseIcon,
   BuildingIcon,
+  ChevronRightIcon,
   KeyRoundIcon,
   LayoutGridIcon,
   PhoneIcon,
@@ -14,9 +16,13 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { BotonInstalarApp } from '@/app/layouts/InstalarApp';
-import { useAuth } from '@/core/auth';
-import type { Application } from '@/core/auth/types';
+import { authApi, urlFotoDe, useAuth } from '@/core/auth';
+import type { Application, MiembroEquipo } from '@/core/auth/types';
+import { PARA_VER_USUARIOS } from '@/modules/admin/permisos';
 import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
   Badge,
   Button,
   Card,
@@ -34,8 +40,10 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
+  Skeleton,
 } from '@/shared/components/ui';
 import { iconoDeApp } from '@/shared/lib/appIcons';
+import { cn } from '@/shared/lib/utils';
 import { AppearanceCard } from './AppearanceCard';
 import { CambiarFoto } from './CambiarFoto';
 import { ChangePasswordForm } from './ChangePasswordForm';
@@ -90,12 +98,7 @@ export default function ProfilePage() {
                 {user.isAdmin && <ShieldCheckIcon data-icon="inline-start" />}
                 {user.isAdmin ? TIPOS.admin : TIPOS[user.kind]}
               </Badge>
-              {user.teamCount > 0 && (
-                <Badge variant="outline">
-                  <UsersIcon data-icon="inline-start" />
-                  {user.teamCount} persona{user.teamCount === 1 ? '' : 's'} a cargo
-                </Badge>
-              )}
+              {user.teamCount > 0 && <MiEquipo cantidad={user.teamCount} />}
             </div>
           </div>
           <BotonInstalarApp variante="perfil" className="shrink-0" />
@@ -209,6 +212,123 @@ function CambiarContrasena() {
         <ChangePasswordForm onTerminar={() => setAbierto(false)} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * «N personas a cargo»: se ve como botón (borde, flecha que se mueve al pasar
+ * el cursor y «Ver») y abre la lista del equipo. Quien puede ver usuarios en
+ * Administración entra desde ahí al detalle de cada persona; los demás ven
+ * su cargo y cómo contactarla.
+ */
+function MiEquipo({ cantidad }: { cantidad: number }) {
+  const [abierto, setAbierto] = useState(false);
+  const { can } = useAuth();
+  const puedeVerDetalle = PARA_VER_USUARIOS.some(can);
+  const { data: equipo = [], isLoading } = useQuery({
+    queryKey: ['auth', 'mi-equipo'],
+    queryFn: authApi.miEquipo,
+    enabled: abierto,
+  });
+
+  return (
+    <Dialog open={abierto} onOpenChange={setAbierto}>
+      <button
+        type="button"
+        onClick={() => setAbierto(true)}
+        className="group inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 py-0.5 pr-1.5 pl-2.5 text-xs font-medium text-primary transition-colors outline-none hover:border-primary hover:bg-primary/10 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <UsersIcon className="size-3.5" />
+        {cantidad} persona{cantidad === 1 ? '' : 's'} a cargo
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[0.7rem]">
+          Ver
+          <ChevronRightIcon className="size-3 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </button>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Tu equipo</DialogTitle>
+          <DialogDescription>
+            Las personas que tienes a cargo directo, según Odoo.
+            {puedeVerDetalle && ' Toca una para ver su detalle.'}
+          </DialogDescription>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: Math.min(cantidad, 4) }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full" />
+            ))}
+          </div>
+        ) : (
+          <ul className="-mx-1 flex max-h-[60vh] flex-col gap-1 overflow-y-auto px-1">
+            {equipo.map((persona) => (
+              <li key={persona.id}>
+                <FilaEquipo persona={persona} enlace={puedeVerDetalle} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FilaEquipo({ persona, enlace }: { persona: MiembroEquipo; enlace: boolean }) {
+  const contenido = (
+    <>
+      <Avatar className={cn('size-10 shrink-0', persona.destacado && 'hilo-socio')}>
+        <AvatarImage src={urlFotoDe(persona)} alt="" />
+        <AvatarFallback>{persona.firstName.charAt(0).toUpperCase()}</AvatarFallback>
+      </Avatar>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm font-medium">{persona.fullName}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {[persona.position, persona.areaName].filter(Boolean).join(' · ') || 'Sin cargo'}
+        </span>
+      </span>
+    </>
+  );
+
+  if (enlace) {
+    return (
+      <Link
+        to={`/inicio/admin/usuarios/${persona.id}`}
+        className="group flex items-center gap-3 rounded-lg border p-2.5 transition-colors outline-none hover:border-primary/40 hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        {contenido}
+        <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground group-hover:text-primary">
+          Ver detalle
+          <ChevronRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </Link>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-lg border p-2.5">
+      {contenido}
+      <span className="flex shrink-0 gap-1">
+        {persona.email && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Escribirle a ${persona.fullName}`}
+            render={<a href={`mailto:${persona.email}`} />}
+          >
+            <AtSignIcon />
+          </Button>
+        )}
+        {persona.phone && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Llamar a ${persona.fullName}`}
+            render={<a href={`tel:${persona.phone}`} />}
+          >
+            <PhoneIcon />
+          </Button>
+        )}
+      </span>
+    </div>
   );
 }
 

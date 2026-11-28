@@ -9,6 +9,7 @@ export const adminKeys = {
   user: (id: number) => ['admin', 'user', id] as const,
   areas: () => ['admin', 'areas'] as const,
   applications: () => ['admin', 'applications'] as const,
+  accesosApp: (id: number) => ['admin', 'applications', id, 'accesos'] as const,
   roles: () => ['admin', 'roles'] as const,
   permissions: () => ['admin', 'permissions'] as const,
   sincronizaciones: () => ['admin', 'odoo', 'sincronizaciones'] as const,
@@ -38,6 +39,14 @@ export const useAreas = () =>
 
 export const useApplications = () =>
   useQuery({ queryKey: adminKeys.applications(), queryFn: () => adminApi.applications.list() });
+
+/** Quién entra a una app y con qué (asignada, roles, permisos sueltos). */
+export const useAccesosApp = (id: number) =>
+  useQuery({
+    queryKey: adminKeys.accesosApp(id),
+    queryFn: () => adminApi.applications.accesos(id),
+    enabled: Number.isFinite(id) && id > 0,
+  });
 
 export const useRoles = () =>
   useQuery({ queryKey: adminKeys.roles(), queryFn: () => adminApi.roles.list() });

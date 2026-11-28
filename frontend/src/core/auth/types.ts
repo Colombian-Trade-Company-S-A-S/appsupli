@@ -90,6 +90,21 @@ export interface PreferencesPayload {
   radius?: Radius;
 }
 
+/** Una persona del equipo a cargo, para el perfil de su jefe. */
+export interface MiembroEquipo {
+  id: number;
+  email: string | null;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  position: string;
+  phone: string;
+  areaName: string;
+  /** La foto de perfil, relativa a la raíz de la API; null si no tiene. */
+  foto: string | null;
+  destacado: boolean;
+}
+
 /** Lo que responde el backend al cambiar la foto. */
 export interface ResultadoFoto {
   user: User;

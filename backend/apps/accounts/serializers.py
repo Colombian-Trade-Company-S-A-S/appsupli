@@ -148,6 +148,37 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.get_effective_permissions()
 
 
+class MiembroEquipoSerializer(serializers.ModelSerializer):
+    """Una persona del equipo a cargo, para el perfil de su jefe."""
+
+    full_name = serializers.CharField(read_only=True)
+    area_name = serializers.CharField(source='area.name', read_only=True, default='')
+    foto = serializers.SerializerMethodField()
+    destacado = serializers.SerializerMethodField()
+
+    #: Las columnas que lee: la foto no viaja, basta su fecha para la dirección.
+    COLUMNAS = (
+        'id', 'email', 'first_name', 'last_name', 'position', 'phone',
+        'foto_actualizada_at', 'area', 'area__name',
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            'id', 'email', 'first_name', 'last_name', 'full_name', 'position', 'phone',
+            'area_name', 'foto', 'destacado',
+        )
+        read_only_fields = fields
+
+    def get_foto(self, usuario: User) -> str | None:
+        from .fotos import ruta_de_foto  # noqa: PLC0415 — fotos importa los serializers
+
+        return ruta_de_foto(usuario)
+
+    def get_destacado(self, usuario: User) -> bool:
+        return (usuario.email or '').lower() in settings.USUARIOS_DESTACADOS
+
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, style={'input_type': 'password'})

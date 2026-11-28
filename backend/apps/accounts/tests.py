@@ -315,38 +315,52 @@ def test_administracion_solo_le_aparece_al_administrador():
     assert administrador.has_app_access('admin') is True
 
 
-def _persona_con_ver_usuarios(por_rol: bool = False) -> User:
-    from apps.accounts.models import Permission, Role
 
-    admin_app = Application.objects.create(
-        code='admin', name='Administración', base_path='/inicio/admin'
+# ── Permisos de Administración ─────────────────────────────────────────────
+# Cada sección se abre con su permiso. Lo que ninguno da: volver administrador
+# a alguien, dar accesos, tocar la cuenta de un administrador y eliminar.
+
+
+def _con_permisos(*codigos: str, por_rol: bool = False, username: str = 've') -> User:
+    """Una persona (no administradora) con esos permisos de Administración."""
+    from apps.accounts.models import Permission, Role
+    from apps.accounts.permisos_admin import CATALOGO
+
+    admin_app, _ = Application.objects.get_or_create(
+        code='admin', defaults={'name': 'Administración', 'base_path': '/inicio/admin'}
     )
-    ver = Permission.objects.create(
-        code='admin:users:view', name='Ver usuarios', application=admin_app
-    )
+    for p in CATALOGO:
+        Permission.objects.get_or_create(
+            code=p.code, defaults={'name': p.name, 'application': admin_app}
+        )
+    permisos = list(Permission.objects.filter(code__in=codigos))
     persona = User.objects.create_user(
-        email='ve@supli.tech', username='ve', first_name='Ve', password='clave-123456'
+        email=f'{username}@supli.tech', username=username, first_name='Ve', password='clave-1234'
     )
     if por_rol:
-        rol = Role.objects.create(code='consulta', name='Consulta')
-        rol.permissions.add(ver)
+        rol = Role.objects.create(code=f'rol-{username}', name=f'Rol {username}')
+        rol.permissions.add(*permisos)
         persona.roles.add(rol)
     else:
-        persona.applications.add(admin_app)
-        persona.extra_permissions.add(ver)
+        persona.extra_permissions.add(*permisos)
     return persona
 
 
+def _cliente(persona: User) -> APIClient:
+    cliente = APIClient()
+    cliente.force_authenticate(user=persona)
+    return cliente
+
+
 @pytest.mark.parametrize('por_rol', [False, True])
-def test_con_ver_usuarios_le_aparece_administracion(por_rol):
-    assert _persona_con_ver_usuarios(por_rol).has_app_access('admin') is True
+def test_con_cualquier_permiso_de_administracion_le_aparece_la_app(por_rol):
+    assert _con_permisos('admin:areas:view', por_rol=por_rol).has_app_access('admin') is True
 
 
 def test_con_ver_usuarios_consulta_las_personas_pero_no_cambia_nada():
-    persona = _persona_con_ver_usuarios()
+    persona = _con_permisos('admin:users:view')
     otra = User.objects.create(username='otra', first_name='Otra')
-    cliente = APIClient()
-    cliente.force_authenticate(user=persona)
+    cliente = _cliente(persona)
 
     for ruta in (
         RUTA,
@@ -360,19 +374,315 @@ def test_con_ver_usuarios_consulta_las_personas_pero_no_cambia_nada():
 
     assert cliente.patch(f'{RUTA}/{otra.id}', {'phone': '1'}, format='json').status_code == 403
     assert cliente.post(f'{RUTA}/{otra.id}/toggle-active').status_code == 403
-    hacerse_admin = cliente.patch(f'{RUTA}/{persona.id}', {'kind': 'admin'}, format='json')
-    assert hacerse_admin.status_code == 403
     assert cliente.post('/api/admin/roles', {'code': 'x', 'name': 'X'}).status_code == 403
-    assert cliente.get('/api/admin/odoo/estado').status_code == 403
-    persona.refresh_from_db()
-    assert persona.kind != User.Kind.ADMIN
+    assert cliente.get('/api/admin/odoo/sincronizaciones').status_code == 403
 
 
-def test_sin_ver_usuarios_no_consulta_administracion():
+def test_sin_ver_usuarios_no_ve_la_lista_de_personas():
+    cliente = _cliente(_con_permisos('admin:areas:view'))
+    assert cliente.get('/api/admin/areas').status_code == 200
+    assert cliente.get(RUTA).status_code == 403
+
+
+def test_sin_permisos_de_administracion_no_entra():
     colaborador = User.objects.create_user(
         email='colab@supli.tech', username='colab', first_name='Colab', password='clave-123456'
     )
-    cliente = APIClient()
-    cliente.force_authenticate(user=colaborador)
+    cliente = _cliente(colaborador)
     assert cliente.get(RUTA).status_code == 403
     assert cliente.get('/api/admin/applications').status_code == 403
+    assert colaborador.has_app_access('admin') is False
+
+
+def test_editar_usuarios_cambia_la_cuenta_pero_no_los_accesos():
+    from apps.accounts.models import Role
+
+    editor = _con_permisos('admin:users:view', 'admin:users:manage', username='editor')
+    otra = User.objects.create(username='otra', first_name='Otra')
+    rol = Role.objects.create(code='otro', name='Otro')
+    cliente = _cliente(editor)
+    ruta = f'{RUTA}/{otra.id}'
+
+    assert cliente.patch(ruta, {'phone': '300'}, format='json').status_code == 200
+    # El formulario manda los accesos sin cambios: eso pasa.
+    assert cliente.patch(ruta, {'roles': [], 'phone': '301'}, format='json').status_code == 200
+    assert cliente.post(f'{ruta}/toggle-active').status_code == 200
+
+    assert cliente.patch(ruta, {'kind': 'admin'}, format='json').status_code == 403
+    assert cliente.patch(ruta, {'roles': [rol.id]}, format='json').status_code == 403
+    clave = cliente.patch(ruta, {'password': 'otra-clave-segura-99'}, format='json')
+    assert clave.status_code == 403
+    # Vacía es «no cambiarla»: pasa.
+    assert cliente.patch(ruta, {'password': ''}, format='json').status_code == 200
+    mios = cliente.patch(f'{RUTA}/{editor.id}', {'roles': [rol.id]}, format='json')
+    assert mios.status_code == 403
+
+    otra.refresh_from_db()
+    editor.refresh_from_db()
+    assert not otra.check_password('otra-clave-segura-99')
+    assert otra.phone == '301'
+    assert otra.kind != User.Kind.ADMIN
+    assert not otra.roles.exists()
+    assert not editor.roles.exists()
+
+
+def test_la_cuenta_de_un_administrador_solo_la_toca_otro_administrador():
+    editor = _con_permisos('admin:users:view', 'admin:users:manage')
+    jefa = User.objects.create(username='jefa', first_name='Jefa', kind=User.Kind.ADMIN)
+    cliente = _cliente(editor)
+    ruta = f'{RUTA}/{jefa.id}'
+    assert cliente.patch(ruta, {'phone': '1'}, format='json').status_code == 403
+    clave = cliente.patch(ruta, {'password': 'otra-clave-segura-99'}, format='json')
+    assert clave.status_code == 403
+    assert cliente.post(f'{ruta}/toggle-active').status_code == 403
+    jefa.refresh_from_db()
+    assert jefa.is_active
+
+
+def test_crear_o_editar_roles_menos_los_propios_y_sin_eliminar():
+    from apps.accounts.models import Permission, Role
+
+    editor = _con_permisos('admin:roles:view', 'admin:roles:manage', por_rol=True)
+    propio = editor.roles.get()
+    ajeno = Role.objects.create(code='ajeno', name='Ajeno')
+    permiso = Permission.objects.get(code='admin:odoo:manage')
+    cliente = _cliente(editor)
+
+    assert cliente.post('/api/admin/roles', {'code': 'nuevo', 'name': 'Nuevo'}).status_code == 201
+    editado = cliente.patch(
+        f'/api/admin/roles/{ajeno.id}', {'permissions': [permiso.id]}, format='json'
+    )
+    assert editado.status_code == 200
+    darse = cliente.patch(
+        f'/api/admin/roles/{propio.id}', {'permissions': [permiso.id]}, format='json'
+    )
+    assert darse.status_code == 403
+    assert cliente.delete(f'/api/admin/roles/{ajeno.id}').status_code == 403
+    assert not propio.permissions.filter(code='admin:odoo:manage').exists()
+
+
+def test_crear_o_editar_aplicaciones_sin_eliminarlas():
+    editor = _con_permisos('admin:applications:view', 'admin:applications:manage')
+    cliente = _cliente(editor)
+    nueva = cliente.post(
+        '/api/admin/applications',
+        {'code': 'nueva', 'name': 'Nueva', 'basePath': '/inicio/nueva'},
+        format='json',
+    )
+    assert nueva.status_code == 201
+    app_id = nueva.json()['id']
+    assert cliente.patch(f'/api/admin/applications/{app_id}', {'order': 5}).status_code == 200
+    assert cliente.delete(f'/api/admin/applications/{app_id}').status_code == 403
+
+
+def test_odoo_completo_abre_la_bitacora_sin_ver_usuarios():
+    cliente = _cliente(_con_permisos('admin:odoo:manage'))
+    assert cliente.get('/api/admin/odoo/sincronizaciones').status_code == 200
+    assert cliente.get('/api/admin/odoo/accesos').status_code == 200
+    assert cliente.get(RUTA).status_code == 403
+
+
+def test_mi_equipo_trae_solo_a_mis_directos_activos():
+    jefa = User.objects.create_user(
+        email='jefa@supli.tech', username='jefa', first_name='Jefa', password='clave-123456'
+    )
+    User.objects.create(username='uno', first_name='Uno', manager=jefa, position='Analista')
+    User.objects.create(username='dos', first_name='Dos', manager=jefa, is_active=False)
+    User.objects.create(username='tres', first_name='Tres')
+    equipo = _cliente(jefa).get('/api/auth/me/equipo').json()
+    assert [p['firstName'] for p in equipo] == ['Uno']
+    assert equipo[0]['position'] == 'Analista'
+
+
+# ── Accesos vistos desde la app ────────────────────────────────────────────
+
+
+def _app_con_permisos():
+    from apps.accounts.models import Permission, Role
+
+    app = Application.objects.create(code='bi', name='BI', base_path='/inicio/bi')
+    informe = Permission.objects.create(code='bi:informe:hc', name='HC', application=app)
+    cargar = Permission.objects.create(
+        code='bi:hc:ventas', name='Cargar ventas', application=app, parent=informe
+    )
+    rol = Role.objects.create(code='rol-bi', name='Rol BI')
+    rol.permissions.add(informe)
+    return app, informe, cargar, rol
+
+
+def test_los_accesos_de_una_app_dicen_quien_entra_y_con_que():
+    app, informe, cargar, rol = _app_con_permisos()
+    asignada = User.objects.create(username='a', first_name='A')
+    asignada.applications.add(app)
+    por_rol = User.objects.create(username='b', first_name='B')
+    por_rol.roles.add(rol)
+    suelto = User.objects.create(username='c', first_name='C')
+    suelto.extra_permissions.add(informe, cargar)
+    User.objects.create(username='d', first_name='D')  # sin nada
+    inactiva = User.objects.create(username='e', first_name='E', is_active=False)
+    inactiva.applications.add(app)
+
+    filas = cliente_admin().get(f'/api/admin/applications/{app.id}/accesos').json()
+    por_nombre = {f['firstName']: f for f in filas}
+    assert set(por_nombre) == {'A', 'B', 'C'}
+    assert por_nombre['A']['asignada'] is True
+    assert por_nombre['B']['roles'] == [rol.id]
+    assert sorted(por_nombre['C']['permisos']) == sorted([informe.id, cargar.id])
+
+
+def test_los_accesos_de_una_app_no_hacen_una_consulta_por_persona():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    app, informe, _, rol = _app_con_permisos()
+    cliente = cliente_admin()
+    ruta = f'/api/admin/applications/{app.id}/accesos'
+
+    def consultas():
+        with CaptureQueriesContext(connection) as capturadas:
+            cliente.get(ruta)
+        return len(capturadas)
+
+    User.objects.create(username='p0', first_name='P0').roles.add(rol)
+    pocas = consultas()
+    for i in range(1, 15):
+        persona = User.objects.create(username=f'p{i}', first_name=f'P{i}')
+        persona.roles.add(rol)
+        persona.extra_permissions.add(informe)
+        persona.applications.add(app)
+    assert consultas() == pocas
+
+
+def test_dar_un_permiso_de_adentro_trae_el_de_afuera_y_la_app():
+    app, informe, cargar, _ = _app_con_permisos()
+    persona = User.objects.create(username='p', first_name='P')
+    respuesta = cliente_admin().post(
+        f'/api/admin/applications/{app.id}/accesos',
+        {'usuario': persona.id, 'tipo': 'permiso', 'id': cargar.id},
+        format='json',
+    )
+    assert respuesta.status_code == 200
+    assert set(persona.extra_permissions.all()) == {informe, cargar}
+    assert persona.applications.filter(pk=app.pk).exists()
+
+
+def test_quitar_la_app_le_quita_todo_lo_de_la_app():
+    from apps.accounts.models import Permission, Role
+
+    app, informe, cargar, rol = _app_con_permisos()
+    otra = Application.objects.create(code='otra', name='Otra', base_path='/inicio/otra')
+    ajeno = Permission.objects.create(code='otra:ver', name='Ver', application=otra)
+    rol_ajeno = Role.objects.create(code='rol-otra', name='Rol otra')
+    rol_ajeno.permissions.add(ajeno)
+    persona = User.objects.create(username='p', first_name='P')
+    persona.applications.add(app, otra)
+    persona.roles.add(rol, rol_ajeno)
+    persona.extra_permissions.add(informe, cargar, ajeno)
+
+    respuesta = cliente_admin().post(
+        f'/api/admin/applications/{app.id}/quitar-acceso',
+        {'usuario': persona.id, 'tipo': 'app'},
+        format='json',
+    )
+    assert respuesta.status_code == 200
+    assert respuesta.json() == []
+    assert list(persona.applications.all()) == [otra]
+    assert list(persona.roles.all()) == [rol_ajeno]
+    assert list(persona.extra_permissions.all()) == [ajeno]
+
+
+def test_quitar_un_permiso_se_lleva_los_de_adentro():
+    app, informe, cargar, _ = _app_con_permisos()
+    persona = User.objects.create(username='p', first_name='P')
+    persona.extra_permissions.add(informe, cargar)
+    cliente_admin().post(
+        f'/api/admin/applications/{app.id}/quitar-acceso',
+        {'usuario': persona.id, 'tipo': 'permiso', 'id': informe.id},
+        format='json',
+    )
+    assert not persona.extra_permissions.exists()
+
+
+def test_no_se_da_un_rol_o_permiso_de_otra_app():
+    from apps.accounts.models import Permission
+
+    app, *_ = _app_con_permisos()
+    otra = Application.objects.create(code='otra', name='Otra', base_path='/inicio/otra')
+    ajeno = Permission.objects.create(code='otra:ver', name='Ver', application=otra)
+    persona = User.objects.create(username='p', first_name='P')
+    respuesta = cliente_admin().post(
+        f'/api/admin/applications/{app.id}/accesos',
+        {'usuario': persona.id, 'tipo': 'permiso', 'id': ajeno.id},
+        format='json',
+    )
+    assert respuesta.status_code == 400
+    assert not persona.extra_permissions.exists()
+
+
+def test_solo_el_administrador_da_accesos_desde_la_app():
+    app, informe, *_ = _app_con_permisos()
+    editor = _con_permisos('admin:applications:view', 'admin:applications:manage')
+    cliente = _cliente(editor)
+    assert cliente.get(f'/api/admin/applications/{app.id}/accesos').status_code == 200
+    for ruta in ('accesos', 'quitar-acceso'):
+        respuesta = cliente.post(
+            f'/api/admin/applications/{app.id}/{ruta}',
+            {'usuario': editor.id, 'tipo': 'permiso', 'id': informe.id},
+            format='json',
+        )
+        assert respuesta.status_code == 403
+    assert not editor.extra_permissions.filter(pk=informe.pk).exists()
+
+
+def test_agregar_a_todos_asigna_solo_la_app_a_quien_puede_entrar():
+    from apps.accounts.models import Area
+
+    app, *_ = _app_con_permisos()
+    area = Area.objects.create(name='Ventas')
+    una = User.objects.create(username='una', first_name='Una', email='una@supli.tech', area=area)
+    ya = User.objects.create(username='ya', first_name='Ya', email='ya@supli.tech')
+    ya.applications.add(app)
+    sin_correo = User.objects.create(username='sin', first_name='Sin')
+    inactiva = User.objects.create(
+        username='ina', first_name='Ina', email='ina@supli.tech', is_active=False
+    )
+    jefa = User.objects.create(
+        username='jefa', first_name='Jefa', email='jefa@supli.tech', kind=User.Kind.ADMIN
+    )
+
+    respuesta = cliente_admin().post(
+        f'/api/admin/applications/{app.id}/asignar-a', {'todos': True}, format='json'
+    )
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {'agregadas': 1}
+    assert set(app.users.all()) == {una, ya}
+    assert not una.roles.exists() and not una.extra_permissions.exists()
+    for nadie in (sin_correo, inactiva, jefa):
+        assert not nadie.applications.exists()
+
+
+def test_agregar_por_area_asigna_solo_a_los_de_esa_area():
+    from apps.accounts.models import Area
+
+    app, *_ = _app_con_permisos()
+    ventas = Area.objects.create(name='Ventas')
+    otra = Area.objects.create(name='Otra')
+    de_ventas = User.objects.create(
+        username='v', first_name='V', email='v@supli.tech', area=ventas
+    )
+    User.objects.create(username='o', first_name='O', email='o@supli.tech', area=otra)
+
+    respuesta = cliente_admin().post(
+        f'/api/admin/applications/{app.id}/asignar-a', {'area': ventas.id}, format='json'
+    )
+    assert respuesta.json() == {'agregadas': 1}
+    assert list(app.users.all()) == [de_ventas]
+
+
+def test_agregar_a_muchos_pide_todos_o_un_area_y_es_del_administrador():
+    app, *_ = _app_con_permisos()
+    ruta = f'/api/admin/applications/{app.id}/asignar-a'
+    assert cliente_admin().post(ruta, {}, format='json').status_code == 400
+    editor = _con_permisos('admin:applications:view', 'admin:applications:manage')
+    assert _cliente(editor).post(ruta, {'todos': True}, format='json').status_code == 403
+    assert not app.users.exists()

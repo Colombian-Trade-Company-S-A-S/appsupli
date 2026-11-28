@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { urlFotoDe, useAuth } from '@/core/auth';
+import { urlFotoDe } from '@/core/auth';
 import {
   Avatar,
   AvatarFallback,
@@ -62,6 +62,7 @@ import {
   usePermissions,
   useRoles,
 } from '../hooks';
+import { usePermisosAdmin } from '../permisos';
 
 const BASE = '/inicio/admin';
 const TIPOS = { admin: 'Administrador', lider: 'Líder', colaborador: 'Colaborador' } as const;
@@ -202,9 +203,11 @@ function FilaPersona({ usuario }: { usuario: AdminUserFila }) {
 export default function UsuarioDetallePage() {
   const { id } = useParams();
   const usuarioId = Number(id);
-  // Con «Ver usuarios» se consulta; editar e inactivar es del administrador.
-  const puedeEditar = !!useAuth().user?.isAdmin;
+  const puede = usePermisosAdmin();
   const { data: usuario, isLoading, isError } = useAdminUser(usuarioId);
+  // Con «Ver el listado» se consulta; editar pide «Editar usuarios», y a un
+  // administrador solo lo edita otro administrador.
+  const puedeEditar = puede.editarUsuarios && (puede.esAdmin || !usuario?.isAdmin);
   const { data: jefe } = useAdminUser(usuario?.manager ?? 0);
   const { data: equipo = [] } = useAdminUsers({ manager: usuarioId, is_active: true });
   const { data: apps = [] } = useApplications();
@@ -354,7 +357,7 @@ export default function UsuarioDetallePage() {
             <div className="flex flex-wrap justify-center gap-2">
               <Button render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}>
                 <PencilIcon data-icon="inline-start" />
-                Editar accesos
+                {puede.esAdmin ? 'Editar accesos' : 'Editar cuenta'}
               </Button>
               <Button
                 variant="outline"

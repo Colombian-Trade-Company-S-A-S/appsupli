@@ -12,6 +12,7 @@ from .serializers import (
     ChangePasswordSerializer,
     DecisionInstalacionSerializer,
     LoginSerializer,
+    MiembroEquipoSerializer,
     PreferencesSerializer,
     UserSerializer,
     VerifyPasswordSerializer,
@@ -94,6 +95,27 @@ class MeView(APIView):
     @extend_schema(responses=UserSerializer)
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+
+class MiEquipoView(APIView):
+    """
+    GET /api/auth/me/equipo → las personas activas que tiene a cargo directo.
+
+    Lo ve cualquier jefe en su perfil, sea o no de Administración. Son las
+    mismas que cuenta `team_count`.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=MiembroEquipoSerializer(many=True))
+    def get(self, request):
+        equipo = (
+            request.user.team.filter(is_active=True)
+            .select_related('area')
+            .only(*MiembroEquipoSerializer.COLUMNAS)
+            .order_by('first_name', 'last_name')
+        )
+        return Response(MiembroEquipoSerializer(equipo, many=True).data)
 
 
 class LogoutView(APIView):

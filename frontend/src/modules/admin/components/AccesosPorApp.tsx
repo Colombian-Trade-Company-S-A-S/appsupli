@@ -55,14 +55,19 @@ export function AccesosPorApp({
   roles,
   accesos,
   esAdmin,
+  soloLectura = false,
   onCambio,
 }: {
   apps: AdminApplication[];
   roles: AdminRole[];
   accesos: Accesos;
+  /** La persona que se edita es administradora: lo marcado no le cambia nada. */
   esAdmin: boolean;
+  /** Quien edita no es administrador: ve los accesos, pero no los da ni los quita. */
+  soloLectura?: boolean;
   onCambio: (accesos: Accesos) => void;
 }) {
+  const bloqueado = esAdmin || soloLectura;
   const rolesMarcados = roles.filter((rol) => accesos.roles.includes(rol.id));
   // permiso → nombres de los roles marcados que lo dan.
   const porRol = new Map<number, string[]>();
@@ -188,12 +193,24 @@ export function AccesosPorApp({
           </span>
         </p>
       )}
-      {/* Al administrador no le cambia nada lo marcado: se ve, pero no se toca.
-          Lo que tenga guardado vuelve a valer si deja de ser administrador. */}
+      {soloLectura && !esAdmin && (
+        <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+          <InfoIcon className="mt-0.5 size-4 shrink-0 text-primary" />
+          Así quedan sus accesos. Darlos o quitarlos es solo de los administradores.
+        </p>
+      )}
+      {/* Al administrador no le cambia nada lo marcado, y quien no es
+          administrador no da accesos: se ve, pero no se toca. Lo guardado de
+          un administrador vuelve a valer si deja de serlo. */}
       <div
-        inert={esAdmin}
-        aria-disabled={esAdmin || undefined}
-        className={cn('flex flex-col gap-3', esAdmin && 'opacity-50 select-none')}
+        inert={bloqueado}
+        aria-disabled={bloqueado || undefined}
+        className={cn(
+          'flex flex-col gap-3',
+          bloqueado && 'select-none',
+          esAdmin && 'opacity-50',
+          soloLectura && !esAdmin && 'opacity-80',
+        )}
       >
         {raices.map((app) => (
           <TarjetaApp
@@ -292,12 +309,19 @@ interface PropsPermisos {
   onPermiso: (app: AdminApplication, permiso: AdminPermission) => void;
 }
 
-/** «2 de 6 informes»: en una app con informes se cuentan esos, no los 35 permisos. */
+/**
+ * «2 de 6 informes»: en una app con permisos adentro se cuentan los de afuera
+ * de su grupo (los informes, las secciones de Administración), no los 35.
+ */
 function resumen(app: AdminApplication, tienePermiso: (id: number) => boolean) {
   const conAdentro = app.permissions.filter((p) =>
     app.permissions.some((otro) => otro.parent === p.id),
   );
-  const contados = conAdentro.length > 0 ? conAdentro : app.permissions;
+  const grupos = new Set(conAdentro.map((p) => p.group));
+  const contados =
+    conAdentro.length > 0
+      ? app.permissions.filter((p) => !p.parent && grupos.has(p.group))
+      : app.permissions;
   const marcados = contados.filter((p) => tienePermiso(p.id)).length;
   const cosa =
     conAdentro.length > 0 ? (conAdentro[0].group || 'Permisos').toLowerCase() : 'permisos';
@@ -573,22 +597,23 @@ function PermisoConAdentro({
               </Badge>
             )}
             <span className="ml-auto text-xs font-normal text-muted-foreground">
-              {marcado
-                ? marcadosAdentro > 0
-                  ? `Ver y ${marcadosAdentro} de ${adentro.length} permisos`
-                  : 'Solo ver'
-                : 'Sin acceso'}
+              {!marcado
+                ? 'Sin acceso'
+                : adentro.length === 0
+                  ? 'Con acceso'
+                  : marcadosAdentro > 0
+                    ? `Ver y ${marcadosAdentro} de ${adentro.length} permisos`
+                    : 'Solo ver'}
             </span>
           </span>
           {texto && <span className="text-xs text-muted-foreground text-pretty">{texto}</span>}
         </span>
       </label>
 
-      {marcado && (
+      {/* Una sección sin nada adentro (Áreas, Odoo) es solo su casilla. */}
+      {marcado && adentro.length > 0 && (
         <div className="flex flex-col gap-3 border-t bg-muted/30 px-3 pt-3 pb-3 sm:pl-10">
-          <p className="text-xs text-muted-foreground">
-            Además de ver, ¿qué puede hacer en <span className="font-medium">{permiso.name}</span>?
-          </p>
+          <p className="text-xs text-muted-foreground">Además de ver, ¿qué más puede hacer aquí?</p>
           {agrupar(adentro).map((grupo) => (
             <div key={grupo.nombre} className="flex flex-col gap-2">
               <TituloGrupo>{grupo.nombre}</TituloGrupo>

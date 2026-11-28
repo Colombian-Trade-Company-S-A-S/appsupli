@@ -201,9 +201,9 @@ function Bienvenida({ usuario }: { usuario: NonNullable<ReturnType<typeof useAut
       <div className="flex flex-wrap items-center justify-between gap-6">
         <div className="flex min-w-0 items-center gap-4">
           <span className="hidden shrink-0 rounded-full bg-brand-gradient p-0.5 shadow-lg shadow-[#5932d7]/40 sm:inline-flex">
-            <Avatar className="size-14 shrink-0 ring-2 ring-[#0a0818]">
+            <Avatar className="size-20 shrink-0 ring-[3px] ring-[#0a0818] lg:size-24">
               <AvatarImage src={urlFotoDe(usuario)} alt="" />
-              <AvatarFallback className="bg-[#14102e] font-heading text-lg font-bold text-white">
+              <AvatarFallback className="bg-[#14102e] font-heading text-2xl font-bold text-white lg:text-3xl">
                 {usuario.firstName.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>

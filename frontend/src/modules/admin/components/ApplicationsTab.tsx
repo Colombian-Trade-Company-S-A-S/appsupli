@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { LayoutGridIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import {
   Badge,
@@ -33,6 +34,7 @@ import {
 } from '@/shared/components/ui';
 import { adminApi, type AdminApplication } from '../api';
 import { useAdminMutation, useApplications } from '../hooks';
+import { usePermisosAdmin } from '../permisos';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
 
 const NUEVA = {
@@ -47,6 +49,9 @@ const NUEVA = {
 
 export function ApplicationsTab() {
   const { data: apps = [], isLoading } = useApplications();
+  // Crear y editar, con su permiso; eliminar, solo el administrador.
+  const { editarApps: puedeEditar, esAdmin: puedeEliminar } = usePermisosAdmin();
+  const conAcciones = puedeEditar || puedeEliminar;
   const [editando, setEditando] = useState<AdminApplication | null>(null);
   const [abierto, setAbierto] = useState(false);
   const [porBorrar, setPorBorrar] = useState<AdminApplication | null>(null);
@@ -58,17 +63,19 @@ export function ApplicationsTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-end">
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nueva aplicación
-        </Button>
-      </div>
+      {puedeEditar && (
+        <div className="flex justify-end">
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nueva aplicación
+          </Button>
+        </div>
+      )}
 
       <Card className="py-0">
         {isLoading ? (
@@ -100,7 +107,7 @@ export function ApplicationsTab() {
                   <TableHead>Personas</TableHead>
                   <TableHead>Orden</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  {conAcciones && <TableHead className="text-right">Acciones</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -108,7 +115,13 @@ export function ApplicationsTab() {
                   <TableRow key={app.id}>
                     <TableCell>
                       <div className="flex flex-col">
-                        <span className="font-medium">{app.name}</span>
+                        {/* El detalle: sus roles, permisos y quién tiene cada cosa. */}
+                        <Link
+                          to={`/inicio/admin/aplicaciones/${app.id}`}
+                          className="font-medium underline-offset-4 hover:text-primary hover:underline"
+                        >
+                          {app.name}
+                        </Link>
                         <span className="font-mono text-xs text-muted-foreground">{app.code}</span>
                       </div>
                     </TableCell>
@@ -121,29 +134,35 @@ export function ApplicationsTab() {
                         {app.isActive ? 'Activa' : 'Inactiva'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Editar"
-                          onClick={() => {
-                            setEditando(app);
-                            setAbierto(true);
-                          }}
-                        >
-                          <PencilIcon />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Eliminar"
-                          onClick={() => setPorBorrar(app)}
-                        >
-                          <Trash2Icon />
-                        </Button>
-                      </div>
-                    </TableCell>
+                    {conAcciones && (
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          {puedeEditar && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Editar"
+                              onClick={() => {
+                                setEditando(app);
+                                setAbierto(true);
+                              }}
+                            >
+                              <PencilIcon />
+                            </Button>
+                          )}
+                          {puedeEliminar && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Eliminar"
+                              onClick={() => setPorBorrar(app)}
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

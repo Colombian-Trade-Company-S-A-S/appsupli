@@ -3,9 +3,14 @@ import { createBrowserRouter, Navigate, useLocation, type RouteObject } from 're
 import { AppLayout } from '@/app/layouts/AppLayout';
 import { AuthLayout } from '@/app/layouts/AuthLayout';
 import { PublicLayout } from '@/app/layouts/PublicLayout';
+import {
+  PARA_VER_APPS,
+  PARA_VER_USUARIOS,
+  PERMISOS_ADMIN,
+  TODOS_LOS_PERMISOS_ADMIN,
+} from '@/modules/admin/permisos';
 import { EsqueletoPagina, FullPageLoader } from '@/shared/components/feedback';
 import { PublicOnly } from './PublicOnly';
-import { RequireAdmin } from './RequireAdmin';
 import { RequireApp } from './RequireApp';
 import { RequireAuth } from './RequireAuth';
 import { RequirePermiso } from './RequirePermiso';
@@ -16,6 +21,7 @@ const MicrosoftCallbackPage = lazy(() => import('@/app/pages/MicrosoftCallbackPa
 const HomePage = lazy(() => import('@/app/pages/app/HomePage'));
 const ProfilePage = lazy(() => import('@/app/pages/app/ProfilePage'));
 const AdminPage = lazy(() => import('@/modules/admin/pages/AdminPage'));
+const AplicacionDetallePage = lazy(() => import('@/modules/admin/pages/AplicacionDetallePage'));
 const PuntoVentaDetallePage = lazy(() => import('@/modules/bi-trade/pages/PuntoVentaDetallePage'));
 const RegionalDetallePage = lazy(() => import('@/modules/bi-trade/pages/RegionalDetallePage'));
 const UsuarioDetallePage = lazy(() => import('@/modules/admin/pages/UsuarioDetallePage'));
@@ -168,23 +174,37 @@ const routes: RouteObject[] = [
           { index: true, element: withSuspense(<HomePage />) },
           { path: 'perfil', element: withSuspense(<ProfilePage />) },
           {
-            // Con «Ver usuarios» se consulta la lista y el detalle (el
-            // administrador tiene todos los permisos); editar es solo suyo.
-            element: (
-              <RequirePermiso
-                permiso={['admin:users:view', 'admin:users:manage']}
-                volverA="/inicio"
-              />
-            ),
+            // Con cualquier permiso de Administración se entra, a las pestañas
+            // que le tocan (el administrador los tiene todos).
+            element: <RequirePermiso permiso={TODOS_LOS_PERMISOS_ADMIN} volverA="/inicio" />,
             children: [
               { path: 'admin', element: withSuspense(<AdminPage />) },
-              { path: 'admin/usuarios/:id', element: withSuspense(<UsuarioDetallePage />) },
               {
-                element: <RequireAdmin />,
+                element: <RequirePermiso permiso={PARA_VER_APPS} volverA="/inicio/admin" />,
                 children: [
                   {
-                    path: 'admin/usuarios/:id/editar',
-                    element: withSuspense(<UsuarioEditarPage />),
+                    path: 'admin/aplicaciones/:id',
+                    element: withSuspense(<AplicacionDetallePage />),
+                  },
+                ],
+              },
+              {
+                element: <RequirePermiso permiso={PARA_VER_USUARIOS} volverA="/inicio/admin" />,
+                children: [
+                  { path: 'admin/usuarios/:id', element: withSuspense(<UsuarioDetallePage />) },
+                  {
+                    element: (
+                      <RequirePermiso
+                        permiso={PERMISOS_ADMIN.editarUsuarios}
+                        volverA="/inicio/admin"
+                      />
+                    ),
+                    children: [
+                      {
+                        path: 'admin/usuarios/:id/editar',
+                        element: withSuspense(<UsuarioEditarPage />),
+                      },
+                    ],
                   },
                 ],
               },

@@ -32,12 +32,20 @@ import {
 } from '@/shared/components/ui';
 import { adminApi, nombreDePermiso, type AdminPermission, type AdminRole } from '../api';
 import { useAdminMutation, usePermissions, useRoles } from '../hooks';
+import { usePermisosAdmin } from '../permisos';
 import { AYUDA_PERMISOS, ayudaDe } from '../ayudas';
 import { AyudaAcceso } from './AyudaAcceso';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
 
 export function RolesTab() {
   const { data: roles = [], isLoading } = useRoles();
+  // Crear y editar, con su permiso (menos los roles propios: sería darse
+  // permisos); eliminar, solo el administrador.
+  const puede = usePermisosAdmin();
+  const puedeEditar = puede.editarRoles;
+  const puedeEliminar = puede.esAdmin;
+  const conAcciones = puedeEditar || puedeEliminar;
+  const esPropio = (rol: AdminRole) => !puede.esAdmin && puede.misRoles.includes(rol.code);
   const [editando, setEditando] = useState<AdminRole | null>(null);
   const [abierto, setAbierto] = useState(false);
   const [porBorrar, setPorBorrar] = useState<AdminRole | null>(null);
@@ -46,17 +54,19 @@ export function RolesTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-end">
-        <Button
-          onClick={() => {
-            setEditando(null);
-            setAbierto(true);
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Nuevo rol
-        </Button>
-      </div>
+      {puedeEditar && (
+        <div className="flex justify-end">
+          <Button
+            onClick={() => {
+              setEditando(null);
+              setAbierto(true);
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Nuevo rol
+          </Button>
+        </div>
+      )}
 
       <Card className="py-0">
         {isLoading ? (
@@ -86,7 +96,7 @@ export function RolesTab() {
                   <TableHead>Descripción</TableHead>
                   <TableHead>Permisos</TableHead>
                   <TableHead>Personas</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  {conAcciones && <TableHead className="text-right">Acciones</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -105,29 +115,45 @@ export function RolesTab() {
                       <Badge variant="secondary">{rol.permissions.length}</Badge>
                     </TableCell>
                     <TableCell>{rol.userCount}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Editar"
-                          onClick={() => {
-                            setEditando(rol);
-                            setAbierto(true);
-                          }}
-                        >
-                          <PencilIcon />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Eliminar"
-                          onClick={() => setPorBorrar(rol)}
-                        >
-                          <Trash2Icon />
-                        </Button>
-                      </div>
-                    </TableCell>
+                    {conAcciones && (
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          {puedeEditar && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={
+                                esPropio(rol)
+                                  ? 'Es un rol tuyo: lo cambia un administrador'
+                                  : 'Editar'
+                              }
+                              title={
+                                esPropio(rol)
+                                  ? 'Es un rol tuyo: lo cambia un administrador'
+                                  : undefined
+                              }
+                              disabled={esPropio(rol)}
+                              onClick={() => {
+                                setEditando(rol);
+                                setAbierto(true);
+                              }}
+                            >
+                              <PencilIcon />
+                            </Button>
+                          )}
+                          {puedeEliminar && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Eliminar"
+                              onClick={() => setPorBorrar(rol)}
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

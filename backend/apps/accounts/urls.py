@@ -10,6 +10,7 @@ from .views import (
     LogoutView,
     MeView,
     MicrosoftLoginView,
+    MiEquipoView,
     PreferencesView,
     VerifyPasswordView,
 )
@@ -22,6 +23,7 @@ urlpatterns = [
     path('microsoft', MicrosoftLoginView.as_view(), name='microsoft'),
     path('me', MeView.as_view(), name='me'),
     path('me/foto', MiFotoView.as_view(), name='me-foto'),
+    path('me/equipo', MiEquipoView.as_view(), name='me-equipo'),
     path('fotos/<str:firma>', FotoView.as_view(), name='foto'),
     path('preferences', PreferencesView.as_view(), name='preferences'),
     path('instalacion-app', InstalacionAppView.as_view(), name='instalacion-app'),

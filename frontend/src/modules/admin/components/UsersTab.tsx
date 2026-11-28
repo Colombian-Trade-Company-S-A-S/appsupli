@@ -40,6 +40,7 @@ import {
 } from '@/shared/components/ui';
 import { adminApi, type AdminUserFila } from '../api';
 import { useAdminMutation, useAdminUsers, useAreas } from '../hooks';
+import { usePermisosAdmin } from '../permisos';
 
 const TIPOS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
 const ESTADOS = [
@@ -50,8 +51,11 @@ const ESTADOS = [
 
 export function UsersTab() {
   const { user: yo } = useAuth();
-  // Con «Ver usuarios» se consulta; editar e inactivar es del administrador.
-  const puedeEditar = !!yo?.isAdmin;
+  const puede = usePermisosAdmin();
+  // Con «Ver el listado» se consulta; editar e inactivar pide «Editar usuarios».
+  const puedeEditar = puede.editarUsuarios;
+  // A un administrador solo lo edita o inactiva otro administrador.
+  const intocable = (usuario: AdminUserFila) => usuario.isAdmin && !puede.esAdmin;
   const [busqueda, setBusqueda] = useState('');
   const [estado, setEstado] = useState('todos');
   const [area, setArea] = useState('');
@@ -125,9 +129,11 @@ export function UsersTab() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        {puedeEditar
+        {puede.esAdmin
           ? 'Las personas llegan y salen con la sincronización de Odoo (pestaña Odoo). Aquí se manejan sus accesos.'
-          : 'Las personas llegan y salen con la sincronización de Odoo. Toca un nombre para ver su detalle.'}
+          : puedeEditar
+            ? 'Las personas llegan y salen con la sincronización de Odoo. Puedes editar su cuenta; sus accesos los da un administrador.'
+            : 'Las personas llegan y salen con la sincronización de Odoo. Toca un nombre para ver su detalle.'}
       </p>
 
       <Card className="py-0">
@@ -218,12 +224,15 @@ export function UsersTab() {
                           />
                           <DropdownMenuContent align="end">
                             <DropdownMenuGroup>
-                              <DropdownMenuItem onClick={() => abrirEdicion(usuario)}>
+                              <DropdownMenuItem
+                                disabled={intocable(usuario)}
+                                onClick={() => abrirEdicion(usuario)}
+                              >
                                 <PencilIcon />
                                 Editar
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                disabled={usuario.id === yo?.id}
+                                disabled={usuario.id === yo?.id || intocable(usuario)}
                                 onClick={() => alternarActivo.mutate(usuario.id)}
                               >
                                 {usuario.isActive ? <UserXIcon /> : <UserCheckIcon />}

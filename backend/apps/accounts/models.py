@@ -82,15 +82,10 @@ class Departamento(TimeStampedModel):
         return cadena[::-1]
 
 
-#: El código de la app de Administración. No basta con tenerla asignada: la
-#: maneja la cuenta de tipo Administrador (`User.is_admin`) y, solo para
-#: consultar las personas, quien tiene uno de `PERMISOS_VER_USUARIOS`.
+#: El código de la app de Administración. No basta con tenerla asignada: entra
+#: la cuenta de tipo Administrador (`User.is_admin`) y quien tiene alguno de
+#: sus permisos (`apps.accounts.permisos_admin`), a las pestañas que le tocan.
 APP_ADMINISTRACION = 'admin'
-
-#: «Ver usuarios» (y «Crear, editar e inactivar», que lo incluye): con alguno,
-#: quien no es Administrador entra a Administración a consultar la lista y el
-#: detalle de las personas, sin cambiar nada.
-PERMISOS_VER_USUARIOS = ('admin:users:view', 'admin:users:manage')
 
 
 class Application(TimeStampedModel):
@@ -387,15 +382,15 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         extra = self.extra_permissions.values_list('code', flat=True)
         return sorted(set(from_roles) | set(extra))
 
-    def puede_ver_usuarios(self) -> bool:
+    def entra_a_administracion(self) -> bool:
         """
-        Si entra a Administración a consultar las personas: el Administrador o
-        quien tiene «Ver usuarios», suelto o por un rol. Consultar, no editar.
+        El Administrador, o quien tiene algún permiso de Administración (suelto
+        o por un rol): entra a las pestañas que le tocan.
         """
         if self.is_admin:
             return True
         return (
-            Permission.objects.filter(code__in=PERMISOS_VER_USUARIOS)
+            Permission.objects.filter(application__code=APP_ADMINISTRACION)
             .filter(models.Q(roles__users=self) | models.Q(users=self))
             .exists()
         )
@@ -411,8 +406,8 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
             | models.Q(permissions__users=self)
         )
         # A Administración no basta con tenerla asignada (así lo exigen su API
-        # y su ruta): sin «Ver usuarios» entraría a una sección vacía.
-        if not self.puede_ver_usuarios():
+        # y su ruta): sin ninguno de sus permisos entraría a una sección vacía.
+        if not self.entra_a_administracion():
             propias = propias.exclude(code=APP_ADMINISTRACION)
         propias = propias.distinct()
         # Un sub-módulo arrastra a su contenedor: sin él, el menú no tendría

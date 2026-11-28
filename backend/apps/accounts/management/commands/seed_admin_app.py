@@ -3,21 +3,15 @@ Crea la aplicación de Administración y sus permisos.
 
     python manage.py seed_admin_app
 
-Es idempotente. El módulo lo ven los usuarios con `kind=admin`, que tienen
-acceso a todo; también puede asignarse a alguien puntual desde el admin.
+Es idempotente. El administrador de la plataforma entra a todo; los demás,
+con alguno de estos permisos, a las secciones que les tocan (ver
+`apps.accounts.permisos_admin`).
 """
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.accounts.models import Application, Permission
-
-PERMISOS = [
-    ('admin:users:view', 'Ver usuarios'),
-    ('admin:users:manage', 'Crear, editar e inactivar usuarios'),
-    ('admin:areas:manage', 'Administrar áreas'),
-    ('admin:applications:manage', 'Administrar aplicaciones y permisos'),
-    ('admin:roles:manage', 'Administrar roles'),
-]
+from apps.accounts.permisos_admin import CATALOGO
 
 
 class Command(BaseCommand):
@@ -36,14 +30,23 @@ class Command(BaseCommand):
                 'is_active': True,
             },
         )
-        for code, name in PERMISOS:
-            Permission.objects.update_or_create(
-                code=code, defaults={'name': name, 'application': app}
+        creados: dict[str, Permission] = {}
+        for permiso in CATALOGO:
+            creados[permiso.code], _ = Permission.objects.update_or_create(
+                code=permiso.code,
+                defaults={
+                    'name': permiso.name,
+                    'group': permiso.group,
+                    'order': permiso.order,
+                    'description': permiso.description,
+                    'application': app,
+                    'parent': creados.get(permiso.parent) if permiso.parent else None,
+                },
             )
 
         self.stdout.write(
             self.style.SUCCESS(
                 f'Aplicación "{app.name}" {"creada" if creada else "actualizada"} '
-                f'con {len(PERMISOS)} permisos.'
+                f'con {len(CATALOGO)} permisos.'
             )
         )

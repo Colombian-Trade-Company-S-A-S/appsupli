@@ -1,9 +1,14 @@
-"""Odoo en Administración: probar la conexión, sincronizar y ver la bitácora."""
+"""
+Odoo en Administración: probar la conexión, sincronizar y ver la bitácora.
+
+Todo pide «Odoo completo» (o ser administrador). Sincronizar crea, actualiza e
+inactiva personas aunque no se tenga «Editar usuarios»: es lo que trae Odoo.
+"""
 from django.http import HttpResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from apps.accounts.api_permissions import IsPlatformAdmin
+from apps.accounts.api_permissions import Odoo
 
 from .accesos import generar_accesos, nombre_archivo, pendientes_de_acceso
 from .client import OdooClient
@@ -18,7 +23,7 @@ def _ultima():
 
 
 @api_view(['GET'])
-@permission_classes([IsPlatformAdmin])
+@permission_classes([Odoo])
 def estado(request):
     """
     GET /api/admin/odoo/estado — prueba la conexión con Odoo en este momento.
@@ -36,7 +41,7 @@ def estado(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsPlatformAdmin])
+@permission_classes([Odoo])
 def sincronizar(request):
     """POST /api/admin/odoo/sincronizar — trae de Odoo y guarda en la base de appsupli."""
     opciones = OpcionesSincronizacionSerializer(data=request.data)
@@ -48,7 +53,7 @@ def sincronizar(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsPlatformAdmin])
+@permission_classes([Odoo])
 def sincronizaciones(request):
     """GET /api/admin/odoo/sincronizaciones — las últimas 20, con vistas previas incluidas."""
     registros = Sincronizacion.objects.select_related('ejecutada_por')[:20]
@@ -56,7 +61,7 @@ def sincronizaciones(request):
 
 
 @api_view(['GET', 'POST'])
-@permission_classes([IsPlatformAdmin])
+@permission_classes([Odoo])
 def accesos(request):
     """
     GET  /api/admin/odoo/accesos — cuántos están pendientes de clave.

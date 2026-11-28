@@ -27,6 +27,7 @@ import { cn } from '@/shared/lib/utils';
 import { adminApi, type AdminUser, type AdminUserPayload } from '../api';
 import { AccesosPorApp } from '../components/AccesosPorApp';
 import { useAdminMutation, useAdminUser, useApplications, useRoles } from '../hooks';
+import { usePermisosAdmin } from '../permisos';
 import { planIdDeUrl } from '../planner';
 
 const BASE = '/inicio/admin';
@@ -61,6 +62,9 @@ export default function UsuarioEditarPage() {
   const { id } = useParams();
   const idUsuario = Number(id);
   const navigate = useNavigate();
+  // Quien edita usuarios sin ser administrador cambia la cuenta, no el poder:
+  // ni el interruptor de administrador ni los accesos.
+  const { esAdmin: yoSoyAdmin } = usePermisosAdmin();
   const { data: usuario, isLoading, isError } = useAdminUser(idUsuario);
   const { data: apps = [] } = useApplications();
   const { data: roles = [] } = useRoles();
@@ -103,6 +107,20 @@ export default function UsuarioEditarPage() {
     );
   }
 
+  if (usuario.isAdmin && !yoSoyAdmin) {
+    return (
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+        <Button variant="ghost" size="sm" className="self-start" render={<Link to={detalle} />}>
+          <ArrowLeftIcon data-icon="inline-start" />
+          Volver al detalle
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          {usuario.fullName} es administrador: su cuenta solo la edita otro administrador.
+        </p>
+      </div>
+    );
+  }
+
   const deOdoo = !!usuario.odooId;
   // Sin correo corporativo en Odoo, aquí se le pone el personal.
   const correoPersonal = deOdoo && usuario.correoEditable;
@@ -116,6 +134,14 @@ export default function UsuarioEditarPage() {
     event.preventDefault();
     const payload = { ...datos };
     if (!payload.password) delete payload.password;
+    if (!yoSoyAdmin) {
+      // No los cambia: no se mandan (el backend igual rechaza un cambio).
+      delete payload.password;
+      delete payload.kind;
+      delete payload.applications;
+      delete payload.roles;
+      delete payload.extraPermissions;
+    }
     guardar.mutate(payload, { onSuccess: volver });
   };
 
@@ -214,16 +240,19 @@ export default function UsuarioEditarPage() {
               onChange={(e) => set('phone', e.target.value)}
             />
           </Field>
-          <Field>
-            <FieldLabel htmlFor="password">Nueva contraseña</FieldLabel>
-            <PasswordInput
-              id="password"
-              autoComplete="new-password"
-              placeholder="Vacía para no cambiarla"
-              value={datos.password ?? ''}
-              onChange={(e) => set('password', e.target.value)}
-            />
-          </Field>
+          {/* Con la clave de otro se entra como él: la cambia solo un administrador. */}
+          {yoSoyAdmin && (
+            <Field>
+              <FieldLabel htmlFor="password">Nueva contraseña</FieldLabel>
+              <PasswordInput
+                id="password"
+                autoComplete="new-password"
+                placeholder="Vacía para no cambiarla"
+                value={datos.password ?? ''}
+                onChange={(e) => set('password', e.target.value)}
+              />
+            </Field>
+          )}
         </div>
       </Seccion>
 
@@ -234,8 +263,13 @@ export default function UsuarioEditarPage() {
           <Interruptor
             id="isAdmin"
             titulo="Administrador"
-            descripcion="Acceso total a la plataforma."
+            descripcion={
+              yoSoyAdmin
+                ? 'Acceso total a la plataforma.'
+                : 'Solo un administrador vuelve administrador a alguien.'
+            }
             activo={datos.kind === 'admin'}
+            deshabilitado={!yoSoyAdmin}
             // Al quitarle el admin, el backend decide si es líder o colaborador
             // según tenga personas a cargo en Odoo.
             onCambio={(v) => set('kind', v ? 'admin' : 'colaborador')}
@@ -271,13 +305,18 @@ export default function UsuarioEditarPage() {
 
       <Seccion
         titulo="Aplicaciones y permisos"
-        descripcion="Marca la app a la que entra y, dentro de ella, qué puede hacer: un rol (un paquete de permisos ya armado) o permisos sueltos. Si desmarcas un permiso que da un rol, el rol se quita y lo demás que daba queda como permisos sueltos."
+        descripcion={
+          yoSoyAdmin
+            ? 'Marca la app a la que entra y, dentro de ella, qué puede hacer: un rol (un paquete de permisos ya armado) o permisos sueltos. Si desmarcas un permiso que da un rol, el rol se quita y lo demás que daba queda como permisos sueltos.'
+            : 'A qué entra y qué puede hacer. Solo un administrador da o quita accesos.'
+        }
         total={datos.applications?.length ?? 0}
       >
         <AccesosPorApp
           apps={apps}
           roles={roles}
           esAdmin={datos.kind === 'admin'}
+          soloLectura={!yoSoyAdmin}
           accesos={{
             applications: datos.applications ?? [],
             roles: datos.roles ?? [],

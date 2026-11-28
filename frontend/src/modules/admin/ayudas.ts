@@ -18,7 +18,7 @@ export const AYUDA_APPS: Record<string, Ayuda> = {
   admin: {
     texto:
       'Es este panel: aquí se crean usuarios, áreas y roles, y se decide a qué entra cada persona.',
-    ojo: 'Sin ser Administrador, la persona entra solo si le das «Ver usuarios»: consulta la lista y el detalle de las personas, sin cambiar nada. Editar, roles, áreas, apps y Odoo siguen siendo de las cuentas de tipo Administrador.',
+    ojo: 'Sin ser Administrador, la persona entra con los permisos que marques adentro y ve solo esas secciones. Volver administrador a alguien y dar accesos (apps, roles y permisos) es siempre de las cuentas de tipo Administrador.',
   },
   'bi-trade': {
     texto:
@@ -84,27 +84,32 @@ export const AYUDA_ROLES: Record<string, Ayuda> = {
   },
 };
 
-const ADMIN_SIN_EFECTO =
-  'Por ahora este permiso no cambia nada: esto solo lo hacen las cuentas de tipo Administrador.';
-
+// Administración: el texto lo trae cada permiso de la base; aquí, lo que cuidar.
 export const AYUDA_PERMISOS: Record<string, Ayuda> = {
   'admin:users:view': {
-    texto: 'Ver la lista de usuarios.',
-    ojo: 'Le aparece Administración con la lista y el detalle de cada persona (área, cargo, jefe, accesos y datos de contacto), solo para consultar.',
+    texto: 'Ver la lista de personas y el detalle de cada una.',
+    ojo: 'Ve datos de contacto y los accesos de todos, aunque no pueda cambiarlos.',
   },
   'admin:users:manage': {
-    texto: 'Crear, editar e inactivar usuarios.',
-    ojo: 'Por ahora solo deja consultar, como «Ver usuarios»: editar e inactivar siguen siendo de las cuentas de tipo Administrador.',
+    texto: 'Editar la cuenta de las personas e inactivarlas.',
+    ojo: 'No cambia contraseñas, no da accesos, no vuelve administrador a nadie ni toca la cuenta de un administrador: eso es solo de los administradores.',
   },
-  'admin:areas:manage': {
-    texto: 'Crear y editar las áreas de la compañía.',
-    ojo: ADMIN_SIN_EFECTO,
-  },
+  'admin:areas:view': { texto: 'Ver las áreas que llegan de Odoo.' },
+  'admin:applications:view': { texto: 'Ver las aplicaciones de la plataforma.' },
   'admin:applications:manage': {
-    texto: 'Crear y editar las aplicaciones y sus permisos.',
-    ojo: ADMIN_SIN_EFECTO,
+    texto: 'Crear aplicaciones y cambiar su nombre, ruta, orden o si están activas.',
+    ojo: 'Apagar una app la quita del menú de todos. Eliminarla es del administrador.',
   },
-  'admin:roles:manage': { texto: 'Crear y editar roles.', ojo: ADMIN_SIN_EFECTO },
+  'admin:roles:view': { texto: 'Ver los roles y qué permisos da cada uno.' },
+  'admin:roles:manage': {
+    texto: 'Crear roles y cambiar su nombre o sus permisos.',
+    ojo: 'Cambiar un rol cambia lo que pueden hacer todos los que lo tienen. No puede tocar los roles que él mismo tiene, ni asignarlos ni eliminarlos.',
+  },
+  'admin:odoo:manage': {
+    texto:
+      'Probar la conexión, sincronizar con Odoo y generar los accesos de quien no tiene clave.',
+    ojo: 'Sincronizar crea, actualiza e inactiva personas según Odoo, aunque no tenga «Editar usuarios».',
+  },
 
   'performance:objetivos:manage_all': {
     texto:

@@ -4,6 +4,7 @@ import type {
   ConfigIngreso,
   LoginCredentials,
   LoginResponse,
+  MiembroEquipo,
   PreferencesPayload,
   ResultadoFoto,
   User,
@@ -27,6 +28,8 @@ export const authApi = {
       .post<LoginResponse>('/auth/microsoft', { idToken }, { timeout: ESPERA_INGRESO })
       .then((r) => r.data),
   me: () => api.get<User>('/auth/me'),
+  /** Las personas activas que tiene a cargo directo. */
+  miEquipo: () => api.get<MiembroEquipo[]>('/auth/me/equipo'),
   updatePreferences: (payload: PreferencesPayload) => api.patch<User>('/auth/preferences', payload),
   /**
    * `instalada`: la instaló. `despues`: no la quiso aún. `visto`: leyó el

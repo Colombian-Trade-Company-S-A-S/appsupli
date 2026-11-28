@@ -45,6 +45,32 @@ export interface AdminApplication {
   userCount: number;
 }
 
+/** Alguien que entra a una app y cómo: asignada, por sus roles o por permisos sueltos. */
+export interface AccesoPersona {
+  id: number;
+  fullName: string;
+  firstName: string;
+  email: string | null;
+  position: string;
+  areaName: string;
+  foto: string | null;
+  destacado: boolean;
+  isAdmin: boolean;
+  /** Tiene la app asignada directamente. */
+  asignada: boolean;
+  /** Los roles que tiene y que dan permisos en esta app. */
+  roles: number[];
+  /** Sus permisos sueltos de esta app. */
+  permisos: number[];
+}
+
+/** Lo que se le da o se le quita a alguien en una app. */
+export interface CambioDeAcceso {
+  usuario: number;
+  tipo: 'app' | 'rol' | 'permiso';
+  id?: number;
+}
+
 export interface AdminRole {
   id: number;
   code: string;
@@ -207,7 +233,19 @@ export const adminApi = {
   },
   // Solo lectura: las áreas vienen de Odoo.
   areas: { list: () => api.getList<AdminArea>('/admin/areas') },
-  applications: recurso<AdminApplication, Partial<AdminApplication>>('/admin/applications'),
+  applications: {
+    ...recurso<AdminApplication, Partial<AdminApplication>>('/admin/applications'),
+    /** Quién entra a la app y con qué. */
+    accesos: (id: number) => api.get<AccesoPersona[]>(`/admin/applications/${id}/accesos`),
+    /** Solo el administrador: responden con los accesos ya actualizados. */
+    darAcceso: (id: number, cambio: CambioDeAcceso) =>
+      api.post<AccesoPersona[]>(`/admin/applications/${id}/accesos`, cambio),
+    quitarAcceso: (id: number, cambio: CambioDeAcceso) =>
+      api.post<AccesoPersona[]>(`/admin/applications/${id}/quitar-acceso`, cambio),
+    /** Solo la app (entrar) a todos o a un área; dice a cuántos se sumó. */
+    asignarA: (id: number, cuerpo: { todos: true } | { area: number }) =>
+      api.post<{ agregadas: number }>(`/admin/applications/${id}/asignar-a`, cuerpo),
+  },
   roles: recurso<AdminRole, Partial<AdminRole>>('/admin/roles'),
   permissions: {
     list: () => api.getList<AdminPermission>('/admin/permissions'),

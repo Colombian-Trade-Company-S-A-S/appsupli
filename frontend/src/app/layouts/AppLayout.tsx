@@ -1,5 +1,6 @@
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { ChevronDownIcon, LogOutIcon, UserIcon } from 'lucide-react';
+import { ArrowLeftIcon, ChevronDownIcon, LogOutIcon, UserIcon } from 'lucide-react';
 import { urlFotoDe, useAuth } from '@/core/auth';
 import { useAppearanceEffect } from '@/shared/hooks';
 import { ErrorBoundary } from '@/shared/components/feedback';
@@ -19,6 +20,7 @@ import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from '@/shared/components/ui';
 import { AppSidebar } from './AppSidebar';
 import { BotonPaleta, CommandPalette, usePaletaDeComandos } from './CommandPalette';
@@ -45,7 +47,7 @@ export function AppLayout() {
         <AppHeader onBuscar={() => setAbierta(true)} />
         {/* En celular deja aire abajo para la barra de navegación. */}
         <main className="min-w-0 flex-1 p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:p-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6">
-          <ErrorBoundary>
+          <ErrorBoundary resetKey={pathname}>
             <div key={seccion} className="animate-entrada-pagina">
               <Outlet />
             </div>
@@ -58,9 +60,57 @@ export function AppLayout() {
   );
 }
 
+/** Administración y todo lo que cuelga de ella (detalle de usuarios, de apps…). */
+const EN_ADMINISTRACION = /^\/inicio\/admin(\/|$)/;
+const DURACION_AVISO_MS = 5000;
+
+/**
+ * Administración necesita ancho (tablas, el reparto de accesos): al entrar, el
+ * menú se colapsa y, por unos segundos, se señala el botón que lo abre y lo
+ * cierra. Al salir vuelve como estaba. En celular el menú ya va cerrado.
+ */
+function useMenuEnAdministracion() {
+  const { pathname } = useLocation();
+  const { open, setOpen, isMobile } = useSidebar();
+  const [aviso, setAviso] = useState(false);
+  // Cómo estaba el menú al entrar; null: fuera de Administración.
+  const antesDeEntrar = useRef<boolean | null>(null);
+  const enAdmin = EN_ADMINISTRACION.test(pathname);
+
+  const alCambiarDeSeccion = useEffectEvent((dentro: boolean) => {
+    if (isMobile) return;
+    if (dentro && antesDeEntrar.current === null) {
+      antesDeEntrar.current = open;
+      if (open) {
+        setOpen(false);
+        setAviso(true);
+      }
+    } else if (!dentro && antesDeEntrar.current !== null) {
+      if (antesDeEntrar.current) setOpen(true);
+      antesDeEntrar.current = null;
+      setAviso(false);
+    }
+  });
+
+  // Solo al entrar o salir de Administración, no al moverse dentro de ella.
+  // Un `useEffectEvent` no va en las dependencias; el plugin de lint instalado
+  // todavía no lo reconoce.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => alCambiarDeSeccion(enAdmin), [enAdmin]);
+
+  useEffect(() => {
+    if (!aviso) return;
+    const temporizador = window.setTimeout(() => setAviso(false), DURACION_AVISO_MS);
+    return () => window.clearTimeout(temporizador);
+  }, [aviso]);
+
+  return { aviso, cerrarAviso: () => setAviso(false) };
+}
+
 function AppHeader({ onBuscar }: { onBuscar: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { aviso, cerrarAviso } = useMenuEnAdministracion();
 
   const handleLogout = async () => {
     await logout();
@@ -69,7 +119,30 @@ function AppHeader({ onBuscar }: { onBuscar: () => void }) {
 
   return (
     <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/90 px-4 backdrop-blur">
-      <SidebarTrigger />
+      <span className="relative flex">
+        <SidebarTrigger onClick={cerrarAviso} />
+        {aviso && (
+          <>
+            {/* Un aro que late sobre el botón… */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 animate-ping rounded-md ring-2 ring-primary motion-reduce:animate-none"
+            />
+            {/* …y un globo que dice para qué sirve. */}
+            <span
+              role="status"
+              className="absolute top-1/2 left-full z-20 ml-3 flex -translate-y-1/2 animate-in items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium whitespace-nowrap text-primary-foreground shadow-lg duration-300 fade-in-0 slide-in-from-left-2"
+            >
+              <span
+                aria-hidden
+                className="absolute top-1/2 -left-1 size-2 -translate-y-1/2 rotate-45 bg-primary"
+              />
+              <ArrowLeftIcon className="size-3.5 motion-safe:animate-pulse" />
+              Con este botón abres y cierras el menú
+            </span>
+          </>
+        )}
+      </span>
       <Separator orientation="vertical" className="mr-1 h-4" />
       <span className="hidden text-sm text-muted-foreground sm:inline">{user?.area}</span>
 

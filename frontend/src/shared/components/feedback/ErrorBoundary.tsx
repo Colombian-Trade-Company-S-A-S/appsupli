@@ -5,6 +5,11 @@ import { Alert, AlertDescription, AlertTitle, Button } from '@/shared/components
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  /**
+   * Al cambiar (la ruta, por ejemplo) se borra el error: sin esto, un fallo
+   * de una pantalla seguía en la siguiente hasta recargar.
+   */
+  resetKey?: unknown;
 }
 
 interface State {
@@ -17,6 +22,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
+  }
+
+  componentDidUpdate(anteriores: Props) {
+    if (this.state.error && anteriores.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
