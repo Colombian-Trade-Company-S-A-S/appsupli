@@ -182,7 +182,9 @@ export interface Lectura {
   ejecutadaPor: string;
   /** Corriendo ahora: la pantalla consulta hasta que termina. */
   enCurso: boolean;
-  estado: 'ok' | 'parcial' | 'error';
+  /** Se pidió detenerla: termina el plan que está guardando y para. */
+  deteniendo: boolean;
+  estado: 'ok' | 'parcial' | 'error' | 'detenida';
   estadoLabel: string;
   planesLeidos: number;
   resumen: Record<string, number>;
@@ -202,9 +204,25 @@ export interface Incidencia {
   detectadaAt: string;
 }
 
+/** Una semana que se puede volver a leer a mano desde «Sincronizar». */
+export interface SemanaSincronizable extends SemanaInfo {
+  /** La que se está midiendo ahora. */
+  enCurso: boolean;
+  /** Ya tiene foto de cierre (si se vuelve a leer, se reemplaza). */
+  conCierre: boolean;
+}
+
+/** Qué semanas leer y, si hay alguna cerrada, por qué (queda en la bitácora). */
+export interface PedidoSincronizar {
+  semanas: string[];
+  motivo?: string;
+}
+
 export interface Conexion {
   estadoGraph: { configurado: boolean; conectado: boolean; mensaje: string } | null;
   ultimaLectura: Lectura | null;
+  /** La semana en curso y las que ya tienen fotos, de la más reciente a la más vieja. */
+  semanasSincronizables: SemanaSincronizable[];
   personasMedidas: number;
   personasConPlan: number;
   planesRelacionados: number;
@@ -275,7 +293,10 @@ export const plannerApi = {
   conexion: (probar = false) =>
     api.get<Conexion>(`${RUTA}/conexion`, probar ? { probar: 1 } : undefined),
   /** Empieza la lectura en segundo plano; si ya hay una corriendo, devuelve esa. */
-  sincronizar: () => api.post<Lectura & { yaEnCurso: boolean }>(`${RUTA}/sincronizar`),
+  sincronizar: (pedido: PedidoSincronizar) =>
+    api.post<Lectura & { yaEnCurso: boolean }>(`${RUTA}/sincronizar`, pedido),
+  /** «Detener actualización»: la lectura en curso para antes del siguiente plan. */
+  detenerSincronizacion: () => api.post<Lectura>(`${RUTA}/sincronizar/detener`),
   planes: () => api.get<Planes>(`${RUTA}/planes`),
   parametros: () => api.get<ParametrosRespuesta>(`${RUTA}/parametros`),
   guardarParametros: (payload: ParametrosPayload) =>

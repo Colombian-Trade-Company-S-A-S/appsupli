@@ -1,4 +1,5 @@
 import { ApiError, api, httpClient } from '@/shared/api/http-client';
+import type { Informe } from './permisos';
 
 export type RegionalPdv = 'Zona Sur' | 'Zona Norte' | 'Plaza Claro' | 'Nacional';
 export type MaterialesPdv = 'Todos los materiales' | 'Sin todos los materiales';
@@ -594,8 +595,53 @@ export interface ResultadoInforme {
     omitidosPorDia: number;
     puntos: string[];
   } | null;
+  /** Solo Tmk: los productos que se eligió crear desde el informe. */
+  productosCreados?: number;
+  /** De los creados, los que quedaron en $0 porque no se les puso precio. */
+  productosSinPrecio?: number;
+  marcasCreadas?: string[];
   message: string;
 }
+
+/** Un producto que el informe vende en Tmk y no existe en la app, como quedaría al crearlo. */
+export interface ProductoDelInforme {
+  idProducto: string;
+  /** Propuesto desde el «Texto breve de material» del ERP. Se puede cambiar. */
+  nombreProducto: string;
+  /** Ya resuelta al catálogo («AIWA» → «Aiwa»). `null` si el archivo no la trae. */
+  marca: string | null;
+  /** La marca no está en el catálogo: se crea con el producto. */
+  marcaNueva: boolean;
+  /** Las unidades del mes que entran con él si se crea. */
+  unidades: number;
+}
+
+/** El informe trae productos que no existen: la lista para elegir cuáles crear. */
+export interface PreguntaInforme {
+  productos: ProductoDelInforme[];
+  marcasNuevas: string[];
+  message: string;
+}
+
+/** Un producto elegido para crear, con lo que la persona escribió. */
+export interface ProductoElegido {
+  codigo: string;
+  nombre: string;
+  /** Precio Coltrade, que también va como precio Tmk. `null`: queda en $0. */
+  precio: number | null;
+}
+
+/** La respuesta a la pregunta de los productos: crear los elegidos o importar sin ellos. */
+export type DecisionInforme =
+  { productos: 'omitir' } | { productos: 'crear'; crear: ProductoElegido[] };
+
+/**
+ * El informe carga, o (solo Tmk) se detiene a preguntar qué productos crear
+ * antes de escribir nada. La pregunta no es un error: se responde volviendo a
+ * subir con la decisión.
+ */
+export type RespuestaInforme =
+  { tipo: 'listo'; resultado: ResultadoInforme } | { tipo: 'productos'; pregunta: PreguntaInforme };
 
 /**
  * Totales de un listado.
@@ -848,7 +894,12 @@ async function descargarArchivo(
 ) {
   const respuesta = await httpClient.get(url, { responseType: 'blob', params });
   const cabecera = String(respuesta.headers['content-disposition'] ?? '');
-  const nombre = /filename="?([^"]+)"?/.exec(cabecera)?.[1] ?? nombrePorDefecto;
+  // `filename*` trae el nombre con tildes («Guía…»); `filename`, la versión sin ellas.
+  const conTildes = /filename\*=UTF-8''([^;]+)/i.exec(cabecera)?.[1];
+  const nombre =
+    (conTildes ? decodeURIComponent(conTildes) : undefined) ??
+    /filename="?([^";]+)"?/.exec(cabecera)?.[1] ??
+    nombrePorDefecto;
 
   const objeto = URL.createObjectURL(respuesta.data as Blob);
   const enlace = document.createElement('a');
@@ -859,6 +910,17 @@ async function descargarArchivo(
   enlace.remove();
   URL.revokeObjectURL(objeto);
 }
+
+/**
+ * La guía de uso en PDF de un informe: qué es, cómo se lee y cómo se mantiene
+ * al día. La arma el servidor con el texto del código desplegado, así que
+ * siempre corresponde a la versión del informe que se está usando.
+ */
+export const descargarGuia = (informe: Informe, nombre: string) =>
+  descargarArchivo(
+    informe === 'claro' ? `${RUTA}/guia` : `${RUTA}/${informe}/guia`,
+    `Guía de uso - ${nombre}.pdf`,
+  );
 
 const recurso = <T, P>(ruta: string) => ({
   list: (params?: Record<string, unknown>) => api.getList<T>(`${RUTA}${ruta}`, params),
@@ -953,7 +1015,12 @@ export type OrigenInforme = File | { mensaje: string; adjunto: string };
 
 const importarInformeEn =
   (ruta: string) =>
-  (origen: OrigenInforme, mes: { anio: number; mes: number }, modo: ModoImportacion) => {
+  async (
+    origen: OrigenInforme,
+    mes: { anio: number; mes: number },
+    modo: ModoImportacion,
+    decision?: DecisionInforme,
+  ): Promise<RespuestaInforme> => {
     const cuerpo = new FormData();
     if (origen instanceof File) {
       cuerpo.append('archivo', origen);
@@ -964,13 +1031,38 @@ const importarInformeEn =
     cuerpo.append('anio', String(mes.anio));
     cuerpo.append('mes', String(mes.mes));
     cuerpo.append('modo', modo);
-    return httpClient
-      .post<ResultadoInforme>(`${RUTA}${ruta}`, cuerpo, {
+    if (decision) {
+      cuerpo.append('productos', decision.productos);
+      if (decision.productos === 'crear') cuerpo.append('crear', JSON.stringify(decision.crear));
+    }
+    try {
+      const { data } = await httpClient.post<ResultadoInforme>(`${RUTA}${ruta}`, cuerpo, {
         headers: { 'Content-Type': undefined },
         // El archivo trae once mil filas: el timeout normal no alcanza.
         timeout: 120_000,
-      })
-      .then((r) => r.data);
+      });
+      return { tipo: 'listo', resultado: data };
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.code === 'productos_por_crear'
+      ) {
+        const cuerpoError = error.body as {
+          productosPorCrear: ProductoDelInforme[];
+          marcasNuevas: string[];
+        };
+        return {
+          tipo: 'productos',
+          pregunta: {
+            productos: cuerpoError.productosPorCrear,
+            marcasNuevas: cuerpoError.marcasNuevas,
+            message: error.message,
+          },
+        };
+      }
+      throw error;
+    }
   };
 
 export const biTradeApi = {
@@ -1303,7 +1395,11 @@ export const biTradeApiFalabella = {
 };
 export const biTradeApiTmk = {
   ...apiDeCanal('tmk'),
-  /** Tmk es el único canal aparte con el importador del ERP, igual que Claro. */
+  /**
+   * Tmk es el único canal aparte con el importador del ERP, igual que Claro,
+   * pero entra toda venta de un producto que exista, tenga meta o no, y si el
+   * archivo vende productos que no existen pregunta cuáles crear.
+   */
   importarInforme: importarInformeEn('/tmk/importar-informe'),
 };
 

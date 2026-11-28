@@ -1,4 +1,5 @@
 """Pruebas de BI Trade Marketing: CRUD, permisos y agregados del tablero."""
+import json
 from datetime import date, timedelta
 from io import BytesIO, StringIO
 
@@ -4823,15 +4824,17 @@ def test_sobrescribir_en_tmk_solo_borra_las_ventas_de_tmk(editor, catalogo, cata
     assert Venta.objects.count() == 1
 
 
-def test_tmk_solo_carga_las_ventas_de_productos_con_meta(editor, catalogo_tmk):
-    """Como en Claro: lo que no tiene meta en Tmk ese mes en ese punto no entra."""
-    _tienda, _audifonos = catalogo_tmk
+def test_tmk_carga_las_ventas_aunque_el_producto_no_tenga_meta(
+    app_bi_trade, editor, catalogo_tmk
+):
+    """A diferencia de Claro: si el producto existe en Tmk, su venta entra, con meta o sin ella."""
+    tienda, _audifonos = catalogo_tmk
     parlante = ProductoTmk.objects.create(
         id_producto='TMKP-002', nombre_producto='Parlante', marca=marca('JBL'),
         precio_venta_tmk=100_000, precio_venta_coltrade=80_000,
     )
     con_metas_tmk((2026, 3))
-    # El parlante se crea con meta y se le quita: el audífono sí la conserva.
+    # El parlante se queda sin meta; el audífono la conserva.
     MetaComercialTmk.objects.filter(id_producto=parlante).delete()
 
     respuesta = _importar_tmk(
@@ -4843,8 +4846,259 @@ def test_tmk_solo_carga_las_ventas_de_productos_con_meta(editor, catalogo_tmk):
     )
 
     assert respuesta.status_code == 200, respuesta.json()
-    assert respuesta.json()['ventas']['sinMeta'] == 1
+    assert respuesta.json()['ventas']['sinMeta'] == 0
+    assert set(VentaTmk.objects.values_list('id_producto', flat=True)) == {
+        'TMKP-001',
+        'TMKP-002',
+    }
+    # Y el tablero la cuenta: 250.000 del audífono más 80.000 del parlante.
+    lector = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    avance = lector.get('/api/bi-trade/tmk/avance-mensual?anio=2026&mes=3').json()
+    assert avance['totales']['ventasDinero'] == 330_000
+    assert tienda.ventas.count() == 2
+
+
+def test_el_excel_de_ventas_de_tmk_carga_aunque_no_haya_meta(app_bi_trade, catalogo_tmk):
+    editor = _editor(app_bi_trade)
+    encabezados = ['id_producto_tmk', 'id_punto_venta_tmk', 'fecha_venta', 'cantidad_vendida']
+    respuesta = editor.post(
+        '/api/bi-trade/tmk/ventas/importar',
+        {'archivo': _xlsx(encabezados, [['TMKP-001', 'TMK-301', '2026-03-04', 2]])},
+        format='multipart',
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert VentaTmk.objects.get().cantidad_vendida == 2
+
+
+#: Como el informe real: con el nombre y la marca de cada material.
+ENCABEZADOS_INFORME_CON_NOMBRE = [
+    ' N°SerieFab        ',
+    'Material',
+    'Texto breve de material                 ',
+    'Ce. ',
+    'CMv',
+    'Fe/contab/',
+    'Marca',
+]
+
+
+def _informe_con_nombre(filas):
+    """Cada `fila` es `(material, centro, cmv, fecha, texto breve, marca)`."""
+    libro = openpyxl.Workbook()
+    pagina = libro.active
+    pagina.title = 'Base'
+    pagina.append(ENCABEZADOS_INFORME_CON_NOMBRE)
+    for material, centro, cmv, fecha, nombre, marca_erp in filas:
+        pagina.append(['SERIE-1', material, nombre, centro, cmv, fecha, marca_erp])
+    buffer = BytesIO()
+    libro.save(buffer)
+    return SimpleUploadedFile(
+        'informe.xlsx',
+        buffer.getvalue(),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
+TORRE = ('7023988', 'TORRE SONID AWPOC10L 800W BT5.0 NGR AIWA', 'AIWA')
+CARGADOR = ('7022139', 'CARGADOR PARED 30W USB-C BLNC BELK', 'BELKIN NUEVA')
+
+
+def _fila_erp(producto, centro, cmv, fecha):
+    codigo, nombre, marca_erp = producto
+    return (codigo, centro, cmv, fecha, nombre, marca_erp)
+
+
+#: Lo que trae el informe de prueba: el audífono, que existe, y dos que no.
+FILAS_CON_NUEVOS = [
+    ('TMKP-001', 'TMK-301', '601', date(2026, 3, 4), 'AUDIFONOS JBL', 'JBL'),
+    _fila_erp(TORRE, 'TMK-301', '601', date(2026, 3, 4)),
+    _fila_erp(TORRE, 'TMK-301', '601', date(2026, 3, 5)),
+    _fila_erp(TORRE, 'TMK-301', '1', None),
+    _fila_erp(CARGADOR, 'TMK-301', '601', date(2026, 3, 6)),
+    # No se ofrecen: de otro mes, y de un punto que no es de Tmk.
+    _fila_erp(('7000001', 'DE ABRIL', 'AIWA'), 'TMK-301', '601', date(2026, 4, 2)),
+    _fila_erp(('7000002', 'DE CLARO', 'AIWA'), 'PDV-001', '601', date(2026, 3, 4)),
+]
+
+
+def _importar_tmk_con_nombre(cliente, filas=None, modo='completar', **extra):
+    return cliente.post(
+        '/api/bi-trade/tmk/importar-informe',
+        {
+            'archivo': _informe_con_nombre(FILAS_CON_NUEVOS if filas is None else filas),
+            'anio': 2026,
+            'mes': 3,
+            'modo': modo,
+            **extra,
+        },
+        format='multipart',
+    )
+
+
+def test_tmk_pregunta_que_productos_crear_sin_guardar_nada(editor, catalogo_tmk):
+    marca('Aiwa')
+    InventarioTmk.objects.create(
+        id_producto=catalogo_tmk[1], id_punto_venta=catalogo_tmk[0], cantidad_inventario=9
+    )
+
+    respuesta = _importar_tmk_con_nombre(editor)
+
+    assert respuesta.status_code == 409, respuesta.json()
+    datos = respuesta.json()
+    assert datos['code'] == 'productos_por_crear'
+    assert datos['productosPorCrear'] == [
+        {
+            'idProducto': '7022139',
+            'nombreProducto': 'Cargador Pared 30W Usb-C Blnc Belk',
+            'marca': 'Belkin Nueva',
+            'marcaNueva': True,
+            'unidades': 1,
+        },
+        {
+            # Escrito como los productos que ya hay en Tmk, y con la marca del catálogo.
+            'idProducto': '7023988',
+            'nombreProducto': 'Torre Sonid Awpoc10L 800W Bt5.0 Ngr Aiwa',
+            'marca': 'Aiwa',
+            'marcaNueva': False,
+            'unidades': 2,
+        },
+    ]
+    assert datos['marcasNuevas'] == ['Belkin Nueva']
+    # Nada se tocó: ni ventas, ni inventario, ni catálogo.
+    assert not VentaTmk.objects.exists()
+    assert InventarioTmk.objects.get().cantidad_inventario == 9
+    assert ProductoTmk.objects.count() == 1
+    assert not Marca.objects.filter(nombre='Belkin Nueva').exists()
+
+
+def test_tmk_crea_solo_los_productos_elegidos_y_carga_sus_ventas(editor, catalogo_tmk):
+    marca('Aiwa')
+    elegidos = [{'codigo': '7023988', 'nombre': '  Torre  Aiwa 800W ', 'precio': 1_200_000}]
+
+    respuesta = _importar_tmk_con_nombre(
+        editor, productos='crear', crear=json.dumps(elegidos)
+    )
+
+    assert respuesta.status_code == 200, respuesta.json()
+    datos = respuesta.json()
+    assert (datos['productosCreados'], datos['productosSinPrecio']) == (1, 0)
+    assert datos['marcasCreadas'] == []
+    torre = ProductoTmk.objects.get(pk='7023988')
+    assert torre.nombre_producto == 'Torre Aiwa 800W'
+    assert torre.marca_id == 'Aiwa'
+    assert (torre.precio_venta_tmk, torre.precio_venta_coltrade) == (1_200_000, 1_200_000)
+    # El cargador no se eligió: no se crea y su venta queda fuera.
+    assert not ProductoTmk.objects.filter(pk='7022139').exists()
+    assert not Marca.objects.filter(nombre='Belkin Nueva').exists()
+    assert datos['ventas']['creadas'] == 3
+    assert set(VentaTmk.objects.values_list('id_producto', 'cantidad_vendida')) == {
+        ('TMKP-001', 1),
+        ('7023988', 1),
+    }
+    assert VentaTmk.objects.filter(id_producto='7023988').count() == 2
+    # Su inventario también entra, ya que existe.
+    assert InventarioTmk.objects.get(id_producto='7023988').cantidad_inventario == 1
+    assert 'producto(s) nuevo(s)' in datos['message']
+
+
+def test_tmk_sin_precio_queda_en_cero_y_crea_la_marca_que_falta(editor, catalogo_tmk):
+    elegidos = [{'codigo': '7022139', 'nombre': '', 'precio': None}]
+
+    datos = _importar_tmk_con_nombre(editor, productos='crear', crear=json.dumps(elegidos)).json()
+
+    cargador = ProductoTmk.objects.get(pk='7022139')
+    assert cargador.nombre_producto == 'Cargador Pared 30W Usb-C Blnc Belk'
+    assert cargador.precio_venta_coltrade == 0
+    assert cargador.marca_id == 'Belkin Nueva'
+    assert (datos['productosCreados'], datos['productosSinPrecio']) == (1, 1)
+    assert datos['marcasCreadas'] == ['Belkin Nueva']
+    assert 'quedaron en $0' in datos['message']
+
+
+def test_tmk_omitir_importa_sin_crear_productos(editor, catalogo_tmk):
+    respuesta = _importar_tmk_con_nombre(editor, productos='omitir')
+
+    assert respuesta.status_code == 200, respuesta.json()
+    assert ProductoTmk.objects.count() == 1
     assert list(VentaTmk.objects.values_list('id_producto', flat=True)) == ['TMKP-001']
+    # La torre (dos días), el cargador y el de Claro.
+    assert respuesta.json()['ventas']['sinProducto'] == 4
+
+
+def test_tmk_no_ofrece_productos_de_dias_que_ya_tienen_ventas(editor, catalogo_tmk):
+    """En modo completar esos días no se tocan: crear el producto no cargaría nada."""
+    tienda, audifonos = catalogo_tmk
+    for dia in (4, 5):
+        _venta_tmk(tienda, audifonos, 1, date(2026, 3, dia))
+
+    respuesta = _importar_tmk_con_nombre(editor)
+
+    assert respuesta.status_code == 409
+    codigos = [p['idProducto'] for p in respuesta.json()['productosPorCrear']]
+    assert codigos == ['7022139']
+    # Sobrescribiendo sí entran todos los días, así que vuelve a aparecer.
+    sobrescribir = _importar_tmk_con_nombre(editor, modo='sobrescribir')
+    assert [p['idProducto'] for p in sobrescribir.json()['productosPorCrear']] == [
+        '7022139',
+        '7023988',
+    ]
+
+
+def test_tmk_valida_el_nombre_y_el_precio_de_lo_que_se_crea(editor, catalogo_tmk):
+    for elegido, mensaje in (
+        ({'codigo': '7023988', 'nombre': 'x' * 61}, 'pasa de 60'),
+        ({'codigo': '7023988', 'precio': '1.200.000'}, 'número entero'),
+        ({'codigo': '7023988', 'precio': -5}, 'entre 0 y 100.000.000'),
+    ):
+        respuesta = _importar_tmk_con_nombre(
+            editor, productos='crear', crear=json.dumps([elegido])
+        )
+        assert respuesta.status_code == 400, elegido
+        assert mensaje in respuesta.json()['message'], elegido
+    assert not VentaTmk.objects.exists()
+    assert ProductoTmk.objects.count() == 1
+
+
+def test_tmk_ignora_codigos_que_el_archivo_no_vende(editor, catalogo_tmk):
+    elegidos = [{'codigo': 'INVENTADO', 'nombre': 'No', 'precio': 1}]
+    respuesta = _importar_tmk_con_nombre(editor, productos='crear', crear=json.dumps(elegidos))
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['productosCreados'] == 0
+    assert not ProductoTmk.objects.filter(pk='INVENTADO').exists()
+
+
+def test_crear_productos_desde_el_informe_pide_permiso_de_productos(app_bi_trade, catalogo_tmk):
+    from apps.bi_trade.permisos import codigo_editar
+
+    usuario = crear_usuario(
+        'cargador@supli.tech',
+        app_bi_trade,
+        [codigo_editar('tmk', 'ventas'), codigo_editar('tmk', 'inventario')],
+    )
+    cliente = cliente_de(usuario)
+    elegidos = json.dumps([{'codigo': '7023988', 'nombre': 'Torre', 'precio': 1}])
+
+    respuesta = _importar_tmk_con_nombre(cliente, productos='crear', crear=elegidos)
+    assert respuesta.status_code == 403
+    assert 'crear productos' in respuesta.json()['message']
+    assert not VentaTmk.objects.exists()
+
+    # Importar sin crearlos sí puede.
+    assert _importar_tmk_con_nombre(cliente, productos='omitir').status_code == 200
+
+
+def test_claro_no_ofrece_crear_productos_desde_el_informe(editor, catalogo):
+    con_metas((2026, 3))
+    respuesta = _importar(
+        editor,
+        [
+            ('SKU-1', 'PDV-001', '601', date(2026, 3, 4)),
+            ('NO-EXISTE', 'PDV-001', '601', date(2026, 3, 4)),
+        ],
+    )
+    assert respuesta.status_code == 200, respuesta.json()
+    assert respuesta.json()['ventas']['sinProducto'] == 1
+    assert respuesta.json()['productosCreados'] == 0
 
 
 def test_importar_el_informe_de_tmk_exige_permiso_de_edicion(app_bi_trade, catalogo_tmk):
@@ -6138,3 +6392,45 @@ def test_crear_productos_al_importar_pide_editar_productos(app_bi_trade):
     assert not ProductoHc.objects.exists()
     # Sin crearlos sí: las ventas de productos que no existen quedan fuera.
     assert subir(productos='omitir').status_code == 400
+
+
+# ── La guía de uso en PDF de cada informe ─────────────────────────────────
+
+RUTAS_GUIA = {
+    'claro': '/api/bi-trade/guia',
+    'hc': '/api/bi-trade/hc/guia',
+    'falabella': '/api/bi-trade/falabella/guia',
+    'tmk': '/api/bi-trade/tmk/guia',
+    'partners': '/api/bi-trade/partners/guia',
+    'belkin': '/api/bi-trade/belkin/guia',
+}
+
+
+def test_cada_informe_tiene_su_guia_en_pdf(app_bi_trade):
+    """Un informe nuevo sin guía rompe esta prueba: el botón no tendría qué bajar."""
+    from apps.bi_trade.guias import GUIAS
+
+    assert set(GUIAS) == set(INFORMES_BI) == set(RUTAS_GUIA)
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    for informe, ruta in RUTAS_GUIA.items():
+        respuesta = cliente.get(ruta)
+        assert respuesta.status_code == 200, informe
+        assert respuesta['Content-Type'] == 'application/pdf', informe
+        assert respuesta.content.startswith(b'%PDF'), informe
+        assert 'filename="Guia de uso - ' in respuesta['Content-Disposition'], informe
+
+
+def test_la_guia_lleva_el_nombre_del_informe_con_tildes(app_bi_trade):
+    cliente = cliente_de(crear_usuario('lector@supli.tech', app_bi_trade))
+    cabecera = cliente.get('/api/bi-trade/belkin/guia')['Content-Disposition']
+    assert 'filename="Guia de uso - Plan Recomiendame Belkin.pdf"' in cabecera
+    assert "filename*=UTF-8''Gu%C3%ADa%20de%20uso%20-%20Plan%20Recomi%C3%A9ndame" in cabecera
+
+
+def test_la_guia_pide_ver_ese_informe(app_bi_trade):
+    solo_hc = cliente_de(crear_usuario('hc@supli.tech', app_bi_trade, informes=['hc']))
+    assert solo_hc.get('/api/bi-trade/hc/guia').status_code == 200
+    assert solo_hc.get('/api/bi-trade/guia').status_code == 403
+    assert solo_hc.get('/api/bi-trade/belkin/guia').status_code == 403
+    sin_app = cliente_de(crear_usuario('fuera@supli.tech'))
+    assert sin_app.get('/api/bi-trade/hc/guia').status_code == 403

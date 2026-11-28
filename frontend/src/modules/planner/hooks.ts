@@ -2,7 +2,13 @@ import { useEffect, useRef } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/shared/api/http-client';
-import { plannerApi, type FiltrosDashboard, type Lectura, type ParametrosPayload } from './api';
+import {
+  plannerApi,
+  type FiltrosDashboard,
+  type Lectura,
+  type ParametrosPayload,
+  type PedidoSincronizar,
+} from './api';
 
 export const plannerKeys = {
   todo: ['planner'] as const,
@@ -98,13 +104,14 @@ function usePlannerMutation<TDatos, TVariables>(
 }
 
 /**
- * «Sincronizar ahora»: solo empieza la lectura, que corre en segundo plano y
- * tarda unos minutos. El aviso de que terminó lo da `useAvisoDeLectura`.
+ * «Sincronizar»: solo empieza la lectura de las semanas elegidas, que corre en
+ * segundo plano y tarda unos minutos. El aviso de que terminó lo da
+ * `useAvisoDeLectura`.
  */
 export const useSincronizar = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => plannerApi.sincronizar(),
+    mutationFn: (pedido: PedidoSincronizar) => plannerApi.sincronizar(pedido),
     onSuccess: (lectura) => {
       queryClient.invalidateQueries({ queryKey: plannerKeys.conexion() });
       toast.info(
@@ -114,6 +121,19 @@ export const useSincronizar = () => {
       );
     },
     onError: (error) => toast.error(mensajeDeError(error, 'No se pudo empezar la lectura.')),
+  });
+};
+
+/** «Detener actualización»: pide parar la lectura en curso; el aviso llega al cerrarse. */
+export const useDetenerSincronizacion = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => plannerApi.detenerSincronizacion(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: plannerKeys.conexion() });
+      toast.info('Deteniendo la lectura: termina el plan que está guardando y para.');
+    },
+    onError: (error) => toast.error(mensajeDeError(error, 'No se pudo detener la lectura.')),
   });
 };
 
@@ -133,7 +153,9 @@ export function useAvisoDeLectura(ultima: Lectura | null | undefined) {
     if (siguiendo.current !== ultima.id) return;
     siguiendo.current = null;
     queryClient.invalidateQueries({ queryKey: plannerKeys.todo });
-    if (ultima.estado === 'error') {
+    if (ultima.estado === 'detenida') {
+      toast.info(`Lectura detenida. ${ultima.error}`);
+    } else if (ultima.estado === 'error') {
       toast.error(`La lectura de Planner falló: ${ultima.error || 'revisa la bitácora.'}`);
     } else if (ultima.estado === 'parcial') {
       toast.warning(

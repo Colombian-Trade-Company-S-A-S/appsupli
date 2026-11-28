@@ -35,6 +35,12 @@ COLUMNA_FECHA = 'Fe/contab/'
 COLUMNA_CLASE = 'CMv'
 COLUMNAS = (COLUMNA_MATERIAL, COLUMNA_CENTRO, COLUMNA_FECHA, COLUMNA_CLASE)
 
+#: Columnas que no hacen falta para importar, pero que dicen cómo se llama el
+#: producto: con ellas se propone el producto que falta en Tmk. Si el archivo
+#: no las trae, el producto se propone con su código por nombre y sin marca.
+COLUMNA_NOMBRE = 'Texto breve de material'
+COLUMNA_MARCA = 'Marca'
+
 
 class ErrorDeInforme(Exception):
     """El archivo no es el informe esperado. Lleva el mensaje para la persona."""
@@ -69,6 +75,14 @@ def _fecha(valor) -> date | None:
 
 
 @dataclass
+class MaterialDelInforme:
+    """Cómo llama el ERP a un material: su texto breve y su marca, tal cual."""
+
+    nombre: str = ''
+    marca: str = ''
+
+
+@dataclass
 class Lectura:
     """Lo que trae el archivo, ya separado y contado."""
 
@@ -76,6 +90,9 @@ class Lectura:
     ventas: Counter = field(default_factory=Counter)
     #: `(id_producto, id_punto_venta)` → unidades en inventario.
     inventario: Counter = field(default_factory=Counter)
+    #: `id_producto` → su nombre y su marca en el archivo. Solo de los
+    #: materiales de las filas de venta e inventario.
+    materiales: dict[str, MaterialDelInforme] = field(default_factory=dict)
     #: Filas leídas de cada clase, antes de descartar nada.
     filas_venta: int = 0
     filas_inventario: int = 0
@@ -135,6 +152,9 @@ def leer_informe(archivo) -> Lectura:
             'A la hoja «base» le faltan estas columnas: ' + ', '.join(f'«{c}»' for c in faltantes)
         )
 
+    indice_nombre = posicion.get(_normalizar_encabezado(COLUMNA_NOMBRE))
+    indice_marca = posicion.get(_normalizar_encabezado(COLUMNA_MARCA))
+
     lectura = Lectura()
     for fila in filas:
         clase = _texto(fila[indices[COLUMNA_CLASE]])
@@ -144,6 +164,14 @@ def leer_informe(archivo) -> Lectura:
 
         producto = _texto(fila[indices[COLUMNA_MATERIAL]])
         centro = _texto(fila[indices[COLUMNA_CENTRO]])
+        if producto:
+            material = lectura.materiales.setdefault(producto, MaterialDelInforme())
+            # Se queda con el primer dato que aparezca: una fila sin texto no
+            # borra el que trajo otra.
+            if not material.nombre and indice_nombre is not None:
+                material.nombre = _texto(fila[indice_nombre])
+            if not material.marca and indice_marca is not None:
+                material.marca = _texto(fila[indice_marca])
 
         if clase == CMV_VENTA:
             lectura.filas_venta += 1

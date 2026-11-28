@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import ProtectedError, Q
+from django.db.models import Count, ProtectedError, Q
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -52,10 +52,16 @@ from .models import (
     RecalculoPlanner,
     ResultadoSemana,
     Sincronizacion,
+    Snapshot,
     TareaMedicion,
 )
 from .semanas import Semana, semana_del_corte, semanas_del_mes
-from .sync import LECTURA_MAXIMA, lectura_en_curso, leer_en_segundo_plano
+from .sync import (
+    esta_viva,
+    lectura_en_curso,
+    leer_en_segundo_plano,
+    pedir_que_se_detenga,
+)
 
 ACCESO = [HasPlannerApp]
 GESTION = [HasPlannerApp, CanGestionarPlanner]
@@ -481,21 +487,42 @@ def persona(request, pk: int):
 
 
 def _lectura_json(s: Sincronizacion) -> dict:
-    # Sin terminar: en curso, o caída si ya pasó el máximo (se reinició el servidor).
-    en_curso = s.terminada_at is None and s.iniciada_at >= timezone.now() - LECTURA_MAXIMA
+    # Sin terminar: en curso mientras late; caída si dejó de latir (se reinició
+    # el servidor) o si se pidió detenerla y no se cerró en el tiempo de espera.
+    en_curso = esta_viva(s)
     caida = s.terminada_at is None and not en_curso
+    # Una lectura a mano puede guardar varias semanas: se nombran todas.
+    semanas = (s.resumen or {}).get('semanas') or [
+        Semana.desde_codigo(c).etiqueta for c in (s.resumen or {}).get('pedidas', [])
+    ]
     return {
         'id': s.id,
         'tipo': s.tipo,
         'tipo_label': s.get_tipo_display(),
-        'semana': f'WEEK {s.semana}' if s.semana else '',
+        'semana': ', '.join(semanas) if semanas else f'WEEK {s.semana}' if s.semana else '',
         'iniciada_at': s.iniciada_at.isoformat(),
         'terminada_at': s.terminada_at.isoformat() if s.terminada_at else None,
         'ejecutada_por': _nombre(s.ejecutada_por) or 'Tarea programada',
         'en_curso': en_curso,
-        'estado': Sincronizacion.Estado.ERROR if caida else s.estado,
+        # Se pidió detenerla y todavía está cerrando el plan que guardaba.
+        'deteniendo': en_curso and s.detener_at is not None,
+        'estado': (
+            Sincronizacion.Estado.DETENIDA
+            if caida and s.detener_at
+            else Sincronizacion.Estado.ERROR
+            if caida
+            else s.estado
+        ),
         'estado_label': (
-            'En curso' if en_curso else 'Interrumpida' if caida else s.get_estado_display()
+            'Deteniendo'
+            if en_curso and s.detener_at
+            else 'En curso'
+            if en_curso
+            else 'Detenida'
+            if caida and s.detener_at
+            else 'Interrumpida'
+            if caida
+            else s.get_estado_display()
         ),
         'planes_leidos': s.planes_leidos,
         'resumen': s.resumen,
@@ -513,26 +540,47 @@ def conexion(request):
     )
     ultima = next((s for s in lecturas if s.tipo != Sincronizacion.Tipo.INVENTARIO), None)
     medidas = personas_medidas()
-    con_plan = medidas.filter(planes_planner__activo=True).distinct().count()
+    # Por id: con `.distinct()` a secas, el DISTINCT iba sobre todas las
+    # columnas de la persona, foto incluida.
+    con_plan = medidas.filter(planes_planner__activo=True).values('pk').distinct().count()
     abiertas = (
         IncidenciaCalidad.objects.filter(abierta=True)
         .select_related('plan', 'colaborador')
         .defer('colaborador__foto')
+    )
+    # Abiertas y críticas en una sola consulta: la pantalla consulta cada 4 s
+    # mientras se lee, y cada consulta a la base de Render cuesta.
+    conteo = IncidenciaCalidad.objects.filter(abierta=True).aggregate(
+        total=Count('id'),
+        criticas=Count('id', filter=Q(severidad=IncidenciaCalidad.Severidad.CRITICA)),
+    )
+    sincronizables = _semanas_sincronizables()
+    con_cierre = set(
+        Snapshot.objects.filter(
+            tipo=Snapshot.Tipo.CIERRE, semana__in=[s.numero for s in sincronizables]
+        ).values_list('anio', 'semana')
     )
     estado = GraphClient().estado() if request.query_params.get('probar') else None
     return Response(
         {
             'estado_graph': estado,
             'ultima_lectura': _lectura_json(ultima) if ultima else None,
+            # Las que se pueden elegir al sincronizar a mano.
+            'semanas_sincronizables': [
+                {
+                    **_semana_json(s),
+                    'en_curso': s == sincronizables[0] and not s.cerrada(),
+                    'con_cierre': (s.anio, s.numero) in con_cierre,
+                }
+                for s in sincronizables
+            ],
             'personas_medidas': medidas.count(),
             'personas_con_plan': con_plan,
             'planes_relacionados': PlanPlanner.objects.filter(
                 activo=True, colaborador__isnull=False
             ).count(),
-            'incidencias_abiertas': abiertas.count(),
-            'incidencias_criticas': abiertas.filter(
-                severidad=IncidenciaCalidad.Severidad.CRITICA
-            ).count(),
+            'incidencias_abiertas': conteo['total'],
+            'incidencias_criticas': conteo['criticas'],
             'incidencias': [
                 {
                     'id': i.id,
@@ -556,7 +604,8 @@ def conexion(request):
 @permission_classes(GESTION)
 def sincronizar(request):
     """
-    «Sincronizar ahora»: lee Planner y actualiza la semana en curso.
+    «Sincronizar»: lee Planner y actualiza las semanas elegidas
+    (`{semanas: ['2026-W46', …], motivo}`; sin semanas, la que está en curso).
 
     La lectura tarda minutos, así que corre en segundo plano y la respuesta
     sale de una vez (202): la pantalla consulta la conexión hasta que termina.
@@ -566,12 +615,80 @@ def sincronizar(request):
     if en_curso:
         return Response({**_lectura_json(en_curso), 'ya_en_curso': True})
     tipo = Sincronizacion.Tipo.MANUAL
-    semana = semana_del_corte(tipo, timezone.now())
+    semanas, motivo = _semanas_pedidas(request)
+    if not semanas:
+        semanas = [semana_del_corte(tipo, timezone.now())]
+    reciente = max(semanas)
     registro = Sincronizacion.objects.create(
-        tipo=tipo, anio=semana.anio, semana=semana.numero, ejecutada_por=request.user
+        tipo=tipo,
+        anio=reciente.anio,
+        semana=reciente.numero,
+        ejecutada_por=request.user,
+        # La lectura las toma de aquí (corre en otro hilo, que solo ve la base).
+        resumen={'pedidas': [s.codigo for s in semanas], 'motivo': motivo},
     )
     leer_en_segundo_plano(registro)
     return Response({**_lectura_json(registro), 'ya_en_curso': False}, status=202)
+
+
+@api_view(['POST'])
+@permission_classes(GESTION)
+def detener_sincronizacion(request):
+    """
+    «Detener actualización»: pide que la lectura en curso se detenga.
+
+    Para antes del siguiente plan (cada plan se guarda entero) y queda
+    «Detenida» en la bitácora. Lo ya guardado queda; el resto se lee después.
+    """
+    en_curso = lectura_en_curso()
+    if en_curso is None:
+        raise ValidationError({'lectura': ['No hay ninguna lectura de Planner en curso.']})
+    pedir_que_se_detenga(en_curso, request.user)
+    return Response(_lectura_json(en_curso))
+
+
+def _semanas_sincronizables() -> list[Semana]:
+    """
+    Las que se pueden volver a leer a mano: la semana en curso y las que ya
+    tienen fotos, de la más reciente a la más vieja (las últimas ocho).
+    """
+    actual = Semana.actual()
+    vistas = {actual} | {
+        Semana(a, s) for a, s in Snapshot.objects.values_list('anio', 'semana').distinct()
+    }
+    return sorted((s for s in vistas if s <= actual), reverse=True)[:8]
+
+
+def _semanas_pedidas(request) -> tuple[list[Semana], str]:
+    """
+    `{semanas: ['2026-W46', …], motivo}`. Solo las que se pueden leer; si hay
+    alguna cerrada, el motivo es obligatorio: su resultado final se recalcula
+    (decisión 7).
+    """
+    codigos = request.data.get('semanas') or []
+    if not isinstance(codigos, list):
+        raise ValidationError({'semanas': ['Envía la lista de semanas, p. ej. ["2026-W46"].']})
+    try:
+        semanas = sorted({Semana.desde_codigo(str(c)) for c in codigos})
+    except ValueError as e:
+        raise ValidationError({'semanas': [str(e)]}) from None
+    permitidas = set(_semanas_sincronizables())
+    fuera = [s.etiqueta for s in semanas if s not in permitidas]
+    if fuera:
+        raise ValidationError(
+            {'semanas': [f'No se puede leer {", ".join(fuera)}: elige de la lista.']}
+        )
+    motivo = (request.data.get('motivo') or '').strip()
+    if any(s.cerrada() for s in semanas) and len(motivo) < 10:
+        raise ValidationError(
+            {
+                'motivo': [
+                    'Hay semanas cerradas: su resultado final se recalcula. Explica el motivo '
+                    '(mínimo 10 caracteres).'
+                ]
+            }
+        )
+    return semanas, motivo[:2000]
 
 
 def _estado_plan(persona: User, plan: PlanPlanner | None) -> str:

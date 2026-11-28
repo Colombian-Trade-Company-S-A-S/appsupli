@@ -111,6 +111,7 @@ class Sincronizacion(models.Model):
         OK = 'ok', 'Correcta'
         PARCIAL = 'parcial', 'Con errores en algunos planes'
         ERROR = 'error', 'Con error'
+        DETENIDA = 'detenida', 'Detenida'
 
     tipo = models.CharField('tipo', max_length=12, choices=Tipo.choices)
     anio = models.PositiveSmallIntegerField('año ISO', null=True, blank=True)
@@ -130,6 +131,22 @@ class Sincronizacion(models.Model):
     resumen = models.JSONField('resumen', default=dict, blank=True)
     errores = models.JSONField('errores', default=list, blank=True)
     error = models.TextField('error', blank=True)
+    # «Detener actualización»: la lectura lo revisa antes de cada plan y se
+    # detiene. Va en la base porque la lectura corre en otro hilo (o en el
+    # proceso de la tarea programada).
+    detener_at = models.DateTimeField('detener pedido el', null=True, blank=True)
+    # La lectura viva lo anota cada pocos segundos (antes de cada plan y de
+    # cada tanda de Graph). Sin latido reciente, ya no corre: se reinició el
+    # servidor a mitad de camino.
+    latido_at = models.DateTimeField('último latido', null=True, blank=True)
+    detenida_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+        verbose_name='detenida por',
+    )
 
     class Meta:
         verbose_name = 'lectura de Planner'

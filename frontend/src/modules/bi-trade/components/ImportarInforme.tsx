@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { FileUpIcon, MailIcon, UploadIcon } from 'lucide-react';
 import {
   Alert,
@@ -24,10 +25,11 @@ import {
   ToggleGroupItem,
 } from '@/shared/components/ui';
 import { formatoNumero } from '@/shared/lib/formato';
-import type { ModoImportacion, ResultadoInforme } from '../api';
+import type { DecisionInforme, ModoImportacion, PreguntaInforme, ResultadoInforme } from '../api';
 import { informeDelCorreo, type InformeEnCorreo } from '../correo';
 import { useFuente, type FuenteDatos } from '../fuente';
-import { mensajeDeError, useBiTradeMutation } from '../hooks';
+import { biTradeKeys, mensajeDeError } from '../hooks';
+import { ElegirProductosInforme } from './ProductosDelInforme';
 import { aValorMes, desdeValorMes, mesActual, nombreDelMes, type Mes } from './SelectorMes';
 
 /**
@@ -45,6 +47,11 @@ import { aValorMes, desdeValorMes, mesActual, nombreDelMes, type Mes } from './S
  * le pide al backend el último informe que llegó al buzón compartido (el mismo
  * para Claro y Tmk) y lo deja elegido. El archivo no pasa por el navegador: al
  * importar se mandan los identificadores del correo y el backend lo baja.
+ *
+ * En Tmk entra toda venta de un producto que exista, tenga meta o no. Si el
+ * archivo vende productos que no existen, el backend no guarda nada y devuelve
+ * la lista: el diálogo pasa a una segunda pantalla para elegir cuáles crear, y
+ * al decidir se vuelve a subir el mismo archivo con la decisión.
  */
 export function ImportarInforme({
   importar: importarEnCanal,
@@ -52,6 +59,7 @@ export function ImportarInforme({
   importar: NonNullable<FuenteDatos['importarInforme']>;
 }) {
   const { canal } = useFuente();
+  const queryClient = useQueryClient();
   const [abierto, setAbierto] = useState(false);
   const [mes, setMes] = useState<Mes>(mesActual);
   const [modo, setModo] = useState<ModoImportacion>('completar');
@@ -59,16 +67,29 @@ export function ImportarInforme({
   const [resultado, setResultado] = useState<ResultadoInforme | null>(null);
   // El informe del buzón compartido, cuando se trajo del correo en vez de elegirlo.
   const [delCorreo, setDelCorreo] = useState<InformeEnCorreo | null>(null);
+  // Solo Tmk: los productos del archivo que no existen, para elegir cuáles crear.
+  const [pregunta, setPregunta] = useState<PreguntaInforme | null>(null);
 
-  const importar = useBiTradeMutation(
-    () =>
+  const importar = useMutation({
+    mutationFn: (decision?: DecisionInforme) =>
       importarEnCanal(
         delCorreo ? { mensaje: delCorreo.mensaje, adjunto: delCorreo.adjunto } : archivo!,
         mes,
         modo,
+        decision,
       ),
-    (datos) => datos.message,
-  );
+    onSuccess: (respuesta) => {
+      if (respuesta.tipo === 'productos') {
+        setPregunta(respuesta.pregunta);
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: biTradeKeys.todo });
+      toast.success(respuesta.resultado.message);
+      setResultado(respuesta.resultado);
+      cerrar();
+    },
+    onError: (error) => toast.error(mensajeDeError(error)),
+  });
 
   const traer = useMutation({
     mutationFn: informeDelCorreo,
@@ -82,13 +103,14 @@ export function ImportarInforme({
   });
   const errorDelCorreo = traer.error ? mensajeDeError(traer.error) : null;
 
-  const cerrar = () => {
+  function cerrar() {
     setAbierto(false);
     setArchivo(null);
     setDelCorreo(null);
+    setPregunta(null);
     importar.reset();
     traer.reset();
-  };
+  }
 
   return (
     <>
@@ -98,135 +120,144 @@ export function ImportarInforme({
       </Button>
 
       <Dialog open={abierto} onOpenChange={(v) => (v ? setAbierto(true) : cerrar())}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Importar informe de Coltrade</DialogTitle>
-            <DialogDescription>
-              El archivo del ERP, con su hoja «base». De ahí salen las ventas (CMv 601) y el
-              inventario (CMv 1); el resto de los movimientos se ignora.
-              {canal === 'claro' &&
-                ' Solo entran las ventas de productos con meta ese mes en ese punto de venta, y las de los productos del plan Recomiéndame Belkin: sube primero las metas del mes.'}
-              {canal === 'tmk' &&
-                ' Solo entran las ventas de productos con meta en Tmk ese mes en ese punto de venta: sube primero las metas del mes.'}
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent
+          className={`max-h-[85dvh] overflow-y-auto ${pregunta ? 'sm:max-w-4xl' : 'sm:max-w-xl'}`}
+        >
+          {pregunta ? (
+            <ElegirProductosInforme
+              pregunta={pregunta}
+              mes={mes}
+              cargando={importar.isPending}
+              decisionEnCurso={importar.isPending ? importar.variables?.productos : undefined}
+              onCancelar={cerrar}
+              onDecidir={(decision) => importar.mutate(decision)}
+            />
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Importar informe de Coltrade</DialogTitle>
+                <DialogDescription>
+                  El archivo del ERP, con su hoja «base». De ahí salen las ventas (CMv 601) y el
+                  inventario (CMv 1); el resto de los movimientos se ignora.
+                  {canal === 'claro' &&
+                    ' Solo entran las ventas de productos con meta ese mes en ese punto de venta, y las de los productos del plan Recomiéndame Belkin: sube primero las metas del mes.'}
+                  {canal === 'tmk' &&
+                    ' Entran todas las ventas de los productos que existan en Tmk, tengan meta o no. Si el archivo vende productos que no están en la app, antes de importar te mostramos cuáles para que elijas cuáles crear.'}
+                </DialogDescription>
+              </DialogHeader>
 
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="informe-archivo">Archivo</FieldLabel>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  id="informe-archivo"
-                  type="file"
-                  accept=".xlsx"
-                  className="min-w-0 flex-1"
-                  onChange={(e) => {
-                    setArchivo(e.target.files?.[0] ?? null);
-                    setDelCorreo(null);
-                  }}
-                />
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="informe-archivo">Archivo</FieldLabel>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="informe-archivo"
+                      type="file"
+                      accept=".xlsx"
+                      className="min-w-0 flex-1"
+                      onChange={(e) => {
+                        setArchivo(e.target.files?.[0] ?? null);
+                        setDelCorreo(null);
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      disabled={traer.isPending || importar.isPending}
+                      onClick={() => traer.mutate()}
+                    >
+                      {traer.isPending ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <MailIcon data-icon="inline-start" />
+                      )}
+                      {traer.isPending ? 'Buscando…' : 'Traer del correo'}
+                    </Button>
+                  </div>
+                  <FieldDescription>
+                    {delCorreo
+                      ? `Del correo del ${formatoFechaHora(new Date(delCorreo.recibido))} · ${delCorreo.nombre} · ${formatoNumero(Math.round(delCorreo.tamano / 1024))} KB`
+                      : archivo
+                        ? `${archivo.name} · ${formatoNumero(Math.round(archivo.size / 1024))} KB`
+                        : 'Excel .xlsx tal como sale del ERP, sin modificar. O tráelo del correo: se busca el último informe que llegó al buzón de informes.'}
+                  </FieldDescription>
+                  {errorDelCorreo && (
+                    <Alert variant="destructive">
+                      <AlertTitle>No se trajo el informe del correo</AlertTitle>
+                      <AlertDescription>{errorDelCorreo}</AlertDescription>
+                    </Alert>
+                  )}
+                </Field>
+
+                <Field>
+                  <FieldLabel htmlFor="informe-mes">Mes al que van las ventas</FieldLabel>
+                  <Input
+                    id="informe-mes"
+                    type="month"
+                    className="w-48"
+                    value={aValorMes(mes)}
+                    onChange={(e) => {
+                      const elegido = desdeValorMes(e.target.value);
+                      if (elegido) setMes(elegido);
+                    }}
+                  />
+                  <FieldDescription>
+                    Solo se cargan las ventas del archivo que caigan en {nombreDelMes(mes)}. El
+                    inventario no lleva fecha: se reemplaza completo.
+                  </FieldDescription>
+                </Field>
+
+                <Field>
+                  <FieldLabel>Qué hacer con las ventas que ya están cargadas</FieldLabel>
+                  <ToggleGroup
+                    value={[modo]}
+                    onValueChange={(v) => setModo((v[0] as ModoImportacion) ?? 'completar')}
+                    variant="outline"
+                  >
+                    <ToggleGroupItem value="completar">Completar</ToggleGroupItem>
+                    <ToggleGroupItem value="sobrescribir">Sobrescribir</ToggleGroupItem>
+                  </ToggleGroup>
+                  <FieldDescription>
+                    {modo === 'completar'
+                      ? 'Respeta los días que ya tienen ventas y solo llena los vacíos. Es lo normal: subir el informe cada tanto y agregar lo que falta.'
+                      : `Borra TODAS las ventas de ${nombreDelMes(mes)} y deja únicamente lo que traiga el archivo.`}
+                  </FieldDescription>
+                </Field>
+
+                {modo === 'sobrescribir' && (
+                  <Alert variant="destructive">
+                    <AlertTitle>Se borran las ventas de {nombreDelMes(mes)}</AlertTitle>
+                    <AlertDescription>
+                      Aunque el archivo solo traiga hasta la mitad del mes, el resto del mes queda
+                      en cero. Esta acción no se puede deshacer.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <FieldDescription>
+                  {canal === 'tmk'
+                    ? 'Los puntos de venta que no existan en la app se omiten. Los productos que falten se te muestran para que elijas cuáles crear. Al terminar se dice cuántos quedaron fuera.'
+                    : 'Los productos y puntos de venta que no existan en la app se omiten: el informe no crea catálogo. Al terminar se dice cuántos quedaron fuera.'}
+                </FieldDescription>
+              </FieldGroup>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={cerrar}>
+                  Cancelar
+                </Button>
                 <Button
-                  variant="secondary"
-                  disabled={traer.isPending || importar.isPending}
-                  onClick={() => traer.mutate()}
+                  disabled={(!archivo && !delCorreo) || importar.isPending}
+                  onClick={() => importar.mutate(undefined)}
                 >
-                  {traer.isPending ? (
+                  {importar.isPending ? (
                     <Spinner data-icon="inline-start" />
                   ) : (
-                    <MailIcon data-icon="inline-start" />
+                    <UploadIcon data-icon="inline-start" />
                   )}
-                  {traer.isPending ? 'Buscando…' : 'Traer del correo'}
+                  {importar.isPending ? 'Leyendo el archivo…' : 'Importar'}
                 </Button>
-              </div>
-              <FieldDescription>
-                {delCorreo
-                  ? `Del correo del ${formatoFechaHora(new Date(delCorreo.recibido))} · ${delCorreo.nombre} · ${formatoNumero(Math.round(delCorreo.tamano / 1024))} KB`
-                  : archivo
-                    ? `${archivo.name} · ${formatoNumero(Math.round(archivo.size / 1024))} KB`
-                    : 'Excel .xlsx tal como sale del ERP, sin modificar. O tráelo del correo: se busca el último informe que llegó al buzón de informes.'}
-              </FieldDescription>
-              {errorDelCorreo && (
-                <Alert variant="destructive">
-                  <AlertTitle>No se trajo el informe del correo</AlertTitle>
-                  <AlertDescription>{errorDelCorreo}</AlertDescription>
-                </Alert>
-              )}
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="informe-mes">Mes al que van las ventas</FieldLabel>
-              <Input
-                id="informe-mes"
-                type="month"
-                className="w-48"
-                value={aValorMes(mes)}
-                onChange={(e) => {
-                  const elegido = desdeValorMes(e.target.value);
-                  if (elegido) setMes(elegido);
-                }}
-              />
-              <FieldDescription>
-                Solo se cargan las ventas del archivo que caigan en {nombreDelMes(mes)}. El
-                inventario no lleva fecha: se reemplaza completo.
-              </FieldDescription>
-            </Field>
-
-            <Field>
-              <FieldLabel>Qué hacer con las ventas que ya están cargadas</FieldLabel>
-              <ToggleGroup
-                value={[modo]}
-                onValueChange={(v) => setModo((v[0] as ModoImportacion) ?? 'completar')}
-                variant="outline"
-              >
-                <ToggleGroupItem value="completar">Completar</ToggleGroupItem>
-                <ToggleGroupItem value="sobrescribir">Sobrescribir</ToggleGroupItem>
-              </ToggleGroup>
-              <FieldDescription>
-                {modo === 'completar'
-                  ? 'Respeta los días que ya tienen ventas y solo llena los vacíos. Es lo normal: subir el informe cada tanto y agregar lo que falta.'
-                  : `Borra TODAS las ventas de ${nombreDelMes(mes)} y deja únicamente lo que traiga el archivo.`}
-              </FieldDescription>
-            </Field>
-
-            {modo === 'sobrescribir' && (
-              <Alert variant="destructive">
-                <AlertTitle>Se borran las ventas de {nombreDelMes(mes)}</AlertTitle>
-                <AlertDescription>
-                  Aunque el archivo solo traiga hasta la mitad del mes, el resto del mes queda en
-                  cero. Esta acción no se puede deshacer.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <FieldDescription>
-              Los productos y puntos de venta que no existan en la app se omiten: el informe no crea
-              catálogo. Al terminar se dice cuántos quedaron fuera.
-            </FieldDescription>
-          </FieldGroup>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={cerrar}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={(!archivo && !delCorreo) || importar.isPending}
-              onClick={() =>
-                importar.mutate(undefined, {
-                  onSuccess: (datos) => {
-                    setResultado(datos);
-                    cerrar();
-                  },
-                })
-              }
-            >
-              {importar.isPending ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <UploadIcon data-icon="inline-start" />
-              )}
-              {importar.isPending ? 'Leyendo el archivo…' : 'Importar'}
-            </Button>
-          </DialogFooter>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -254,6 +285,9 @@ function ResumenImportacion({
 }) {
   if (!resultado) return null;
   const { ventas, inventario, belkin } = resultado;
+  const productosCreados = resultado.productosCreados ?? 0;
+  const sinPrecio = resultado.productosSinPrecio ?? 0;
+  const marcasCreadas = resultado.marcasCreadas ?? [];
 
   return (
     <Dialog open onOpenChange={(v) => !v && onCerrar()}>
@@ -264,6 +298,24 @@ function ResumenImportacion({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          {productosCreados > 0 && (
+            <>
+              <Bloque titulo="Productos nuevos">
+                <Renglon etiqueta="Productos creados" valor={productosCreados} destacado />
+                {sinPrecio > 0 && (
+                  <Renglon
+                    etiqueta="Quedaron en $0: ponles precio en Productos"
+                    valor={sinPrecio}
+                  />
+                )}
+                {marcasCreadas.length > 0 && (
+                  <Renglon etiqueta="Marcas creadas" valor={marcasCreadas.length} />
+                )}
+              </Bloque>
+              <Separator />
+            </>
+          )}
+
           <Bloque titulo={`Ventas de ${resultado.periodo}`}>
             <Renglon etiqueta="Registros creados" valor={ventas.creadas} destacado />
             <Renglon etiqueta="Unidades" valor={ventas.unidades} />

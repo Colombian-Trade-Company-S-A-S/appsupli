@@ -141,7 +141,9 @@ class GraphFalso:
         self.planes = planes
         self.checklists = checklists or {}
 
-    def lote(self, rutas):
+    def lote(self, rutas, entre_tandas=None):
+        if entre_tandas:
+            entre_tandas()
         salida = []
         for ruta in rutas:
             partes = ruta.split('/')
@@ -761,3 +763,253 @@ def test_un_error_inesperado_deja_la_lectura_con_error(equipo):
     lectura = Sincronizacion.objects.get()
     assert lectura.estado == Sincronizacion.Estado.ERROR and lectura.terminada_at
     assert 'se cayó' in lectura.error
+
+
+# ── Sincronizar las semanas elegidas ──────────────────────────────────────
+
+W45 = Semana(2026, 45)
+EN_W47 = datetime(2026, 11, 18, 12, 0, tzinfo=COT)
+
+
+class GraphQueCuenta(GraphFalso):
+    """El falso de siempre, contando cuántas veces se leen los planes."""
+
+    lecturas_de_planes = 0
+
+    def lote(self, rutas, entre_tandas=None):
+        if any(r.startswith('/planner/plans/') for r in rutas):
+            self.lecturas_de_planes += 1
+        return super().lote(rutas, entre_tandas)
+
+
+def _graph_dos_semanas():
+    tareas = [
+        tarea('w45', 'b45', 'category1', hecha=True),
+        tarea('w46', 'b46', 'category1'),
+        tarea('d46', 'b46', 'category2', items=2, activos=1),
+    ]
+    return GraphQueCuenta({PLAN_JULIAN: (BUCKETS, ETIQUETAS, tareas)})
+
+
+@pytest.mark.django_db
+def test_varias_semanas_se_guardan_de_una_sola_lectura_de_planner(equipo):
+    from apps.planner.sync import sincronizar_semanas
+
+    _, julian, _, people = equipo
+    graph = _graph_dos_semanas()
+    registro = Sincronizacion.objects.create(
+        tipo=Sincronizacion.Tipo.MANUAL,
+        ejecutada_por=people,
+        resumen={'pedidas': [W46.codigo, W45.codigo], 'motivo': 'El corte de la W45 falló.'},
+    )
+    sincronizar_semanas(registro, cliente=graph, ahora=EN_W47)
+
+    assert graph.lecturas_de_planes == 1
+    # Las dos ya cerraron el 18 de noviembre: se toma su foto de cierre.
+    assert Snapshot.objects.filter(semana=45, tipo='cierre').exists()
+    assert Snapshot.objects.filter(semana=46, tipo='cierre').exists()
+    w45 = ResultadoSemana.objects.get(colaborador=julian, semana=45)
+    assert w45.final and w45.pct_weekly == Decimal('100.00')
+    # Cada semana cerrada recalculada queda en la bitácora, con el motivo.
+    recalculos = RecalculoPlanner.objects.order_by('semana')
+    assert [r.semana for r in recalculos] == [45, 46]
+    assert all(r.motivo == 'El corte de la W45 falló.' for r in recalculos)
+    assert all(r.autorizado_por == people for r in recalculos)
+    registro.refresh_from_db()
+    assert registro.resumen['semanas'] == ['WEEK 45', 'WEEK 46']
+    assert registro.estado == Sincronizacion.Estado.OK
+
+
+@pytest.mark.django_db
+def test_la_semana_en_curso_se_lee_como_cada_noche_sin_recalculo_excepcional(equipo):
+    from apps.planner.sync import sincronizar_semanas
+
+    registro = Sincronizacion.objects.create(
+        tipo=Sincronizacion.Tipo.MANUAL, resumen={'pedidas': [W46.codigo]}
+    )
+    sincronizar_semanas(registro, cliente=_graph_dos_semanas(), ahora=EN_W46)
+    assert Snapshot.objects.filter(semana=46, tipo='actual').exists()
+    assert not Snapshot.objects.filter(tipo='cierre').exists()
+    assert not RecalculoPlanner.objects.exists()
+
+
+@pytest.mark.django_db
+def test_sincronizar_pide_motivo_para_las_cerradas_y_solo_semanas_de_la_lista(equipo):
+    _, _, _, people = equipo
+    # W45 con fotos: aparece en la lista; el «hoy» es la W46.
+    _leer('diaria', [tarea('w45', 'b45', 'category1')], semana=W45, ahora=EN_W46)
+    ruta = f'{RUTA}/sincronizar'
+    with _en(EN_W46):
+        opciones = cliente(people).get(f'{RUTA}/conexion').data['semanas_sincronizables']
+        assert [s['etiqueta'] for s in opciones] == ['WEEK 46', 'WEEK 45']
+        assert opciones[0]['en_curso'] and opciones[1]['cerrada']
+
+        sin_motivo = cliente(people).post(ruta, {'semanas': [W45.codigo]}, format='json')
+        assert sin_motivo.status_code == 400 and 'motivo' in sin_motivo.data['errors']
+        fuera = cliente(people).post(ruta, {'semanas': ['2026-W10']}, format='json')
+        assert fuera.status_code == 400
+
+        with mock.patch('apps.planner.sync.GraphClient', return_value=_graph_dos_semanas()):
+            r = cliente(people).post(
+                ruta,
+                {'semanas': [W45.codigo, W46.codigo], 'motivo': 'Se corrigieron tareas.'},
+                format='json',
+            )
+    assert r.status_code == 202, r.data
+    assert r.data['semana'] == 'WEEK 45, WEEK 46'
+    lectura = Sincronizacion.objects.get(pk=r.data['id'])
+    assert lectura.terminada_at and lectura.resumen['semanas'] == ['WEEK 45', 'WEEK 46']
+    assert RecalculoPlanner.objects.filter(semana=45).exists()
+
+
+# ── Detener actualización ─────────────────────────────────────────────────
+
+
+class GraphQueDetiene(GraphFalso):
+    """Mientras se lee Planner, alguien toca «Detener actualización»."""
+
+    def __init__(self, registro, quien, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.registro, self.quien = registro, quien
+
+    def lote(self, rutas, entre_tandas=None):
+        from apps.planner.sync import pedir_que_se_detenga
+
+        pedir_que_se_detenga(Sincronizacion.objects.get(pk=self.registro.pk), self.quien)
+        return super().lote(rutas, entre_tandas)
+
+
+@pytest.fixture
+def latido_en_cada_punto():
+    """En producción late como mucho cada 2 s; aquí, en cada punto de control."""
+    with mock.patch('apps.planner.sync.CADA_LATIDO', 0):
+        yield
+
+
+@pytest.mark.django_db
+def test_detener_para_la_lectura_y_queda_detenida(equipo, latido_en_cada_punto):
+    from apps.planner.sync import sincronizar_semanas
+
+    _, _, _, people = equipo
+    registro = Sincronizacion.objects.create(
+        tipo=Sincronizacion.Tipo.MANUAL, ejecutada_por=people, resumen={'pedidas': [W46.codigo]}
+    )
+    tareas = [tarea('w1', 'b46', 'category1')]
+    graph = GraphQueDetiene(registro, people, {PLAN_JULIAN: (BUCKETS, ETIQUETAS, tareas)})
+    sincronizar_semanas(registro, cliente=graph, ahora=EN_W46)
+
+    registro.refresh_from_db()
+    assert registro.estado == Sincronizacion.Estado.DETENIDA and registro.terminada_at
+    assert 'Johana' in registro.error
+    # Se detuvo antes del primer plan: no guardó nada.
+    assert not Snapshot.objects.exists()
+
+
+@pytest.mark.django_db
+def test_el_boton_detener_pide_parar_la_lectura_en_curso(equipo):
+    lider, _, _, people = equipo
+    ruta = f'{RUTA}/sincronizar/detener'
+    assert cliente(people).post(ruta).status_code == 400  # no hay ninguna corriendo
+    corriendo = Sincronizacion.objects.create(tipo=Sincronizacion.Tipo.MANUAL)
+    assert cliente(lider).post(ruta).status_code == 403
+
+    r = cliente(people).post(ruta)
+    assert r.status_code == 200
+    assert r.data['deteniendo'] is True and r.data['estado_label'] == 'Deteniendo'
+    corriendo.refresh_from_db()
+    assert corriendo.detener_at and corriendo.detenida_por == people
+
+    # Si no se cerró sola (el servidor se reinició), al rato se da por detenida
+    # y no bloquea la siguiente.
+    Sincronizacion.objects.filter(pk=corriendo.pk).update(
+        detener_at=timezone.now() - timedelta(minutes=5)
+    )
+    ultima = cliente(people).get(f'{RUTA}/conexion').data['ultima_lectura']
+    assert ultima['en_curso'] is False
+    assert ultima['estado'] == 'detenida' and ultima['estado_label'] == 'Detenida'
+    graph = GraphFalso({PLAN_JULIAN: (BUCKETS, ETIQUETAS, [])})
+    with mock.patch('apps.planner.sync.GraphClient', return_value=graph):
+        assert cliente(people).post(f'{RUTA}/sincronizar').status_code == 202
+
+
+@pytest.mark.django_db
+def test_detener_una_lectura_que_ya_no_corre_la_cierra_de_una_vez(equipo):
+    """El caso del servidor reiniciado: nadie la va a detener, así que se cierra al instante."""
+    _, _, _, people = equipo
+    muerta = Sincronizacion.objects.create(tipo=Sincronizacion.Tipo.MANUAL)
+    Sincronizacion.objects.filter(pk=muerta.pk).update(
+        latido_at=timezone.now() - timedelta(minutes=1)
+    )
+    r = cliente(people).post(f'{RUTA}/sincronizar/detener')
+    assert r.status_code == 200
+    assert r.data['en_curso'] is False and r.data['estado'] == 'detenida'
+    muerta.refresh_from_db()
+    assert muerta.terminada_at and 'Ya no estaba corriendo' in muerta.error
+    graph = GraphFalso({PLAN_JULIAN: (BUCKETS, ETIQUETAS, [])})
+    with mock.patch('apps.planner.sync.GraphClient', return_value=graph):
+        assert cliente(people).post(f'{RUTA}/sincronizar').status_code == 202
+
+
+@pytest.mark.django_db
+def test_sin_latido_la_lectura_no_bloquea_la_siguiente(equipo):
+    from apps.planner.sync import lectura_en_curso
+
+    _, _, _, people = equipo
+    viva = Sincronizacion.objects.create(tipo=Sincronizacion.Tipo.MANUAL)
+    Sincronizacion.objects.filter(pk=viva.pk).update(latido_at=timezone.now())
+    assert lectura_en_curso() == viva
+    hace_rato = timezone.now() - timedelta(minutes=4)
+    Sincronizacion.objects.filter(pk=viva.pk).update(latido_at=hace_rato, iniciada_at=hace_rato)
+    assert lectura_en_curso() is None
+    ultima = cliente(people).get(f'{RUTA}/conexion').data['ultima_lectura']
+    assert ultima['estado_label'] == 'Interrumpida'
+
+
+@pytest.mark.django_db
+def test_detener_a_mitad_deja_lo_guardado_y_no_toca_el_siguiente_plan(
+    equipo, latido_en_cada_punto
+):
+    """Para antes del siguiente plan: el que ya guardó queda entero, el resto no se toca."""
+    from apps.planner import sync
+
+    lider, julian, daniel, people = equipo
+    plan_daniel = 'DnPlanDanielCorrea2026abcde'
+    daniel.planner_url = f'https://planner.cloud.microsoft/ui/web/plan/{plan_daniel}/view/board'
+    daniel.save(update_fields=['planner_url'])
+    PlanPlanner.objects.create(plan_id=plan_daniel, titulo='', colaborador=daniel)
+    tareas = [tarea('w1', 'b46', 'category1')]
+    graph = GraphFalso(
+        {PLAN_JULIAN: (BUCKETS, ETIQUETAS, tareas), plan_daniel: (BUCKETS, ETIQUETAS, tareas)}
+    )
+    registro = Sincronizacion.objects.create(
+        tipo=Sincronizacion.Tipo.MANUAL, ejecutada_por=people, resumen={'pedidas': [W46.codigo]}
+    )
+    original = sync._guardar_plan
+
+    def guardar_y_detener(*args, **kwargs):
+        resultado = original(*args, **kwargs)
+        # Alguien toca «Detener» mientras se guardaba el primer plan.
+        sync.pedir_que_se_detenga(Sincronizacion.objects.get(pk=registro.pk), people)
+        return resultado
+
+    with mock.patch.object(sync, '_guardar_plan', side_effect=guardar_y_detener):
+        sync.sincronizar_semanas(registro, cliente=graph, ahora=EN_W46)
+
+    registro.refresh_from_db()
+    assert registro.estado == Sincronizacion.Estado.DETENIDA
+    assert Snapshot.objects.count() == 1  # solo el primer plan
+    assert not ResultadoSemana.objects.exists()  # no llegó a recalcular
+
+
+@pytest.mark.django_db
+def test_el_latido_va_a_la_base_como_mucho_cada_dos_segundos(equipo):
+    from apps.planner import sync
+
+    registro = Sincronizacion.objects.create(tipo=Sincronizacion.Tipo.MANUAL)
+    with mock.patch.object(sync.time, 'monotonic', side_effect=[100.0, 101.0, 102.5]):
+        sync._latir(registro)  # late
+        primero = Sincronizacion.objects.get(pk=registro.pk).latido_at
+        sync._latir(registro)  # 1 s después: no va a la base
+        assert Sincronizacion.objects.get(pk=registro.pk).latido_at == primero
+        sync._latir(registro)  # 2,5 s después: late otra vez
+    assert Sincronizacion.objects.get(pk=registro.pk).latido_at > primero

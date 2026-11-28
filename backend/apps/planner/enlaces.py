@@ -19,6 +19,7 @@ import re
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.accounts.models import User
 
@@ -90,12 +91,58 @@ def reconciliar_planes() -> None:
     Corre antes de cada lectura: cubre a quien se inactivó en Odoo y lo que
     haya cambiado fuera del formulario. Los planes que ya no son de nadie y
     nunca se leyeron se borran.
+
+    Es lo mismo que `vincular_plan` persona por persona, en el mismo orden,
+    pero leyendo personas y planes de una vez y guardando solo lo que cambia:
+    persona por persona eran unas cinco consultas cada una (20 s contra la
+    base de Render antes de empezar a leer Planner).
     """
-    personas = User.objects.filter(
-        Q(planner_url__gt='') | Q(planes_planner__activo=True)
-    ).distinct()
+    personas = list(
+        User.objects.filter(Q(planner_url__gt='') | Q(planes_planner__activo=True))
+        .distinct()
+        .only('id', 'is_active', 'planner_url')
+    )
+    deseado = {p.pk: plan_id_de_url(p.planner_url) if p.is_active else None for p in personas}
+    # Quién tiene cada plan en su URL (activos): a ellos no se les quita.
+    duenos: dict[str, set[int]] = {}
     for persona in personas:
-        vincular_plan(persona)
+        if deseado[persona.pk]:
+            duenos.setdefault(deseado[persona.pk], set()).add(persona.pk)
+
+    with transaction.atomic():
+        planes = {p.plan_id: p for p in PlanPlanner.objects.select_for_update()}
+        nuevos: dict[str, PlanPlanner] = {}
+        cambiados: dict[str, PlanPlanner] = {}
+        for persona in personas:
+            plan_id = deseado[persona.pk]
+            # Sus otros planes activos quedan inactivos.
+            for plan in planes.values():
+                if plan.colaborador_id == persona.pk and plan.activo and plan.plan_id != plan_id:
+                    plan.activo = False
+                    cambiados[plan.plan_id] = plan
+            if not plan_id:
+                continue
+            plan = planes.get(plan_id)
+            if plan is None:
+                plan = planes[plan_id] = nuevos[plan_id] = PlanPlanner(plan_id=plan_id, titulo='')
+            elif plan.activo and plan.colaborador_id not in (None, persona.pk):
+                if plan.colaborador_id in duenos.get(plan_id, set()) - {persona.pk}:
+                    continue  # otra persona activa tiene el mismo enlace
+            if plan.colaborador_id != persona.pk or not plan.activo:
+                plan.colaborador_id = persona.pk
+                plan.activo = True
+                plan.accesible = True
+                plan.error_lectura = ''
+                if plan_id not in nuevos:
+                    cambiados[plan_id] = plan
+        PlanPlanner.objects.bulk_create(nuevos.values())
+        momento = timezone.now()
+        for plan in cambiados.values():
+            plan.updated_at = momento  # bulk_update no lo pone solo
+        PlanPlanner.objects.bulk_update(
+            cambiados.values(),
+            ['activo', 'colaborador', 'accesible', 'error_lectura', 'updated_at'],
+        )
     PlanPlanner.objects.exclude(activo=True, colaborador__isnull=False).filter(
         snapshots__isnull=True
     ).delete()

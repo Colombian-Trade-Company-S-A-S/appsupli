@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeftIcon, ClipboardListIcon } from 'lucide-react';
 import { Button } from '@/shared/components/ui';
 import { fuenteBelkinApp } from '../api';
+import { BotonGuia } from '../components/BotonGuia';
 import { CompartirTablero } from '../components/CompartirTablero';
 import { TableroBelkin } from '../components/TableroBelkin';
 import { LISTAS_BELKIN, ORDEN_LISTAS_BELKIN } from '../listasBelkin';
@@ -28,6 +29,7 @@ export default function PlanBelkinPage() {
             <ClipboardListIcon data-icon="inline-start" />
             Formulario
           </Button>
+          <BotonGuia informe="belkin" nombre={PLANES.belkin.titulo} />
           <CompartirTablero
             canal="belkin_bi"
             descripcion="Un enlace de solo lectura con contraseña. Quien lo abra ve este tablero sin cuenta: sin el formulario, sin las listas del plan y sin descargar nada."

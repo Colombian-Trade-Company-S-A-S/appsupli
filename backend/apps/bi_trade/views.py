@@ -31,10 +31,18 @@ from apps.core.excel import (
 )
 from apps.core.pagination import StandardPagination
 
-from .api_permissions import CanManageData, HasBiTradeApp, PuedeEditar, ReadOnlyOrCanManage
+from .api_permissions import (
+    CanManageData,
+    HasBiTradeApp,
+    PuedeEditar,
+    ReadOnlyOrCanManage,
+    informe_de_la_ruta,
+    puede_editar,
+)
 from .belkin import registros_del_informe
 from .calendario import dias_del_mes, dias_habiles, es_habil, festivos
 from .canales import CLARO, Canal
+from .catalogo_reporte import CREAR, OMITIR, decision_de
 from .correo import ErrorDeCorreo, buscar_informe, descargar_informe
 from .filters import InventarioFilter, MetaFilter, VentaFilter
 from .informe import ErrorDeInforme, leer_informe
@@ -55,6 +63,7 @@ from .precios import (
     precio_de_venta,
     precio_vigente,
 )
+from .productos_informe import NADA_CREADO, ErrorDeEleccion, ProductosDelInforme
 from .serializers import (
     RELACIONES_PRECARGADAS,
     UNICIDAD_RESUELTA,
@@ -873,7 +882,7 @@ class VentaViewSet(BiTradeViewSet):
 
     @property
     def solo_con_meta(self) -> bool:
-        """Claro y Tmk solo cargan ventas de productos con meta (ver `VentasConMeta`)."""
+        """Claro solo carga ventas de productos con meta (ver `VentasConMeta`)."""
         return self.canal.solo_con_meta
 
     @property
@@ -2001,8 +2010,17 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     el mismo modo. Esos puntos no están en el catálogo de Claro, así que se
     toman del archivo y no de las ventas ya filtradas.
 
-    Lo que no cruza con la base se cuenta y se reporta, no se inventa: si el
-    punto de venta o el producto no existen en la app, esa fila no entra.
+    **Meta.** En Claro solo entran las ventas de un producto con meta ese mes
+    en ese punto (ver `VentasConMeta`). En Tmk entran todas las de un producto
+    que exista, tenga meta o no.
+
+    **Productos nuevos.** Solo en Tmk: si el archivo vende productos que no
+    existen, antes de tocar nada se pregunta cuáles crear (409
+    `productos_por_crear`); se responde con `productos=crear` y `crear`, o
+    con `productos=omitir` (ver `productos_informe`).
+
+    Lo demás que no cruza con la base se cuenta y se reporta, no se inventa:
+    si el punto de venta o el producto no existen en la app, esa fila no entra.
     """
     archivo = request.FILES.get('archivo')
     # O, en vez del archivo, el correo del buzón compartido de donde bajarlo.
@@ -2070,7 +2088,40 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     productos = set(canal.producto.objects.values_list('id_producto', flat=True))
     puntos = set(canal.punto.objects.values_list('id_punto_venta', flat=True))
 
+    # Tmk: los productos que vende el archivo y no existen se ofrecen para
+    # crear, y se crean solo los que se elijan (ver `productos_informe`).
+    eleccion = None
+    if canal.crea_productos_del_informe:
+        faltantes = ProductosDelInforme(
+            lectura, anio, mes, modo == MODO_SOBRESCRIBIR, productos, puntos, canal
+        )
+        decision = decision_de(request)
+        if faltantes and decision not in (CREAR, OMITIR):
+            return faltantes.pregunta()
+        if faltantes and decision == CREAR:
+            try:
+                eleccion = faltantes.elegidos(request.data.get('crear'))
+            except ErrorDeEleccion as exc:
+                return Response(
+                    {'code': 'invalid', 'message': str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if eleccion and not puede_editar(
+                request.user, 'productos', informe_de_la_ruta(request.path)
+            ):
+                return Response(
+                    {
+                        'code': 'permission_denied',
+                        'message': 'No tienes permiso para crear productos. Importa sin '
+                        'crearlos, o pide el permiso.',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # Lo que se va a crear cuenta como existente al cruzar.
+            productos |= eleccion.codigos
+
     with transaction.atomic():
+        creado = eleccion.crear() if eleccion else dict(NADA_CREADO)
         resumen_ventas = _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal)
         resumen_inventario = _importar_inventario(lectura, productos, puntos, canal)
         resumen_belkin = (
@@ -2082,6 +2133,8 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
         )
 
     partes = []
+    if creado['productos_creados']:
+        partes.append(f'{creado["productos_creados"]} producto(s) nuevo(s)')
     if resumen_ventas['creadas']:
         partes.append(f'{resumen_ventas["creadas"]} venta(s)')
     if resumen_inventario['creados']:
@@ -2095,6 +2148,11 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
     )
     if resumen_ventas['sin_meta']:
         mensaje = f'{mensaje} {aviso_sin_meta(resumen_ventas["sin_meta"])}'
+    if creado['productos_sin_precio']:
+        mensaje = (
+            f'{mensaje} {creado["productos_sin_precio"]} producto(s) nuevo(s) quedaron en $0: '
+            'ponles precio en Productos para que sus ventas sumen en dinero.'
+        )
 
     return Response(
         {
@@ -2103,6 +2161,7 @@ def importar_informe_de(request, canal: Canal = CLARO) -> Response:
             'ventas': resumen_ventas,
             'inventario': resumen_inventario,
             'belkin': resumen_belkin,
+            **creado,
             'message': mensaje,
         }
     )
@@ -2112,8 +2171,8 @@ def _importar_ventas(lectura, anio, mes, modo, productos, puntos, canal: Canal) 
     """
     Aplica las ventas del archivo al mes elegido, según el modo.
 
-    En Claro y en Tmk solo entran las de productos con meta ese mes en ese
-    punto; en Claro, además, las del plan Belkin (ver `VentasConMeta`).
+    En Claro solo entran las de productos con meta ese mes en ese punto, y las
+    del plan Belkin (ver `VentasConMeta`). En Tmk entran todas.
     """
     filtro = VentasConMeta({(anio, mes)}, canal) if canal.solo_con_meta else None
     del_mes = {

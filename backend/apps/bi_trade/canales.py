@@ -59,8 +59,12 @@ class Canal:
     #: unidades: sus productos no tienen puntaje y nada suyo habla de puntos.
     con_puntos: bool = True
     #: Si solo cuenta lo que tiene meta: al importar ventas y en el tablero, solo
-    #: entra un producto con meta ese mes en ese punto de venta. Claro y Tmk.
+    #: entra un producto con meta ese mes en ese punto de venta. Solo Claro.
     solo_con_meta: bool = False
+    #: Si el informe del ERP ofrece crear los productos que vende y no existen
+    #: en el canal (ver `productos_informe`). Solo Tmk: en Claro el informe no
+    #: crea catálogo.
+    crea_productos_del_informe: bool = False
 
     #: Si la meta es de la tienda en dinero (`total_meta`), no de cada producto
     #: en unidades. Solo HC. Entonces no se filtra ni se agrupa por producto o
@@ -127,8 +131,9 @@ TMK = Canal(
     precio=PrecioProductoTmk,
     opciones=OPCIONES_TMK,
     con_puntos=False,
-    # Como Claro: del informe del ERP solo cuenta lo que tiene meta en Tmk.
-    solo_con_meta=True,
+    # A diferencia de Claro, cuenta toda venta de un producto que exista en Tmk,
+    # tenga meta o no; y el informe del ERP ofrece crear los que no existen.
+    crea_productos_del_informe=True,
 )
 
 CANALES = {canal.codigo: canal for canal in (CLARO, HC, FALABELLA, TMK)}

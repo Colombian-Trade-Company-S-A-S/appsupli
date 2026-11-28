@@ -144,16 +144,21 @@ class GraphClient:
             siguiente = pagina.cuerpo.get('@odata.nextLink')
         return Respuesta(respuesta.status, {**respuesta.cuerpo, 'value': items})
 
-    def lote(self, rutas: list[str]) -> list[Respuesta]:
+    def lote(self, rutas: list[str], entre_tandas=None) -> list[Respuesta]:
         """
         Varios GET en pocas llamadas ($batch de a 20), en el mismo orden pedido.
 
         Con decenas de planes, pedir uno por uno no cabe en el tiempo de una
         petición web; en lotes, sí. Las páginas siguientes de cada respuesta se
         piden aparte.
+
+        `entre_tandas` se llama antes de cada tanda: la lectura de Planner late
+        ahí y, si la detuvieron, corta sin pedir las tandas que faltan.
         """
         respuestas: list[Respuesta] = []
         for inicio in range(0, len(rutas), LOTE_MAXIMO):
+            if entre_tandas:
+                entre_tandas()
             grupo = rutas[inicio:inicio + LOTE_MAXIMO]
             pedido = {'requests': [
                 {'id': str(i), 'method': 'GET', 'url': ruta} for i, ruta in enumerate(grupo)

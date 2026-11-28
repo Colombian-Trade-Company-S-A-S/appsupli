@@ -40,6 +40,7 @@ import { ImportarFalabella } from '../components/ImportarFalabella';
 import { ImportarHc } from '../components/ImportarHc';
 import { HojasBi } from '../components/HojasBi';
 import { CompartirTablero } from '../components/CompartirTablero';
+import { BotonGuia } from '../components/BotonGuia';
 import { useFuente } from '../fuente';
 import { usePuedeEditar } from '../permisos';
 
@@ -104,6 +105,7 @@ export default function ClaroDashboardPage() {
       >
         {!soloLectura && (
           <>
+            <BotonGuia informe={fuente.canal} nombre={fuente.titulo} />
             <CompartirTablero canal={fuente.canal} />
             {/* El informe del ERP: Claro y Tmk sí; Homecenter y Falabella no. Carga
                 ventas e inventario a la vez, así que pide editar los dos. */}

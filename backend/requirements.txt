@@ -9,6 +9,8 @@ djangorestframework-simplejwt==5.3.1
 # Firma RS256 de los tokens de Microsoft.
 cryptography==46.0.3
 openpyxl==3.1.5
+# Las guías de uso en PDF de cada informe de BI Trade.
+reportlab==4.4.3
 # Postgres y despliegue
 psycopg[binary]==3.3.5
 gunicorn==26.2.0

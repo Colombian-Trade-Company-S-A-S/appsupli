@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  CircleStopIcon,
   ExternalLinkIcon,
   ListChecksIcon,
   PencilIcon,
@@ -8,8 +9,17 @@ import {
   RefreshCwIcon,
   SearchIcon,
   ShieldCheckIcon,
+  TriangleAlertIcon,
 } from 'lucide-react';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Badge,
   Button,
   Card,
@@ -18,7 +28,18 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Checkbox,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Field,
+  FieldDescription,
+  FieldLabel,
   Input,
+  Textarea,
   Table,
   TableBody,
   TableCell,
@@ -29,8 +50,14 @@ import {
 import { EstadoTabla, Kpi } from '@/shared/components/layout';
 import { formatoFechaHora } from '@/shared/lib/formato';
 import { cn } from '@/shared/lib/utils';
-import type { EstadoPlan, PlanDePersona } from '../api';
-import { useAvisoDeLectura, useConexion, usePlanes, useSincronizar } from '../hooks';
+import type { EstadoPlan, PedidoSincronizar, PlanDePersona, SemanaSincronizable } from '../api';
+import {
+  useAvisoDeLectura,
+  useConexion,
+  useDetenerSincronizacion,
+  usePlanes,
+  useSincronizar,
+} from '../hooks';
 import { Nota } from '../components/Piezas';
 
 type FiltroPlanes = 'con-plan' | 'sin-plan' | 'todos';
@@ -45,6 +72,7 @@ type FiltroPlanes = 'con-plan' | 'sin-plan' | 'todos';
  */
 export default function ConexionPage() {
   const [probar, setProbar] = useState(false);
+  const [eligiendo, setEligiendo] = useState(false);
   const { data, isLoading } = useConexion(probar);
   const sincronizar = useSincronizar();
   const ultima = data?.ultimaLectura;
@@ -72,30 +100,36 @@ export default function ConexionPage() {
             >
               <PlugZapIcon /> Probar conexión
             </Button>
-            <Button
-              size="sm"
-              onClick={() => {
+            <Button size="sm" onClick={() => setEligiendo(true)} disabled={leyendo}>
+              <RefreshCwIcon className={cn(leyendo && 'animate-spin')} />
+              {leyendo ? 'Leyendo Planner…' : 'Sincronizar'}
+            </Button>
+            <ElegirSemanas
+              abierto={eligiendo}
+              onOpenChange={setEligiendo}
+              semanas={data?.semanasSincronizables ?? []}
+              enviando={sincronizar.isPending}
+              onSincronizar={(pedido) => {
                 // La prueba de conexión no se repite en cada consulta mientras se lee.
                 setProbar(false);
-                sincronizar.mutate();
+                sincronizar.mutate(pedido, { onSuccess: () => setEligiendo(false) });
               }}
-              disabled={leyendo}
-            >
-              <RefreshCwIcon className={cn(leyendo && 'animate-spin')} />
-              {leyendo ? 'Leyendo Planner…' : 'Sincronizar ahora'}
-            </Button>
+            />
           </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {ultima?.enCurso && (
-            <p className="flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-900 dark:text-sky-200">
-              <RefreshCwIcon className="size-4 shrink-0 animate-spin" />
-              <span>
-                {ultima.tipoLabel} en curso desde {formatoFechaHora(ultima.iniciadaAt)} (
-                {ultima.ejecutadaPor}). Tarda unos minutos: esta página se actualiza sola y puedes
-                seguir usando la app.
-              </span>
-            </p>
+            <div className="flex flex-col gap-3 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-900 sm:flex-row sm:items-center dark:text-sky-200">
+              <p className="flex flex-1 items-center gap-2">
+                <RefreshCwIcon className="size-4 shrink-0 animate-spin" />
+                <span>
+                  {ultima.deteniendo
+                    ? `Deteniendo la lectura: termina el plan que está guardando y para. Lo ya guardado queda.`
+                    : `${ultima.tipoLabel}${ultima.semana ? ` (${ultima.semana})` : ''} en curso desde ${formatoFechaHora(ultima.iniciadaAt)} (${ultima.ejecutadaPor}). Tarda unos minutos: esta página se actualiza sola y puedes seguir usando la app.`}
+                </span>
+              </p>
+              <DetenerLectura deteniendo={ultima.deteniendo} />
+            </div>
           )}
           {data?.estadoGraph && (
             <p
@@ -209,7 +243,7 @@ export default function ConexionPage() {
           vacio={(data?.lecturas.length ?? 0) === 0}
           icono={<RefreshCwIcon />}
           titulo="Sin lecturas todavía"
-          descripcion="Usa «Sincronizar ahora» para la primera lectura."
+          descripcion="Usa «Sincronizar» para la primera lectura."
           filas={3}
         >
           <Table>
@@ -245,6 +279,7 @@ export default function ConexionPage() {
                               ok: 'text-emerald-700 dark:text-emerald-300',
                               parcial: 'text-amber-700 dark:text-amber-300',
                               error: 'text-red-700 dark:text-red-300',
+                              detenida: 'text-muted-foreground',
                             }[l.estado],
                       )}
                     >
@@ -264,6 +299,186 @@ export default function ConexionPage() {
 const CON_PLAN: EstadoPlan[] = ['Leído', 'Sin leer', 'Inaccesible'];
 
 /** El plan de cada persona con correo @supli.tech. Solo consulta: se cambia en Gestión de usuarios. */
+/**
+ * «Detener actualización»: la lectura para antes del siguiente plan (cada plan
+ * se guarda entero) y queda «Detenida» en la bitácora. Se confirma antes.
+ */
+function DetenerLectura({ deteniendo }: { deteniendo: boolean }) {
+  const [confirmando, setConfirmando] = useState(false);
+  const detener = useDetenerSincronizacion();
+  const pendiente = deteniendo || detener.isPending;
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="shrink-0 border-red-500/40 bg-background text-red-700 hover:bg-red-500/10 hover:text-red-800 dark:text-red-300"
+        disabled={pendiente}
+        onClick={() => setConfirmando(true)}
+      >
+        <CircleStopIcon />
+        {pendiente ? 'Deteniendo…' : 'Detener actualización'}
+      </Button>
+      <AlertDialog open={confirmando} onOpenChange={setConfirmando}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Detener la actualización?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Para antes del siguiente plan. Lo que ya alcanzó a guardar queda; el resto se lee en
+              la próxima lectura (la de esta noche o cuando sincronices de nuevo).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Seguir leyendo</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                detener.mutate();
+                setConfirmando(false);
+              }}
+            >
+              Detener
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+const MINIMO_MOTIVO = 10;
+
+/**
+ * Qué semanas actualizar al sincronizar: una o varias. Planner se lee una sola
+ * vez y de esa lectura se guarda cada semana marcada.
+ *
+ * La semana en curso se lee como cada noche. Una cerrada vuelve a tomar su
+ * foto de cierre con lo que hay hoy en Planner y su resultado final se
+ * recalcula: por eso pide el motivo, que queda en la bitácora de recálculos.
+ */
+function ElegirSemanas({
+  abierto,
+  onOpenChange,
+  semanas,
+  enviando,
+  onSincronizar,
+}: {
+  abierto: boolean;
+  onOpenChange: (abierto: boolean) => void;
+  semanas: SemanaSincronizable[];
+  enviando: boolean;
+  onSincronizar: (pedido: PedidoSincronizar) => void;
+}) {
+  const [elegidas, setElegidas] = useState<string[]>([]);
+  const [motivo, setMotivo] = useState('');
+
+  // Al abrir, arranca con la semana en curso marcada (lo de siempre).
+  const abrir = (valor: boolean) => {
+    if (valor) {
+      const enCurso = semanas.find((s) => s.enCurso) ?? semanas[0];
+      setElegidas(enCurso ? [enCurso.codigo] : []);
+      setMotivo('');
+    }
+    onOpenChange(valor);
+  };
+  const alternar = (codigo: string) =>
+    setElegidas((actuales) =>
+      actuales.includes(codigo) ? actuales.filter((c) => c !== codigo) : [...actuales, codigo],
+    );
+
+  const cerradas = semanas.filter((s) => s.cerrada && elegidas.includes(s.codigo));
+  const faltaMotivo = cerradas.length > 0 && motivo.trim().length < MINIMO_MOTIVO;
+  const n = elegidas.length;
+
+  return (
+    <Dialog open={abierto} onOpenChange={abrir}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>¿Qué semanas sincronizar?</DialogTitle>
+          <DialogDescription>
+            Planner se lee una sola vez y se actualizan solo las semanas que marques.
+          </DialogDescription>
+        </DialogHeader>
+
+        {semanas.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Cargando las semanas…</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {semanas.map((s) => {
+              const marcada = elegidas.includes(s.codigo);
+              return (
+                <li key={s.codigo}>
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors',
+                      marcada && 'border-primary/50 bg-primary/5',
+                    )}
+                  >
+                    <Checkbox checked={marcada} onCheckedChange={() => alternar(s.codigo)} />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="font-medium">{s.etiqueta}</span>
+                      <span className="text-xs text-muted-foreground">{s.rango}</span>
+                    </span>
+                    {s.enCurso ? (
+                      <Badge variant="success">En curso</Badge>
+                    ) : (
+                      <Badge variant="outline">
+                        {s.conCierre ? 'Cerrada' : 'Cerrada sin foto de cierre'}
+                      </Badge>
+                    )}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {cerradas.length > 0 && (
+          <div className="flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <p className="flex items-start gap-2">
+              <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <span>
+                {cerradas.map((s) => s.etiqueta).join(', ')}{' '}
+                {cerradas.length === 1 ? 'ya cerró' : 'ya cerraron'}: se vuelve a tomar la foto de
+                cierre con lo que hay hoy en Planner y el resultado final se recalcula. Queda en la
+                bitácora de recálculos con este motivo.
+              </span>
+            </p>
+            <Field>
+              <FieldLabel htmlFor="motivo-sincronizar">Motivo</FieldLabel>
+              <Textarea
+                id="motivo-sincronizar"
+                rows={2}
+                placeholder="Ej.: el corte del lunes no corrió y la semana quedó sin cierre."
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+              />
+              <FieldDescription>Mínimo {MINIMO_MOTIVO} caracteres.</FieldDescription>
+            </Field>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => abrir(false)} disabled={enviando}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={n === 0 || faltaMotivo || enviando}
+            onClick={() =>
+              onSincronizar({
+                semanas: elegidas,
+                motivo: cerradas.length > 0 ? motivo.trim() : undefined,
+              })
+            }
+          >
+            <RefreshCwIcon className={cn(enviando && 'animate-spin')} />
+            {n === 0 ? 'Elige una semana' : `Sincronizar ${n === 1 ? '1 semana' : `${n} semanas`}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PlanesPorPersona() {
   const { data, isLoading } = usePlanes();
   const [filtro, setFiltro] = useState<FiltroPlanes>('con-plan');

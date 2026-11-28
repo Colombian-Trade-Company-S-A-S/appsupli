@@ -7,7 +7,8 @@ las plantillas—; el tablero llama al mismo cálculo con el canal TMK.
 
 A diferencia de Homecenter y Falabella, aquí sí está el «Importar» general
 del informe del ERP: el mismo de Claro, sobre las tablas `_tmk`. Cada módulo
-tiene además su plantilla y su importación.
+tiene además su plantilla y su importación. A diferencia de Claro, cuenta toda
+venta de un producto que exista, tenga meta o no.
 """
 from django.db.models import Count
 from rest_framework.decorators import api_view, parser_classes, permission_classes
@@ -239,5 +240,11 @@ def cumplimiento_diario_tmk_exportar(request):
 @permission_classes([HasBiTradeApp, PuedeEditar('ventas', 'inventario')])
 @parser_classes([MultiPartParser])
 def importar_informe_tmk(request):
-    """El informe del ERP, igual que en Claro, pero sobre las tablas `_tmk`."""
+    """
+    El informe del ERP, igual que en Claro, pero sobre las tablas `_tmk`.
+
+    Dos diferencias: entra toda venta de un producto que exista, tenga meta o
+    no, y los productos que el archivo vende y no existen se ofrecen para
+    crear (ver `productos_informe`).
+    """
     return importar_informe_de(request, TMK)

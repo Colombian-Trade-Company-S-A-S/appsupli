@@ -6,6 +6,7 @@ from . import (
     views,
     views_belkin,
     views_falabella,
+    views_guias,
     views_hc,
     views_marcas,
     views_partners,
@@ -86,6 +87,13 @@ router.register('belkin/productos', _bel.ProductoBelkinViewSet, basename='belkin
 router.register('belkin/registros', _bel.RegistroBelkinViewSet, basename='belkin-registros')
 
 urlpatterns = [
+    # La guía de uso en PDF de cada informe. Claro va sin tramo, como el resto de lo suyo.
+    path('guia', views_guias.vista_guia('claro'), name='guia'),
+    path('hc/guia', views_guias.vista_guia('hc'), name='hc-guia'),
+    path('falabella/guia', views_guias.vista_guia('falabella'), name='falabella-guia'),
+    path('tmk/guia', views_guias.vista_guia('tmk'), name='tmk-guia'),
+    path('partners/guia', views_guias.vista_guia('partners'), name='partners-guia'),
+    path('belkin/guia', views_guias.vista_guia('belkin'), name='belkin-guia'),
     path('opciones', views.opciones, name='opciones'),
     path('partners/opciones', _par.opciones_partners, name='partners-opciones'),
     path('partners/dashboard', _par.dashboard_partners, name='partners-dashboard'),

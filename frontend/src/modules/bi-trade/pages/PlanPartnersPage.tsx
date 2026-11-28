@@ -51,6 +51,7 @@ import { Encabezado, Kpi } from '@/shared/components/layout';
 import { formatoMonedaCorta, formatoNumero } from '@/shared/lib/formato';
 import { usePermisosBi } from '../permisos';
 import { partnersTableroApi, type FiltrosPartners, type ResultadoMetas } from '../api';
+import { BotonGuia } from '../components/BotonGuia';
 import { CampoSelect } from '../components/CampoSelect';
 import { LISTAS_PARTNERS, ORDEN_LISTAS_PARTNERS } from '../listasPartners';
 import { BadgeCumplimiento, BarraCumplimiento } from '../components/Cumplimiento';
@@ -134,6 +135,7 @@ export default function PlanPartnersPage() {
           <ClipboardListIcon data-icon="inline-start" />
           Formulario
         </Button>
+        <BotonGuia informe="partners" nombre="Plan Partners" />
         {puedeAdministrar && <SubirMetas />}
         {ORDEN_LISTAS_PARTNERS.map((lista) => {
           const { titulo, icono: Icono, ruta } = LISTAS_PARTNERS[lista];

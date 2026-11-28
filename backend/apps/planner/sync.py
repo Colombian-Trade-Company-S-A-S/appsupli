@@ -29,17 +29,19 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.db import connections, transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .api_permissions import personas_medidas
-from .calculo import recalcular_semana
+from .calculo import parametros_de, recalcular_semana
 from .enlaces import reconciliar_planes
 from .graph import GraphClient, GraphError, rutas_de_plan
 from .models import (
@@ -48,6 +50,7 @@ from .models import (
     IncidenciaCalidad,
     MovimientoTarea,
     PlanPlanner,
+    RecalculoPlanner,
     Sincronizacion,
     Snapshot,
     TareaMedicion,
@@ -65,10 +68,6 @@ TIPO_FOTO = {
     Sincronizacion.Tipo.LINEA_BASE: Snapshot.Tipo.LINEA_BASE,
     Sincronizacion.Tipo.CIERRE: Snapshot.Tipo.CIERRE,
 }
-
-# Una lectura que lleva más que esto sin terminar se da por caída (se reinició
-# el servidor a mitad de camino): no bloquea la siguiente.
-LECTURA_MAXIMA = timedelta(minutes=20)
 
 # Lo que cada lectura deja en el plan.
 CAMPOS_LECTURA = [
@@ -93,15 +92,103 @@ def planes_medidos():
     )
 
 
+#: Una lectura viva late antes de cada plan y de cada tanda de Graph (entre
+#: latido y latido pasan segundos; una tanda que Graph limita puede tardar más).
+#: Sin latido en este tiempo, ya no corre: se reinició el servidor.
+SIN_LATIDO = timedelta(minutes=3)
+
+#: Al pedir detenerla, si no late hace más que esto no hay quién la detenga:
+#: se cierra de una vez como «Detenida», sin esperar.
+LATIDO_RECIENTE = timedelta(seconds=20)
+
+#: Si se pidió detener y en este tiempo no se cerró sola, se da por detenida.
+ESPERA_DETENER = timedelta(seconds=30)
+
+
+class LecturaDetenida(Exception):
+    """Alguien tocó «Detener actualización»: la lectura para donde va."""
+
+
+def ultima_senal(lectura: Sincronizacion):
+    """El último latido, o el arranque si todavía no alcanzó a latir."""
+    return lectura.latido_at or lectura.iniciada_at
+
+
+def esta_viva(lectura: Sincronizacion, ahora: datetime | None = None) -> bool:
+    """Si sigue corriendo: sin terminar, latiendo y sin un «detener» vencido."""
+    ahora = ahora or timezone.now()
+    if lectura.terminada_at is not None:
+        return False
+    if lectura.detener_at is not None and lectura.detener_at < ahora - ESPERA_DETENER:
+        return False
+    return ultima_senal(lectura) >= ahora - SIN_LATIDO
+
+
 def lectura_en_curso() -> Sincronizacion | None:
     """La lectura de Planner que está corriendo ahora, si hay una."""
-    return (
-        Sincronizacion.objects.filter(
-            terminada_at__isnull=True, iniciada_at__gte=timezone.now() - LECTURA_MAXIMA
-        )
+    ahora = timezone.now()
+    candidatas = (
+        Sincronizacion.objects.filter(terminada_at__isnull=True)
+        .filter(Q(latido_at__gte=ahora - SIN_LATIDO) | Q(iniciada_at__gte=ahora - SIN_LATIDO))
         .exclude(tipo=Sincronizacion.Tipo.INVENTARIO)
-        .first()
+        .exclude(detener_at__lt=ahora - ESPERA_DETENER)
     )
+    return next((s for s in candidatas if esta_viva(s, ahora)), None)
+
+
+def pedir_que_se_detenga(lectura: Sincronizacion, quien) -> Sincronizacion:
+    """
+    Marca la lectura para que se detenga y termine como «Detenida»: lo que ya
+    guardó queda, el resto se lee en la próxima lectura.
+
+    Si está latiendo, para ella misma antes del siguiente plan (en segundos).
+    Si no late hace rato, no hay quién la detenga (se reinició el servidor):
+    se cierra aquí, de una vez.
+    """
+    ahora = timezone.now()
+    if lectura.detener_at is None:
+        lectura.detener_at = ahora
+        lectura.detenida_por = quien
+    campos = ['detener_at', 'detenida_por']
+    if lectura.terminada_at is None and ultima_senal(lectura) < ahora - LATIDO_RECIENTE:
+        lectura.estado = Sincronizacion.Estado.DETENIDA
+        lectura.error = _texto_detenida(lectura) + ' Ya no estaba corriendo.'
+        lectura.terminada_at = ahora
+        campos += ['estado', 'error', 'terminada_at']
+    lectura.save(update_fields=campos)
+    return lectura
+
+
+def _texto_detenida(lectura: Sincronizacion) -> str:
+    quien = lectura.detenida_por.full_name if lectura.detenida_por else 'alguien'
+    return (
+        f'La detuvo {quien}. Lo que alcanzó a guardar queda; el resto se lee en la '
+        'próxima lectura.'
+    )
+
+
+#: Entre latido y latido, como mínimo: «Detener» responde en un par de
+#: segundos sin una consulta a la base por cada plan.
+CADA_LATIDO = 2.0  # segundos
+
+
+def _latir(registro: Sincronizacion) -> None:
+    """
+    Anota que la lectura sigue viva y, en la misma consulta, revisa si
+    pidieron detenerla: el UPDATE no toca la fila si ya tiene «detener».
+    Se llama seguido (antes de cada plan y de cada tanda de Graph), pero va a
+    la base como mucho cada `CADA_LATIDO` segundos.
+    """
+    ahora = time.monotonic()
+    ultimo = getattr(registro, '_ultimo_latido', None)
+    if ultimo is not None and ahora - ultimo < CADA_LATIDO:
+        return
+    registro._ultimo_latido = ahora
+    vivas = Sincronizacion.objects.filter(pk=registro.pk, detener_at__isnull=True).update(
+        latido_at=timezone.now()
+    )
+    if not vivas:
+        raise LecturaDetenida
 
 
 def leer_en_segundo_plano(registro: Sincronizacion) -> None:
@@ -113,13 +200,12 @@ def leer_en_segundo_plano(registro: Sincronizacion) -> None:
     hilo, para que vea la base de la prueba.
     """
     if not settings.PLANNER_LEER_EN_SEGUNDO_PLANO:
-        sincronizar(registro.tipo, registro=registro)
+        _correr(registro)
         return
 
     def correr(pk: int) -> None:
         try:
-            propio = Sincronizacion.objects.get(pk=pk)  # el del hilo, no el de la petición
-            sincronizar(propio.tipo, registro=propio)
+            _correr(Sincronizacion.objects.get(pk=pk))  # el del hilo, no el de la petición
         except Exception:
             logger.exception('La lectura de Planner %s se interrumpió', pk)
         finally:
@@ -130,6 +216,60 @@ def leer_en_segundo_plano(registro: Sincronizacion) -> None:
     )
     # Arranca cuando el registro ya está guardado (el hilo lo busca en la base).
     transaction.on_commit(hilo.start)
+
+
+def _correr(registro: Sincronizacion) -> None:
+    """La lectura del botón: las semanas que se eligieron, o la de su registro."""
+    if registro.resumen.get('pedidas'):
+        sincronizar_semanas(registro)
+    else:
+        sincronizar(registro.tipo, registro=registro)
+
+
+@dataclass(frozen=True)
+class Objetivo:
+    """Una semana que se guarda en una lectura, y con qué foto."""
+
+    semana: Semana
+    tipo_foto: str
+    #: Reemplaza la foto de cierre o la línea base aunque ya existan.
+    forzar: bool = False
+    #: Recalcula aunque los resultados ya fueran finales, y lo deja en la
+    #: bitácora de recálculos (decisión 7): la semana cerrada leída a mano.
+    excepcional: bool = False
+
+
+def objetivo_manual(semana: Semana, ahora: datetime | None = None) -> Objetivo:
+    """
+    Lo que hace «Sincronizar» con una semana elegida.
+
+    En curso: la foto «actual», como cada noche. Ya cerrada: se vuelve a tomar
+    su foto de cierre con lo que hay hoy en Planner (también si el corte no la
+    tomó) y se recalcula aunque ya estuviera cerrada.
+    """
+    if semana.cerrada(ahora):
+        return Objetivo(semana, Snapshot.Tipo.CIERRE, forzar=True, excepcional=True)
+    return Objetivo(semana, Snapshot.Tipo.ACTUAL)
+
+
+def sincronizar_semanas(
+    registro: Sincronizacion,
+    cliente: GraphClient | None = None,
+    ahora: datetime | None = None,
+) -> Sincronizacion:
+    """
+    «Sincronizar» con las semanas elegidas (`registro.resumen['pedidas']`).
+
+    Planner se lee una sola vez y de esa lectura se guarda cada semana: elegir
+    tres no cuesta tres lecturas. Las semanas cerradas se recalculan y el
+    recálculo queda en la bitácora con el motivo (decisión 7).
+    """
+    ahora = ahora or timezone.now()
+    pedidas = [Semana.desde_codigo(c) for c in registro.resumen['pedidas']]
+    objetivos = [objetivo_manual(s, ahora) for s in sorted(set(pedidas))]
+    motivo = registro.resumen.get('motivo', '')
+    _leer_con_bitacora(registro, objetivos, cliente or GraphClient(), ahora, motivo=motivo)
+    return registro
 
 
 def sincronizar(
@@ -160,28 +300,67 @@ def sincronizar(
         registro = Sincronizacion.objects.create(
             tipo=tipo, anio=semana.anio, semana=semana.numero, ejecutada_por=ejecutada_por
         )
+    # La de cada noche y la del corte recalculan también la semana anterior.
+    objetivos = [Objetivo(semana, TIPO_FOTO[tipo], forzar)]
+    _leer_con_bitacora(registro, objetivos, cliente or GraphClient(), ahora, con_anterior=True)
+    return registro
+
+
+def _leer_con_bitacora(registro, objetivos, cliente, ahora, **opciones) -> None:
+    """
+    Si algo inesperado corta la lectura, queda con error en la bitácora. Si la
+    detuvieron a mano, queda «Detenida».
+    """
     try:
-        _leer(registro, semana, TIPO_FOTO[tipo], cliente or GraphClient(), ahora, forzar)
+        _leer(registro, objetivos, cliente, ahora, **opciones)
+    except LecturaDetenida:
+        registro.refresh_from_db(fields=['detenida_por', 'detener_at'])
+        registro.estado = Sincronizacion.Estado.DETENIDA
+        registro.error = _texto_detenida(registro)
+        registro.terminada_at = timezone.now()
+        registro.save(update_fields=['estado', 'error', 'terminada_at'])
     except Exception as e:
         registro.estado = Sincronizacion.Estado.ERROR
         registro.error = f'La lectura se interrumpió: {e}'
         registro.terminada_at = timezone.now()
         registro.save(update_fields=['estado', 'error', 'terminada_at'])
         raise
-    return registro
 
 
-def _leer(registro, semana, tipo_foto, cliente, ahora, forzar) -> None:
+def _leer(
+    registro: Sincronizacion,
+    objetivos: list[Objetivo],
+    cliente: GraphClient,
+    ahora: datetime,
+    con_anterior: bool = False,
+    motivo: str = '',
+) -> None:
+    """
+    Lee Planner una vez y guarda la foto de cada semana de `objetivos`.
+
+    Graph se consulta una sola vez por lectura, sea una semana o varias: las
+    tareas son las mismas y cada semana toma las de su depósito.
+
+    Late (y revisa si la detuvieron) al empezar, antes de cada tanda de Graph
+    y antes de cada plan: «Detener actualización» responde en segundos.
+    """
+    _latir(registro)
     reconciliar_planes()
     planes = list(planes_medidos())
     resumen = {'planes': len(planes), 'fotos': 0, 'omitidas': 0, 'inaccesibles': 0, 'tareas': 0}
+    if len(objetivos) > 1 or registro.resumen.get('pedidas'):
+        resumen['semanas'] = [o.semana.etiqueta for o in objetivos]
     errores: list[dict] = []
-    detectadas: list[tuple[PlanPlanner | None, object, Incidencia]] = []
+    detectadas: list[tuple[PlanPlanner | None, object, Incidencia, Semana]] = []
     hitos_por_leer: list[HitoPlanner] = []
+    # La semana de lo que no es de una semana (quien no tiene plan): la más reciente.
+    ultima = max(o.semana for o in objetivos)
 
     try:
         rutas = [ruta for plan in planes for ruta in rutas_de_plan(plan.plan_id)]
-        respuestas = cliente.lote(rutas) if rutas else []
+        respuestas = (
+            cliente.lote(rutas, entre_tandas=lambda: _latir(registro)) if rutas else []
+        )
     except GraphError as e:
         registro.estado = Sincronizacion.Estado.ERROR
         registro.error = str(e)
@@ -191,9 +370,15 @@ def _leer(registro, semana, tipo_foto, cliente, ahora, forzar) -> None:
         logger.warning('Lectura de Planner fallida: %s', e)
         return
 
-    previo = _previo(planes, semana, tipo_foto)
+    # Lo guardado de cada semana, leído de una vez; los depósitos son del plan,
+    # no de la semana: se leen una vez y los comparten.
+    depositos = _depositos(planes)
+    previos = {o: _previo(planes, o.semana, o.tipo_foto, depositos) for o in objetivos}
     leidos: list[PlanPlanner] = []
     for i, plan in enumerate(planes):
+        # «Detener actualización» se revisa antes de cada plan: cada plan se
+        # guarda entero o no se toca.
+        _latir(registro)
         buckets, detalles, tareas, datos_plan = respuestas[4 * i : 4 * i + 4]
         fallida = next((r for r in (buckets, detalles, tareas, datos_plan) if not r.ok), None)
         if fallida is not None:
@@ -214,38 +399,47 @@ def _leer(registro, semana, tipo_foto, cliente, ahora, forzar) -> None:
                         f'({fallida.status}). No entra en el cálculo hasta corregir el enlace '
                         'en Gestión de usuarios o el permiso en Microsoft.',
                     ),
+                    ultima,
                 )
             )
             continue
         _datos_del_plan(plan, datos_plan.cuerpo)
-        try:
-            with transaction.atomic():
-                tomada, incidencias, n_tareas, hitos = _guardar_plan(
-                    plan,
-                    semana,
-                    tipo_foto,
-                    registro,
-                    buckets.cuerpo['value'],
-                    detalles.cuerpo,
-                    tareas.cuerpo['value'],
-                    ahora,
-                    forzar,
-                    previo,
-                )
-        except Exception as e:  # un plan raro no tumba la lectura de los demás
-            logger.exception('Error guardando el plan %s', plan.plan_id)
-            errores.append({'plan': plan.titulo, 'error': str(e)[:300]})
-            continue
-        resumen['fotos' if tomada else 'omitidas'] += 1
-        resumen['tareas'] += n_tareas
-        hitos_por_leer += hitos
-        detectadas += [(plan, plan.colaborador, inc) for inc in incidencias]
-        leidos.append(plan)
+        guardado = False
+        for objetivo in objetivos:
+            try:
+                with transaction.atomic():
+                    tomada, incidencias, n_tareas, hitos = _guardar_plan(
+                        plan,
+                        objetivo.semana,
+                        objetivo.tipo_foto,
+                        registro,
+                        buckets.cuerpo['value'],
+                        detalles.cuerpo,
+                        tareas.cuerpo['value'],
+                        ahora,
+                        objetivo.forzar,
+                        previos[objetivo],
+                    )
+            except Exception as e:  # un plan raro no tumba la lectura de los demás
+                logger.exception('Error guardando el plan %s', plan.plan_id)
+                error = str(e)[:300]
+                if len(objetivos) > 1:
+                    error = f'{objetivo.semana.etiqueta}: {error}'
+                errores.append({'plan': plan.titulo, 'error': error})
+                continue
+            guardado = True
+            resumen['fotos' if tomada else 'omitidas'] += 1
+            resumen['tareas'] += n_tareas
+            hitos_por_leer += hitos
+            detectadas += [(plan, plan.colaborador, inc, objetivo.semana) for inc in incidencias]
+        if guardado:
+            leidos.append(plan)
 
     momento = timezone.now()
     for plan in leidos:
         plan.updated_at = momento  # bulk_update no lo pone solo
     PlanPlanner.objects.bulk_update(leidos, CAMPOS_LECTURA)
+    _latir(registro)
     _leer_checklists(cliente, hitos_por_leer)
     _nombres_de_grupos(cliente, planes)
 
@@ -261,12 +455,13 @@ def _leer(registro, semana, tipo_foto, cliente, ahora, forzar) -> None:
                     I.Severidad.CRITICA,
                     'Sin URL de Planner en Gestión de usuarios. No entra en el cálculo.',
                 ),
+                ultima,
             )
         )
 
-    _registrar_incidencias(detectadas, semana)
-    recalcular_semana(semana, ahora)
-    recalcular_semana(semana.anterior(), ahora)
+    _registrar_incidencias(detectadas)
+    _latir(registro)
+    _recalcular(objetivos, ahora, con_anterior, motivo, registro)
 
     registro.planes_leidos = len(planes) - resumen['inaccesibles']
     registro.resumen = resumen
@@ -282,6 +477,29 @@ def _leer(registro, semana, tipo_foto, cliente, ahora, forzar) -> None:
     registro.save()
 
 
+def _recalcular(objetivos, ahora, con_anterior: bool, motivo: str, registro) -> None:
+    """
+    Recalcula cada semana leída una sola vez (y la anterior, en las lecturas
+    de cada noche y del corte). Las cerradas que se volvieron a leer a mano se
+    recalculan aunque ya fueran finales, y queda en la bitácora con el motivo.
+    """
+    semanas = {o.semana: o.excepcional for o in objetivos}
+    if con_anterior:
+        for o in objetivos:
+            semanas.setdefault(o.semana.anterior(), False)
+    for semana, excepcional in sorted(semanas.items()):
+        n = recalcular_semana(semana, ahora, forzar=excepcional)
+        if excepcional:
+            RecalculoPlanner.objects.create(
+                anio=semana.anio,
+                semana=semana.numero,
+                motivo=(motivo or 'Lectura a mano de una semana cerrada.')[:2000],
+                parametros=parametros_de(semana),
+                resultados=n,
+                autorizado_por=registro.ejecutada_por,
+            )
+
+
 @dataclass
 class _Previo:
     """Lo que ya está guardado de la semana, leído de una vez para todos los planes."""
@@ -293,20 +511,28 @@ class _Previo:
     hitos: dict[int, dict] = field(default_factory=dict)  # colaborador → task_id → Hito
 
 
-def _previo(planes: list[PlanPlanner], semana: Semana, tipo_foto: str) -> _Previo:
+def _depositos(planes: list[PlanPlanner]) -> dict[int, set]:
+    """Los depósitos guardados de cada plan: {plan: {(bucket, nombre)}}."""
+    depositos: dict[int, set] = defaultdict(set)
+    for plan_id, bucket_id, nombre in Deposito.objects.filter(plan__in=planes).values_list(
+        'plan_id', 'bucket_id', 'nombre'
+    ):
+        depositos[plan_id].add((bucket_id, nombre))
+    return depositos
+
+
+def _previo(
+    planes: list[PlanPlanner], semana: Semana, tipo_foto: str, depositos: dict[int, set]
+) -> _Previo:
     if not planes:
-        return _Previo()
+        return _Previo(depositos=depositos)
     de_la_semana = {'anio': semana.anio, 'semana': semana.numero}
     previo = _Previo(
-        depositos=defaultdict(set),
+        depositos=depositos,
         ids_base=defaultdict(set),
         seguidas=defaultdict(dict),
         hitos=defaultdict(dict),
     )
-    for plan_id, bucket_id, nombre in Deposito.objects.filter(plan__in=planes).values_list(
-        'plan_id', 'bucket_id', 'nombre'
-    ):
-        previo.depositos[plan_id].add((bucket_id, nombre))
     previo.fotos = {
         s.plan_id: s
         for s in Snapshot.objects.filter(plan__in=planes, tipo=tipo_foto, **de_la_semana)
@@ -391,8 +617,11 @@ def _guardar_plan(
     """
     incidencias: list[Incidencia] = []
 
-    # Depósitos tal como están hoy (se reescriben solo si cambiaron).
-    if {(b['id'], b['name'][:255]) for b in buckets} != previo.depositos.get(plan.id, set()):
+    # Depósitos tal como están hoy (se reescriben solo si cambiaron). Se anota
+    # lo nuevo: la siguiente semana de la misma lectura ya no los reescribe.
+    actuales = {(b['id'], b['name'][:255]) for b in buckets}
+    if actuales != previo.depositos.get(plan.id, set()):
+        previo.depositos[plan.id] = actuales
         Deposito.objects.filter(plan=plan).delete()
         Deposito.objects.bulk_create(
             [
@@ -729,11 +958,12 @@ def _leer_checklists(cliente: GraphClient, hitos: list[HitoPlanner]) -> None:
     HitoPlanner.objects.bulk_update(leidos, ['items', 'total_items', 'actualizado_at'])
 
 
-def _registrar_incidencias(detectadas, semana: Semana) -> None:
+def _registrar_incidencias(detectadas) -> None:
     """
     Abre lo que se detectó y cierra lo que ya no aparece.
 
-    Una incidencia es la misma si coincide en tipo, plan, persona, semana y
+    Cada detección trae su semana: una lectura puede guardar varias. Una
+    incidencia es la misma si coincide en tipo, plan, persona, semana y
     detalle: así no se duplica cada noche. Los planes duplicados los detecta
     el inventario, no la lectura semanal: esas no se cierran aquí.
     """
@@ -744,7 +974,7 @@ def _registrar_incidencias(detectadas, semana: Semana) -> None:
         )
     }
     vistas, nuevas = set(), {}
-    for plan, persona, (tipo, severidad, detalle) in detectadas:
+    for plan, persona, (tipo, severidad, detalle), semana in detectadas:
         detalle = detalle[:500]
         clave = (
             tipo,

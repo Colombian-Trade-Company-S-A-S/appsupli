@@ -11,6 +11,7 @@ urlpatterns = [
     path('personas/<int:pk>', views.persona, name='persona'),
     path('conexion', views.conexion, name='conexion'),
     path('sincronizar', views.sincronizar, name='sincronizar'),
+    path('sincronizar/detener', views.detener_sincronizacion, name='sincronizar-detener'),
     # El plan de cada persona sale de su URL de Planner: aquí solo se consulta.
     path('planes', views.planes, name='planes'),
     path('parametros', views.parametros, name='parametros'),
