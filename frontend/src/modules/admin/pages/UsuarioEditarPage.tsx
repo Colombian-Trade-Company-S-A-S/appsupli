@@ -68,8 +68,12 @@ export default function UsuarioEditarPage() {
   const { data: usuario, isLoading, isError } = useAdminUser(idUsuario);
   const { data: apps = [] } = useApplications();
   const { data: roles = [] } = useRoles();
-  const [datos, setDatos] = useState<AdminUserPayload | null>(null);
-  const cargado = useRef<number | null>(null);
+  // Si la persona ya está en caché (se precarga al pasar sobre «Editar»), el
+  // formulario arranca armado, sin esqueleto ni un render de más.
+  const [datos, setDatos] = useState<AdminUserPayload | null>(() =>
+    usuario ? datosDe(usuario) : null,
+  );
+  const cargado = useRef<number | null>(usuario?.id ?? null);
 
   // Se llena una sola vez: si la consulta se refresca, no borra lo que se editó.
   useEffect(() => {

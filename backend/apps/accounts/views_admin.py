@@ -1,5 +1,6 @@
 """Módulo de Administración: gestión de usuarios, áreas, apps, permisos y roles."""
 from django.db.models import Count, Prefetch
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
@@ -64,15 +65,20 @@ class ApplicationViewSet(AdminViewSet):
         POST /api/admin/applications/{id}/accesos — le da a alguien la app,
              uno de sus roles o uno de sus permisos (solo el administrador).
         """
-        app = self.get_object()
+        app = self._app_sola(pk)
         if request.method == 'POST':
             self._cambiar_acceso(request, app, accesos_app.dar_acceso)
         return Response(accesos_app.personas_con_acceso(app))
 
+    @staticmethod
+    def _app_sola(pk) -> Application:
+        """La app sin conteos ni permisos: los accesos solo necesitan cuál es."""
+        return get_object_or_404(Application.objects.only('id'), pk=pk)
+
     @action(detail=True, methods=['post'], url_path='quitar-acceso')
     def quitar_acceso(self, request, pk=None):
         """POST /api/admin/applications/{id}/quitar-acceso — lo contrario, solo el administrador."""
-        app = self.get_object()
+        app = self._app_sola(pk)
         self._cambiar_acceso(request, app, accesos_app.quitar_acceso)
         return Response(accesos_app.personas_con_acceso(app))
 
@@ -85,7 +91,7 @@ class ApplicationViewSet(AdminViewSet):
         """
         if not request.user.is_admin:
             raise PermissionDenied('Solo un administrador da o quita accesos.')
-        app = self.get_object()
+        app = self._app_sola(pk)
         datos = accesos_app.AsignacionMasivaSerializer(data=request.data)
         datos.is_valid(raise_exception=True)
         area = None if datos.validated_data['todos'] else datos.validated_data['area']

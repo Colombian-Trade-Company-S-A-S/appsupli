@@ -70,7 +70,7 @@ def accesos(request):
     Solo a quien no tiene clave todavía: a nadie que ya entra se la cambia.
     """
     if request.method == 'GET':
-        return Response({'pendientes': len(pendientes_de_acceso())})
+        return Response({'pendientes': pendientes_de_acceso().count()})
     cantidad, contenido = generar_accesos()
     if not cantidad:
         return Response({'message': 'No hay personas pendientes de acceso.'}, status=400)

@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/shared/api/http-client';
 import { adminApi } from './api';
@@ -16,6 +17,52 @@ export const adminKeys = {
   accesosPendientes: () => ['admin', 'odoo', 'accesos'] as const,
 };
 
+/**
+ * Áreas, apps, roles y permisos casi no cambian, y cada cambio hecho aquí los
+ * invalida: no hace falta volver a pedirlos cada 30 s al moverse entre páginas.
+ */
+const CATALOGO_MS = 5 * 60_000;
+
+// Cada consulta se define una vez: la usan los hooks y la precarga.
+const consultas = {
+  user: (id: number) =>
+    queryOptions({
+      queryKey: adminKeys.user(id),
+      queryFn: () => adminApi.users.get(id),
+      enabled: Number.isFinite(id) && id > 0,
+    }),
+  areas: () =>
+    queryOptions({
+      queryKey: adminKeys.areas(),
+      queryFn: () => adminApi.areas.list(),
+      staleTime: CATALOGO_MS,
+    }),
+  applications: () =>
+    queryOptions({
+      queryKey: adminKeys.applications(),
+      queryFn: () => adminApi.applications.list(),
+      staleTime: CATALOGO_MS,
+    }),
+  accesosApp: (id: number) =>
+    queryOptions({
+      queryKey: adminKeys.accesosApp(id),
+      queryFn: () => adminApi.applications.accesos(id),
+      enabled: Number.isFinite(id) && id > 0,
+    }),
+  roles: () =>
+    queryOptions({
+      queryKey: adminKeys.roles(),
+      queryFn: () => adminApi.roles.list(),
+      staleTime: CATALOGO_MS,
+    }),
+  permissions: () =>
+    queryOptions({
+      queryKey: adminKeys.permissions(),
+      queryFn: () => adminApi.permissions.list(),
+      staleTime: CATALOGO_MS,
+    }),
+};
+
 export function useAdminUsers(filtros: Record<string, unknown>) {
   return useQuery({
     queryKey: adminKeys.users(filtros),
@@ -27,32 +74,53 @@ export function useAdminUsers(filtros: Record<string, unknown>) {
 }
 
 /** Una persona, para su página de detalle. */
-export const useAdminUser = (id: number) =>
-  useQuery({
-    queryKey: adminKeys.user(id),
-    queryFn: () => adminApi.users.get(id),
-    enabled: Number.isFinite(id) && id > 0,
-  });
+export const useAdminUser = (id: number) => useQuery(consultas.user(id));
 
-export const useAreas = () =>
-  useQuery({ queryKey: adminKeys.areas(), queryFn: () => adminApi.areas.list() });
+export const useAreas = () => useQuery(consultas.areas());
 
-export const useApplications = () =>
-  useQuery({ queryKey: adminKeys.applications(), queryFn: () => adminApi.applications.list() });
+export const useApplications = () => useQuery(consultas.applications());
 
 /** Quién entra a una app y con qué (asignada, roles, permisos sueltos). */
-export const useAccesosApp = (id: number) =>
-  useQuery({
-    queryKey: adminKeys.accesosApp(id),
-    queryFn: () => adminApi.applications.accesos(id),
-    enabled: Number.isFinite(id) && id > 0,
-  });
+export const useAccesosApp = (id: number) => useQuery(consultas.accesosApp(id));
 
-export const useRoles = () =>
-  useQuery({ queryKey: adminKeys.roles(), queryFn: () => adminApi.roles.list() });
+export const useRoles = () => useQuery(consultas.roles());
 
-export const usePermissions = () =>
-  useQuery({ queryKey: adminKeys.permissions(), queryFn: () => adminApi.permissions.list() });
+export const usePermissions = () => useQuery(consultas.permissions());
+
+/** Las páginas de Administración que se abren desde una lista. */
+const paginas = {
+  detalle: () => import('./pages/UsuarioDetallePage'),
+  editar: () => import('./pages/UsuarioEditarPage'),
+  aplicacion: () => import('./pages/AplicacionDetallePage'),
+};
+
+/**
+ * Adelanta lo que va a necesitar la página a la que la persona está por ir
+ * (al pasar el cursor o enfocar el enlace): el código de la página y sus
+ * datos. Así, al hacer clic, se abre ya armada en vez de mostrar el
+ * esqueleto mientras baja todo. Lo que ya está fresco no se vuelve a pedir.
+ */
+export function usePrecarga() {
+  const queryClient = useQueryClient();
+  // Estable: las filas memorizadas de las tablas no se redibujan por ella.
+  return useMemo(
+    () => ({
+      usuario: (id: number, a: 'detalle' | 'editar') => {
+        void paginas[a]();
+        void queryClient.prefetchQuery(consultas.user(id));
+        void queryClient.prefetchQuery(consultas.applications());
+        void queryClient.prefetchQuery(consultas.roles());
+        if (a === 'detalle') void queryClient.prefetchQuery(consultas.permissions());
+      },
+      aplicacion: (id: number) => {
+        void paginas.aplicacion();
+        void queryClient.prefetchQuery(consultas.accesosApp(id));
+        void queryClient.prefetchQuery(consultas.roles());
+      },
+    }),
+    [queryClient],
+  );
+}
 
 export const useSincronizacionesOdoo = () =>
   useQuery({

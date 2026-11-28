@@ -83,6 +83,16 @@ export interface AdminRole {
 
 export type UserKind = 'admin' | 'lider' | 'colaborador';
 
+/** Una persona en una fila: su nombre, foto y cargo. */
+export interface JefeResumen {
+  id: number;
+  fullName: string;
+  firstName: string;
+  position: string;
+  foto: string | null;
+  destacado: boolean;
+}
+
 export interface AdminUser {
   id: number;
   email: string;
@@ -110,6 +120,8 @@ export interface AdminUser {
   sincronizadoOdooAt: string | null;
   manager: number | null;
   managerName: string;
+  /** Lo que muestra la fila del jefe: viene con la persona, sin otra llamada. */
+  jefe: JefeResumen | null;
   isActive: boolean;
   isAdmin: boolean;
   /** Sin correo no hay cómo entrar, aunque exista (asesores y promotores). */

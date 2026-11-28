@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { MoreHorizontalIcon, PencilIcon, SearchIcon, UserCheckIcon, UserXIcon } from 'lucide-react';
+import { memo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { PencilIcon, SearchIcon, UserCheckIcon, UserXIcon } from 'lucide-react';
 import { useDebounced } from '@/shared/hooks';
 import { urlFotoDe, useAuth } from '@/core/auth';
 import { cn } from '@/shared/lib/utils';
@@ -11,11 +11,6 @@ import {
   Badge,
   Button,
   Card,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -39,7 +34,7 @@ import {
   ToggleGroupItem,
 } from '@/shared/components/ui';
 import { adminApi, type AdminUserFila } from '../api';
-import { useAdminMutation, useAdminUsers, useAreas } from '../hooks';
+import { useAdminMutation, useAdminUsers, useAreas, usePrecarga } from '../hooks';
 import { usePermisosAdmin } from '../permisos';
 
 const TIPOS = { admin: 'Admin', lider: 'Líder', colaborador: 'Colaborador' } as const;
@@ -54,12 +49,10 @@ export function UsersTab() {
   const puede = usePermisosAdmin();
   // Con «Ver el listado» se consulta; editar e inactivar pide «Editar usuarios».
   const puedeEditar = puede.editarUsuarios;
-  // A un administrador solo lo edita o inactiva otro administrador.
-  const intocable = (usuario: AdminUserFila) => usuario.isAdmin && !puede.esAdmin;
   const [busqueda, setBusqueda] = useState('');
   const [estado, setEstado] = useState('todos');
   const [area, setArea] = useState('');
-  const navigate = useNavigate();
+  const precargar = usePrecarga();
 
   const { data: areas = [] } = useAreas();
   // Se busca cuando se deja de escribir, no con cada letra.
@@ -74,10 +67,6 @@ export function UsersTab() {
     (id: number) => adminApi.users.toggleActive(id),
     'Estado actualizado',
   );
-
-  // Editar es una página aparte, no una ventana.
-  const abrirEdicion = (usuario: AdminUserFila) =>
-    navigate(`/inicio/admin/usuarios/${usuario.id}/editar`);
 
   return (
     <div className="flex flex-col gap-4">
@@ -171,79 +160,16 @@ export function UsersTab() {
               </TableHeader>
               <TableBody>
                 {usuarios.map((usuario) => (
-                  <TableRow key={usuario.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar className={cn('size-8', usuario.destacado && 'hilo-socio')}>
-                          <AvatarImage src={urlFotoDe(usuario)} alt="" />
-                          <AvatarFallback>
-                            {usuario.firstName.charAt(0).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex flex-col">
-                          <Link
-                            to={`/inicio/admin/usuarios/${usuario.id}`}
-                            className="font-medium underline-offset-4 hover:text-primary hover:underline"
-                          >
-                            {usuario.fullName}
-                          </Link>
-                          <span className="text-xs text-muted-foreground">{usuario.email}</span>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{usuario.areaName || '—'}</TableCell>
-                    <TableCell>{usuario.position || '—'}</TableCell>
-                    <TableCell>
-                      <Badge variant={usuario.kind === 'admin' ? 'default' : 'secondary'}>
-                        {TIPOS[usuario.kind]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {usuario.isAdmin ? (
-                        <span className="text-xs text-muted-foreground">Todas</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          {usuario.applicationNames.length || 'Ninguna'}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={usuario.isActive ? 'success' : 'outline'}>
-                        {usuario.isActive ? 'Activo' : 'Inactivo'}
-                      </Badge>
-                    </TableCell>
-                    {puedeEditar && (
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button variant="ghost" size="icon" aria-label="Acciones">
-                                <MoreHorizontalIcon />
-                              </Button>
-                            }
-                          />
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem
-                                disabled={intocable(usuario)}
-                                onClick={() => abrirEdicion(usuario)}
-                              >
-                                <PencilIcon />
-                                Editar
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={usuario.id === yo?.id || intocable(usuario)}
-                                onClick={() => alternarActivo.mutate(usuario.id)}
-                              >
-                                {usuario.isActive ? <UserXIcon /> : <UserCheckIcon />}
-                                {usuario.isActive ? 'Inactivar' : 'Activar'}
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    )}
-                  </TableRow>
+                  <FilaUsuario
+                    key={usuario.id}
+                    usuario={usuario}
+                    acciones={puedeEditar}
+                    intocable={usuario.isAdmin && !puede.esAdmin}
+                    esYo={usuario.id === yo?.id}
+                    alternando={alternarActivo.isPending && alternarActivo.variables === usuario.id}
+                    onAlternar={alternarActivo.mutate}
+                    precargar={precargar}
+                  />
                 ))}
               </TableBody>
             </Table>
@@ -257,3 +183,111 @@ export function UsersTab() {
     </div>
   );
 }
+
+/**
+ * Una persona en la tabla. Va aparte y memorizada: al escribir en el buscador
+ * la tabla no se vuelve a dibujar entera con cada letra, solo las filas que
+ * cambian. Editar es un botón directo (antes había que abrir un menú) y, al
+ * pasar el cursor por él o por el nombre, se adelanta la página que se abre.
+ */
+const FilaUsuario = memo(function FilaUsuario({
+  usuario,
+  acciones,
+  intocable,
+  esYo,
+  alternando,
+  onAlternar,
+  precargar,
+}: {
+  usuario: AdminUserFila;
+  /** Puede editar usuarios: ve los botones. */
+  acciones: boolean;
+  /** Es administrador y quien mira no: solo otro administrador lo toca. */
+  intocable: boolean;
+  esYo: boolean;
+  alternando: boolean;
+  onAlternar: (id: number) => void;
+  precargar: ReturnType<typeof usePrecarga>;
+}) {
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="flex items-center gap-3">
+          <Avatar className={cn('size-8', usuario.destacado && 'hilo-socio')}>
+            <AvatarImage src={urlFotoDe(usuario)} alt="" loading="lazy" />
+            <AvatarFallback>{usuario.firstName.charAt(0).toUpperCase()}</AvatarFallback>
+          </Avatar>
+          <div className="flex flex-col">
+            <Link
+              to={`/inicio/admin/usuarios/${usuario.id}`}
+              onPointerEnter={() => precargar.usuario(usuario.id, 'detalle')}
+              onFocus={() => precargar.usuario(usuario.id, 'detalle')}
+              className="font-medium underline-offset-4 hover:text-primary hover:underline"
+            >
+              {usuario.fullName}
+            </Link>
+            <span className="text-xs text-muted-foreground">{usuario.email}</span>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell>{usuario.areaName || '—'}</TableCell>
+      <TableCell>{usuario.position || '—'}</TableCell>
+      <TableCell>
+        <Badge variant={usuario.kind === 'admin' ? 'default' : 'secondary'}>
+          {TIPOS[usuario.kind]}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <span className="text-xs text-muted-foreground">
+          {usuario.isAdmin ? 'Todas' : usuario.applicationNames.length || 'Ninguna'}
+        </span>
+      </TableCell>
+      <TableCell>
+        <Badge variant={usuario.isActive ? 'success' : 'outline'}>
+          {usuario.isActive ? 'Activo' : 'Inactivo'}
+        </Badge>
+      </TableCell>
+      {acciones && (
+        <TableCell className="text-right">
+          <div className="flex justify-end gap-1">
+            {intocable ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled
+                aria-label="Solo otro administrador lo edita"
+                title="Solo otro administrador lo edita"
+              >
+                <PencilIcon />
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Editar a ${usuario.fullName}`}
+                title="Editar"
+                render={<Link to={`/inicio/admin/usuarios/${usuario.id}/editar`} />}
+                nativeButton={false}
+                onPointerEnter={() => precargar.usuario(usuario.id, 'editar')}
+                onFocus={() => precargar.usuario(usuario.id, 'editar')}
+              >
+                <PencilIcon />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={esYo || intocable || alternando}
+              aria-label={`${usuario.isActive ? 'Inactivar' : 'Activar'} a ${usuario.fullName}`}
+              title={usuario.isActive ? 'Inactivar' : 'Activar'}
+              className={usuario.isActive ? 'hover:text-destructive' : 'hover:text-emerald-600'}
+              onClick={() => onAlternar(usuario.id)}
+            >
+              {usuario.isActive ? <UserXIcon /> : <UserCheckIcon />}
+            </Button>
+          </div>
+        </TableCell>
+      )}
+    </TableRow>
+  );
+});

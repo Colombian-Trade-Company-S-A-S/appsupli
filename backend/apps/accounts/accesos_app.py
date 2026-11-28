@@ -34,11 +34,12 @@ def personas_con_acceso(app: Application) -> list[dict]:
     """
     Las personas activas que entran a la app, cada una con cómo entra: si la
     tiene asignada, qué roles de la app tiene y qué permisos sueltos. Cuatro
-    consultas para cualquier número de personas.
+    consultas para cualquier número de personas; los roles de la app van como
+    subconsulta, sin un viaje aparte a la base.
     """
     from .fotos import ruta_de_foto  # noqa: PLC0415 — fotos importa los serializers
 
-    roles = roles_de(app)
+    roles = Role.objects.filter(permissions__application=app).values('pk')
     personas = (
         User.objects.filter(is_active=True)
         .filter(

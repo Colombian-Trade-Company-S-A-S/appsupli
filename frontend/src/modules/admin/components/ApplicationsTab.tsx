@@ -33,7 +33,7 @@ import {
   Textarea,
 } from '@/shared/components/ui';
 import { adminApi, type AdminApplication } from '../api';
-import { useAdminMutation, useApplications } from '../hooks';
+import { useAdminMutation, useApplications, usePrecarga } from '../hooks';
 import { usePermisosAdmin } from '../permisos';
 import { ConfirmarBorrado } from '@/shared/components/feedback';
 
@@ -49,6 +49,8 @@ const NUEVA = {
 
 export function ApplicationsTab() {
   const { data: apps = [], isLoading } = useApplications();
+  // Al pasar sobre el nombre se adelanta el detalle de la app.
+  const precargar = usePrecarga();
   // Crear y editar, con su permiso; eliminar, solo el administrador.
   const { editarApps: puedeEditar, esAdmin: puedeEliminar } = usePermisosAdmin();
   const conAcciones = puedeEditar || puedeEliminar;
@@ -118,6 +120,8 @@ export function ApplicationsTab() {
                         {/* El detalle: sus roles, permisos y quién tiene cada cosa. */}
                         <Link
                           to={`/inicio/admin/aplicaciones/${app.id}`}
+                          onPointerEnter={() => precargar.aplicacion(app.id)}
+                          onFocus={() => precargar.aplicacion(app.id)}
                           className="font-medium underline-offset-4 hover:text-primary hover:underline"
                         >
                           {app.name}

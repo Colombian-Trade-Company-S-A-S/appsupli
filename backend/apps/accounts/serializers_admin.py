@@ -202,6 +202,9 @@ class AdminUserSerializer(serializers.ModelSerializer):
     foto = serializers.SerializerMethodField()
     # Uno de los socios (USUARIOS_DESTACADOS): el frontend lo distingue con efectos.
     destacado = serializers.SerializerMethodField()
+    # Lo que muestra la fila del jefe en el detalle. Antes el detalle pedía al
+    # jefe entero en una segunda llamada, que esperaba a la primera.
+    jefe = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -214,6 +217,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             'full_name',
             'foto',
             'destacado',
+            'jefe',
             'area',
             'area_name',
             'position',
@@ -260,6 +264,19 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     def get_destacado(self, usuario: User) -> bool:
         return (usuario.email or '').lower() in settings.USUARIOS_DESTACADOS
+
+    def get_jefe(self, usuario: User) -> dict | None:
+        jefe = usuario.manager
+        if jefe is None:
+            return None
+        return {
+            'id': jefe.pk,
+            'full_name': jefe.full_name,
+            'first_name': jefe.first_name,
+            'position': jefe.position,
+            'foto': self.get_foto(jefe),
+            'destacado': self.get_destacado(jefe),
+        }
 
     def get_correo_editable(self, usuario: User) -> bool:
         """

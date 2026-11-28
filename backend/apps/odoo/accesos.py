@@ -6,6 +6,7 @@ cualquier otra, y no se puede volver a leer. Si el archivo se pierde, se
 genera de nuevo desde el formulario del usuario.
 """
 from django.conf import settings
+from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 
@@ -29,14 +30,21 @@ COLUMNAS = [
 
 
 def pendientes_de_acceso():
-    """Quienes vienen de Odoo, están activos, tienen correo y todavía no tienen clave."""
-    candidatos = (
+    """
+    Quienes vienen de Odoo, están activos, tienen correo y todavía no tienen clave.
+
+    Se filtra en la base: sin clave es la marca de `set_unusable_password` (la
+    misma regla de `has_usable_password`). Antes se traía a todos, con su foto
+    y la de su jefe, para filtrarlos aquí: contarlos tardaba 7 s.
+    """
+    return (
         User.objects.filter(odoo_id__isnull=False, is_active=True, email__isnull=False)
+        .filter(password__startswith=UNUSABLE_PASSWORD_PREFIX)
         .select_related('area', 'manager')
+        .defer('foto', 'manager__foto')
         .prefetch_related('applications')
         .order_by('first_name', 'last_name')
     )
-    return [u for u in candidatos if not u.has_usable_password()]
 
 
 def generar_accesos() -> tuple[int, bytes]:

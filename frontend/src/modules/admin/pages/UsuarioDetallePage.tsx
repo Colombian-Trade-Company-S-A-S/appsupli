@@ -52,6 +52,7 @@ import {
   type AdminPermission,
   type AdminUser,
   type AdminUserFila,
+  type JefeResumen,
 } from '../api';
 import { planIdDeUrl } from '../planner';
 import {
@@ -60,6 +61,7 @@ import {
   useAdminUsers,
   useApplications,
   usePermissions,
+  usePrecarga,
   useRoles,
 } from '../hooks';
 import { usePermisosAdmin } from '../permisos';
@@ -177,10 +179,13 @@ function Vacio({ children }: { children: ReactNode }) {
 }
 
 /** Una persona en una lista: foto, nombre y cargo, con enlace a su detalle. */
-function FilaPersona({ usuario }: { usuario: AdminUserFila }) {
+function FilaPersona({ usuario }: { usuario: JefeResumen | AdminUserFila }) {
+  const precargar = usePrecarga();
   return (
     <Link
       to={`${BASE}/usuarios/${usuario.id}`}
+      onPointerEnter={() => precargar.usuario(usuario.id, 'detalle')}
+      onFocus={() => precargar.usuario(usuario.id, 'detalle')}
       className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-muted/60"
     >
       <Foto usuario={usuario} className={cn('size-9', usuario.destacado && 'hilo-socio')} />
@@ -208,8 +213,10 @@ export default function UsuarioDetallePage() {
   // Con «Ver el listado» se consulta; editar pide «Editar usuarios», y a un
   // administrador solo lo edita otro administrador.
   const puedeEditar = puede.editarUsuarios && (puede.esAdmin || !usuario?.isAdmin);
-  const { data: jefe } = useAdminUser(usuario?.manager ?? 0);
   const { data: equipo = [] } = useAdminUsers({ manager: usuarioId, is_active: true });
+  const precargar = usePrecarga();
+  // El jefe viene con la persona: antes era otra llamada que esperaba a esta.
+  const jefe = usuario?.jefe;
   const { data: apps = [] } = useApplications();
   const { data: roles = [] } = useRoles();
   const { data: permisos = [] } = usePermissions();
@@ -355,7 +362,11 @@ export default function UsuarioDetallePage() {
 
           {puedeEditar && (
             <div className="flex flex-wrap justify-center gap-2">
-              <Button render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}>
+              <Button
+                render={<Link to={`${BASE}/usuarios/${usuario.id}/editar`} />}
+                onPointerEnter={() => precargar.usuario(usuario.id, 'editar')}
+                onFocus={() => precargar.usuario(usuario.id, 'editar')}
+              >
                 <PencilIcon data-icon="inline-start" />
                 {puede.esAdmin ? 'Editar accesos' : 'Editar cuenta'}
               </Button>
